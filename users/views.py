@@ -57,7 +57,12 @@ class CustomLoginView(LoginView):
 
     def get_success_url(self):
         user = getattr(self.request, 'user', None)
-        if user and getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) == CustomUser.Role.VISUAL:
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.VISUAL
+        ):
             return reverse('budgets:kanban_today')
         return super().get_success_url()
 

@@ -973,7 +973,7 @@ class CommissionOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         qs = qs.filter(task__completed_at__date__gte=date_from, task__completed_at__date__lte=date_to)
         collaborator_id = (self.request.GET.get('collaborator_id') or '').strip()
         user = getattr(self.request, 'user', None)
-        if getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL:
+        if getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL and not getattr(user, 'is_superuser', False):
             logged_collaborator = self._logged_collaborator()
             if logged_collaborator is None:
                 return qs.none()
@@ -1009,7 +1009,10 @@ class CommissionOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         show_all = (self.request.GET.get('show_all') or '').strip().lower() in ('1', 'true', 'on', 'yes')
 
         user = getattr(self.request, 'user', None)
-        restrict_to_own_commissions = getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+        restrict_to_own_commissions = (
+            getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+            and not getattr(user, 'is_superuser', False)
+        )
         logged_collaborator = self._logged_collaborator() if restrict_to_own_commissions else None
 
         selected_collaborator_id = (self.request.GET.get('collaborator_id') or '').strip()

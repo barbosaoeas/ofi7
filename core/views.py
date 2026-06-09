@@ -22,7 +22,12 @@ class RoleRequiredMixin:
                 return super().dispatch(request, *args, **kwargs)
 
         messages.error(request, 'Sem permissão para acessar esta página.')
-        if user and getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) == CustomUser.Role.VISUAL:
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.VISUAL
+        ):
             return redirect('budgets:kanban_today')
         return redirect('core:dashboard')
 
@@ -36,6 +41,11 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
     def dispatch(self, request, *args, **kwargs):
         user = getattr(request, 'user', None)
-        if user and getattr(user, 'is_authenticated', False) and getattr(user, 'role', None) == CustomUser.Role.VISUAL:
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.VISUAL
+        ):
             return redirect('budgets:kanban_today')
         return super().dispatch(request, *args, **kwargs)

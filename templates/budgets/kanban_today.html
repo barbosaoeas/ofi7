@@ -2,10 +2,10 @@
 
 {% block title %}Kanban (Hoje) | Controle Oficina{% endblock %}
 
-{% block main_class %}{% if user.role == 'VISUAL' %}p-1{% else %}px-2 py-3{% endif %}{% endblock %}
+{% block main_class %}{% if not user.is_superuser and user.role == 'VISUAL' %}p-1{% else %}px-2 py-3{% endif %}{% endblock %}
 
 {% block content %}
-  {% if user.role == 'VISUAL' %}
+  {% if not user.is_superuser and user.role == 'VISUAL' %}
     <div class='mb-2 flex items-center justify-between gap-2'>
       <div class='text-sm font-semibold text-[#D4AF37]'>Kanban <span id='kanban-selected-date'>{{ selected_date|date:'d/m/Y' }}</span></div>
       <button type='button' id='tv-fullscreen' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
@@ -39,7 +39,7 @@
           {% for t in col.tasks %}
             <div class='rounded-lg border border-[#262626] p-2 {% if t.is_patio and t.patio_has_late_parts %}bg-[#3B0A0A] border-[#7F1D1D]{% elif t.is_patio %}bg-[#0B1F3B] border-[#1D4ED8]{% elif t.status == "RUNNING" %}bg-[#063018] border-[#2F855A]{% elif t.status == "PAUSED" %}bg-[#2A1E06] border-[#B7791F]{% else %}bg-[#0D0D0D]{% endif %}'>
               <div class='flex items-start justify-between gap-2'>
-                {% if user.role == 'VISUAL' %}
+                {% if not user.is_superuser and user.role == 'VISUAL' %}
                   <div class='text-[11px] font-semibold text-[#F5F5F5] truncate'>
                     OS #{{ t.work_order.budget.display_number }}
                   </div>
@@ -82,7 +82,7 @@
                   </div>
                 </div>
 
-                {% if user.role == 'MANAGER' or user.role == 'FINANCE' %}
+                {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' %}
                   <form method='post' action='{% url "budgets:kanban_task_extra" t.id %}' class='mt-2 flex items-center justify-between gap-2 text-[11px] text-[#A3A3A3]'>
                     {% csrf_token %}
                     <input type='hidden' name='next' value='{{ request.get_full_path }}' />
@@ -94,7 +94,7 @@
                   </form>
                 {% endif %}
 
-                {% if user.role == 'MANAGER' or user.role == 'FINANCE' or user.role == 'OPERATIONAL' %}
+                {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' or user.role == 'OPERATIONAL' %}
                   <div class='mt-2 flex items-center justify-between gap-2'>
                     <form method='post' action='{% url "budgets:kanban_task_start" t.id %}'>
                       {% csrf_token %}
