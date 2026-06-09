@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+
+{% block title %}Novo veículo | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-2xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Novo veículo</h1>
+
+    <form method='post' enctype='multipart/form-data' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      {% csrf_token %}
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.plate.id_for_label }}'>Placa</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.plate.html_name }}' id='{{ form.plate.id_for_label }}' value='{{ form.plate.value|default_if_none:"" }}' required />
+        {% if form.plate.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.plate.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.brand.id_for_label }}'>Marca</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.brand.html_name }}' id='{{ form.brand.id_for_label }}' value='{{ form.brand.value|default_if_none:"" }}' required />
+        {% if form.brand.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.brand.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.model.id_for_label }}'>Modelo</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.model.html_name }}' id='{{ form.model.id_for_label }}' value='{{ form.model.value|default_if_none:"" }}' required />
+        {% if form.model.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.model.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.color.id_for_label }}'>Cor</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.color.html_name }}' id='{{ form.color.id_for_label }}' value='{{ form.color.value|default_if_none:"" }}' />
+        {% if form.color.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.color.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.year.id_for_label }}'>Ano</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.year.html_name }}' id='{{ form.year.id_for_label }}' value='{{ form.year.value|default_if_none:"" }}' />
+        {% if form.year.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.year.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_file.id_for_label }}'>Imagem (arquivo)</label>
+        {% if object and object.image_file %}
+          <div class='mb-2 text-sm text-[#A3A3A3]'>
+            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_file.url }}' target='_blank' rel='noreferrer'>
+              Ver imagem atual
+            </a>
+          </div>
+        {% endif %}
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-sm text-[#F5F5F5] file:mr-3 file:rounded-md file:border-0 file:bg-[#262626] file:px-3 file:py-2 file:text-sm file:text-[#F5F5F5]' type='file' accept='image/*' name='{{ form.image_file.html_name }}' id='{{ form.image_file.id_for_label }}' />
+        {% if form.image_file.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.image_file.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_url.id_for_label }}'>URL da imagem (opcional)</label>
+        {% if object and object.image_url %}
+          <div class='mb-2 text-sm text-[#A3A3A3]'>
+            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_url }}' target='_blank' rel='noreferrer'>
+              Abrir URL atual
+            </a>
+          </div>
+        {% endif %}
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='url' name='{{ form.image_url.html_name }}' id='{{ form.image_url.id_for_label }}' value='{{ form.image_url.value|default_if_none:"" }}' />
+        {% if form.image_url.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.image_url.errors }}</div>{% endif %}
+      </div>
+
+      {% if form.non_field_errors %}
+        <div class='md:col-span-2 rounded-lg border border-[#AA882C] bg-[#121212] px-4 py-3 text-sm text-[#F5F5F5]'>
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <div class='md:col-span-2 flex flex-wrap gap-3'>
+        <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Salvar
+        </button>
+        <a href='javascript:history.back()' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Cancelar
+        </a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

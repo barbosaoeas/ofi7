@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block title %}Entrar | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-md rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Entrar</h1>
+
+    <form method='post' class='mt-6 space-y-4'>
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div class='rounded-lg border border-[#AA882C] bg-[#121212] px-4 py-3 text-sm text-[#F5F5F5]'>
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.username.id_for_label }}'>{{ form.username.label }}</label>
+        <input
+          class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none'
+          type='email'
+          name='{{ form.username.html_name }}'
+          id='{{ form.username.id_for_label }}'
+          value='{{ form.username.value|default_if_none:"" }}'
+          placeholder='seu@email.com'
+          autocomplete='email'
+          required
+        />
+        {% if form.username.errors %}
+          <div class='mt-1 text-sm text-[#D4AF37]'>{{ form.username.errors }}</div>
+        {% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.password.id_for_label }}'>{{ form.password.label }}</label>
+        <input
+          class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none'
+          type='password'
+          name='{{ form.password.html_name }}'
+          id='{{ form.password.id_for_label }}'
+          placeholder='Sua senha'
+          autocomplete='current-password'
+          required
+        />
+        {% if form.password.errors %}
+          <div class='mt-1 text-sm text-[#D4AF37]'>{{ form.password.errors }}</div>
+        {% endif %}
+      </div>
+
+      <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+        Entrar
+      </button>
+    </form>
+
+    <p class='mt-6 text-sm text-[#A3A3A3]'>
+      Não tem conta?
+      <a class='text-[#D4AF37] hover:underline' href='{% url "users:register" %}'>Cadastre-se</a>
+    </p>
+  </div>
+{% endblock %}

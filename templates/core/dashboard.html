@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Dashboard</h1>
+    <p class='mt-2 text-sm text-[#A3A3A3]'>Você está autenticado como {{ user.email }}.</p>
+  </div>
+{% endblock %}

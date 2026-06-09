@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}{% if object %}Editar colaborador{% else %}Novo colaborador{% endif %} | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-3xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>{% if object %}Editar colaborador{% else %}Novo colaborador{% endif %}</h1>
+      <a href='{% url "users:collaborator_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        Voltar
+      </a>
+    </div>
+
+    <form method='post' enctype='multipart/form-data' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      {% csrf_token %}
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.name.id_for_label }}'>Nome</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+        {% if form.name.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.name.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.email.id_for_label }}'>E-mail de login</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='email' name='{{ form.email.html_name }}' id='{{ form.email.id_for_label }}' value='{{ form.email.value|default_if_none:"" }}' placeholder='funcionario@empresa.com' autocomplete='email' />
+        <div class='mt-1 text-xs text-[#A3A3A3]'>Este e-mail sera usado para localizar o login e resetar a senha.</div>
+        {% if form.email.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.email.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.function.id_for_label }}'>Função</label>
+        <select class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' name='{{ form.function.html_name }}' id='{{ form.function.id_for_label }}'>
+          {% for value, label in form.function.field.choices %}
+            <option value='{{ value }}' {% if form.function.value == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% if form.function.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.function.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.hire_date.id_for_label }}'>Data admissão</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.hire_date.html_name }}' id='{{ form.hire_date.id_for_label }}' value='{% if form.is_bound %}{{ form.hire_date.value|default_if_none:"" }}{% elif object and object.hire_date %}{{ object.hire_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.hire_date.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.hire_date.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.phone.id_for_label }}'>Telefone</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' inputmode='tel' data-mask='phone' name='{{ form.phone.html_name }}' id='{{ form.phone.id_for_label }}' value='{{ form.phone.value|default_if_none:"" }}' />
+        {% if form.phone.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.phone.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.cpf.id_for_label }}'>CPF</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' inputmode='numeric' data-mask='cpf' name='{{ form.cpf.html_name }}' id='{{ form.cpf.id_for_label }}' value='{{ form.cpf.value|default_if_none:"" }}' />
+        {% if form.cpf.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.cpf.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.commission_percent.id_for_label }}'>% Comissão</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='number' step='0.01' name='{{ form.commission_percent.html_name }}' id='{{ form.commission_percent.id_for_label }}' value='{% if form.is_bound %}{{ form.commission_percent.value|default_if_none:"" }}{% elif object %}{{ object.commission_percent|unlocalize }}{% endif %}' />
+        {% if form.commission_percent.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.commission_percent.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_file.id_for_label }}'>Imagem (arquivo)</label>
+        {% if object and object.image_file %}
+          <div class='mb-2 text-sm text-[#A3A3A3]'>
+            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_file.url }}' target='_blank' rel='noreferrer'>
+              Ver imagem atual
+            </a>
+          </div>
+        {% endif %}
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-sm text-[#F5F5F5] file:mr-3 file:rounded-md file:border-0 file:bg-[#262626] file:px-3 file:py-2 file:text-sm file:text-[#F5F5F5]' type='file' accept='image/*' name='{{ form.image_file.html_name }}' id='{{ form.image_file.id_for_label }}' />
+        {% if form.image_file.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.image_file.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_url.id_for_label }}'>Imagem (URL opcional)</label>
+        {% if object and object.image_url %}
+          <div class='mb-2 text-sm text-[#A3A3A3]'>
+            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_url }}' target='_blank' rel='noreferrer'>
+              Abrir URL atual
+            </a>
+          </div>
+        {% endif %}
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='url' name='{{ form.image_url.html_name }}' id='{{ form.image_url.id_for_label }}' value='{{ form.image_url.value|default_if_none:"" }}' placeholder='https://...' />
+        {% if form.image_url.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.image_url.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.address.id_for_label }}'>Endereço</label>
+        <textarea class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' name='{{ form.address.html_name }}' id='{{ form.address.id_for_label }}' rows='3'>{{ form.address.value|default_if_none:"" }}</textarea>
+        {% if form.address.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.address.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2 flex flex-wrap gap-3'>
+        <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Salvar
+        </button>
+        <a href='{% url "users:collaborator_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Cancelar
+        </a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,376 @@
+{% extends 'base.html' %}
+
+{% block title %}Orçamento #{{ budget.display_number }} | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='flex flex-wrap items-center justify-between gap-3'>
+    <div>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Orçamento #{{ budget.display_number }}</h1>
+      <p class='mt-1 text-sm text-[#A3A3A3]'>Criado em {{ budget.created_at|date:'d/m/Y H:i' }}</p>
+    </div>
+    <div class='flex flex-wrap gap-3'>
+      {% if budget.cilia_number %}
+        <a href='{% url "budgets:budget_download_xml" budget.cilia_number %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Baixar XML
+        </a>
+      {% endif %}
+      {% if work_order and (user.role == 'MANAGER' or user.role == 'FINANCE') %}
+        <a href='{% url "budgets:workorder_detail" work_order.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Abrir OS
+        </a>
+      {% endif %}
+      <a href='{% url "budgets:budget_update" budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        Editar
+      </a>
+      {% if user.role == 'MANAGER' or user.role == 'FINANCE' %}
+        <a href='{% url "budgets:budget_delete" budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Excluir
+        </a>
+      {% endif %}
+      <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        Voltar
+      </a>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-2'>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Cliente</h2>
+      <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
+        <div>
+          <dt class='text-[#A3A3A3]'>Nome</dt>
+          <dd class='mt-1'>{{ budget.customer.name }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>CPF/CNPJ</dt>
+          <dd class='mt-1'>{{ budget.customer.document_cpf_cnpj }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>Telefone</dt>
+          <dd class='mt-1'>{{ budget.customer.phone|default:'-' }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>E-mail</dt>
+          <dd class='mt-1'>{{ budget.customer.email|default:'-' }}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Veículo</h2>
+      <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
+        <div>
+          <dt class='text-[#A3A3A3]'>Placa</dt>
+          <dd class='mt-1'>{{ budget.vehicle.plate }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>Marca/Modelo</dt>
+          <dd class='mt-1'>{{ budget.vehicle.brand }} {{ budget.vehicle.model }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>Cor</dt>
+          <dd class='mt-1'>{{ budget.vehicle.color|default:'-' }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>Ano</dt>
+          <dd class='mt-1'>{{ budget.vehicle.year|default:'-' }}</dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h2 class='text-lg font-semibold text-[#D4AF37]'>Dados do orçamento</h2>
+    <div class='mt-4 grid grid-cols-1 gap-6 md:grid-cols-6'>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Status</div>
+        <div class='mt-1'>{{ budget.get_status_display }}</div>
+      </div>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Motivo recusa</div>
+        <div class='mt-1'>
+          {% if budget.refusal_reason_code %}{{ budget.get_refusal_reason_code_display }}{% endif %}
+          {% if budget.refusal_reason %}{% if budget.refusal_reason_code %} · {% endif %}{{ budget.refusal_reason }}{% endif %}
+          {% if not budget.refusal_reason_code and not budget.refusal_reason %}-{% endif %}
+        </div>
+      </div>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Data entrada</div>
+        <div class='mt-1'>{{ budget.entry_date|date:'d/m/Y'|default:'-' }}</div>
+      </div>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Início reparo</div>
+        <div class='mt-1'>{{ budget.repair_start_date|date:'d/m/Y'|default:'-' }}</div>
+      </div>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Previsão entrega</div>
+        <div class='mt-1'>{{ budget.expected_delivery_date|date:'d/m/Y'|default:'-' }}</div>
+      </div>
+      <div>
+        <div class='text-sm text-[#A3A3A3]'>Reparo sem peças</div>
+        <div class='mt-1'>{% if budget.allow_repair_without_parts %}Sim{% else %}Não{% endif %}</div>
+      </div>
+    </div>
+    <div class='mt-6'>
+      <div class='text-sm text-[#A3A3A3]'>Total</div>
+      <div class='mt-1 text-xl font-semibold text-[#D4AF37]'>R$ {{ budget.total_amount|floatformat:2 }}</div>
+    </div>
+
+    <div class='mt-6 overflow-hidden rounded-lg border border-[#262626]'>
+      <div class='bg-[#141414] px-4 py-3 text-sm font-semibold text-[#D4AF37]'>Composição (Cilia)</div>
+      <div class='grid grid-cols-1 gap-4 px-4 py-4 text-sm md:grid-cols-6'>
+        {% if budget.shop_parts_total and budget.shop_parts_total > 0 %}
+          <div>
+            <div class='text-[#A3A3A3]'>Peças (Oficina)</div>
+            <div class='mt-1'>R$ {{ budget.shop_parts_total|floatformat:2 }}</div>
+          </div>
+        {% endif %}
+        {% if third_party_services_total and third_party_services_total > 0 %}
+          <div>
+            <div class='text-[#A3A3A3]'>Serviços e Terceiros</div>
+            <div class='mt-1'>R$ {{ third_party_services_total|floatformat:2 }}</div>
+          </div>
+        {% endif %}
+        {% if budget.labor_total and budget.labor_total > 0 %}
+          <div>
+            <div class='text-[#A3A3A3]'>Mão de obra</div>
+            <div class='mt-1'>R$ {{ budget.labor_total|floatformat:2 }}</div>
+          </div>
+        {% endif %}
+        {% if budget.discount_total and budget.discount_total > 0 %}
+          <div>
+            <div class='text-[#A3A3A3]'>Desconto</div>
+            <div class='mt-1'>R$ {{ budget.discount_total|floatformat:2 }}</div>
+          </div>
+        {% endif %}
+        {% if budget.markup_total and budget.markup_total > 0 %}
+          <div>
+            <div class='text-[#A3A3A3]'>Majoração</div>
+            <div class='mt-1'>R$ {{ budget.markup_total|floatformat:2 }}</div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex items-center justify-between'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Peças</h2>
+      <div class='flex items-center gap-3'>
+        <a href='{% url "budgets:piece_create" budget.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
+          Nova peça
+        </a>
+        <span class='text-sm text-[#A3A3A3]'>{{ pieces_parts.count }}</span>
+      </div>
+    </div>
+
+    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Nome</th>
+            <th class='px-4 py-3 font-semibold'>Fornecedor</th>
+            <th class='px-4 py-3 font-semibold'>Compra</th>
+            <th class='px-4 py-3 font-semibold'>Prev. chegada</th>
+            <th class='px-4 py-3 font-semibold'>Chegou</th>
+            <th class='px-4 py-3 font-semibold'>Custo</th>
+            <th class='px-4 py-3 font-semibold'></th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626]'>
+          {% for piece in pieces_parts %}
+            <tr class='hover:bg-[#121212]'>
+              <td class='px-4 py-3'>{{ piece.name }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{{ piece.get_provider_type_display }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if piece.purchase_date %}
+                  {{ piece.purchase_date|date:'d/m/Y' }}
+                {% else %}
+                  <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#FECACA]'>Não comprada</span>
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if piece.expected_arrival_date %}
+                  {{ piece.expected_arrival_date|date:'d/m/Y' }}
+                  {% if not piece.arrived and piece.expected_arrival_date < today %}
+                    <span class='ml-2 rounded-full border border-[#7F1D1D] bg-[#3B0A0A] px-2 py-0.5 text-xs text-[#FECACA]'>Atrasada</span>
+                  {% endif %}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if piece.arrived %}
+                  Sim{% if piece.arrival_date %} · {{ piece.arrival_date|date:'d/m/Y' }}{% endif %}
+                {% else %}
+                  Não
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if piece.provider_type == 'SHOP' %}
+                  R$ {{ piece.cost_price|floatformat:2 }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3'>
+                <div class='flex flex-wrap justify-end gap-2'>
+                  <a href='{% url "budgets:piece_update" piece.pk %}' class='whitespace-nowrap rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                    Editar
+                  </a>
+                  <a href='{% url "budgets:piece_delete" piece.pk %}' class='whitespace-nowrap rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                    Excluir
+                  </a>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='7'>Nenhuma peça cadastrada.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex items-center justify-between'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Mão de obra (detalhada)</h2>
+      <span class='text-sm text-[#A3A3A3]'>{{ service_lines|length }}</span>
+    </div>
+
+    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Descrição</th>
+            <th class='px-4 py-3 font-semibold'>Cód.</th>
+            <th class='px-4 py-3 font-semibold'>Desmontagem</th>
+            <th class='px-4 py-3 font-semibold'>Funilaria</th>
+            <th class='px-4 py-3 font-semibold'>Preparação</th>
+            <th class='px-4 py-3 font-semibold'>Pintura</th>
+            <th class='px-4 py-3 font-semibold'>Montagem</th>
+            <th class='px-4 py-3 font-semibold'>Valor</th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626]'>
+          {% for s in service_lines %}
+            <tr class='hover:bg-[#121212]'>
+              <td class='px-4 py-3'>{{ s.description }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.code %}{{ s.code }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.desmontagem_hours and s.desmontagem_hours > 0 %}
+                  <div class='flex items-center gap-2'>
+                    <span>{{ s.desmontagem_hours }}</span>
+                    {% if s.desmontagem_amount and s.desmontagem_amount > 0 %}
+                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.desmontagem_amount|floatformat:2 }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.funilaria_hours and s.funilaria_hours > 0 %}
+                  <div class='flex items-center gap-2'>
+                    <span>{{ s.funilaria_hours }}</span>
+                    {% if s.funilaria_amount and s.funilaria_amount > 0 %}
+                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.funilaria_amount|floatformat:2 }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.preparacao_hours and s.preparacao_hours > 0 %}
+                  <div class='flex items-center gap-2'>
+                    <span>{{ s.preparacao_hours }}</span>
+                    {% if s.preparacao_amount and s.preparacao_amount > 0 %}
+                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.preparacao_amount|floatformat:2 }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.pintura_hours and s.pintura_hours > 0 %}
+                  <div class='flex items-center gap-2'>
+                    <span>{{ s.pintura_hours }}</span>
+                    {% if s.pintura_amount and s.pintura_amount > 0 %}
+                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.pintura_amount|floatformat:2 }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.montagem_hours and s.montagem_hours > 0 %}
+                  <div class='flex items-center gap-2'>
+                    <span>{{ s.montagem_hours }}</span>
+                    {% if s.montagem_amount and s.montagem_amount > 0 %}
+                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.montagem_amount|floatformat:2 }}</span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.total_amount and s.total_amount > 0 %}R$ {{ s.total_amount|floatformat:2 }}{% else %}-{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='8'>Nenhuma mão de obra encontrada no XML.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex items-center justify-between'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Serviços e Terceiros</h2>
+      <span class='text-sm text-[#A3A3A3]'>{{ third_party_services|length }}</span>
+    </div>
+
+    <form class='mt-4 flex flex-wrap items-end gap-3' method='post' action='{% url "budgets:third_party_create" budget.pk %}'>
+      {% csrf_token %}
+      <div class='flex-1 min-w-[220px]'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_third_party_description'>Descrição</label>
+        <input id='id_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Lavagem do veículo' required />
+      </div>
+      <div class='w-[160px]'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_third_party_amount'>Valor (R$)</label>
+        <input id='id_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='70,00' required />
+      </div>
+      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>Adicionar</button>
+    </form>
+
+    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Descrição</th>
+            <th class='px-4 py-3 font-semibold'>Valor</th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626]'>
+          {% for s in third_party_services %}
+            <tr class='hover:bg-[#121212]'>
+              <td class='px-4 py-3'>{{ s.description }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ s.total_amount|floatformat:2 }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='2'>Nenhum serviço terceiro cadastrado.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

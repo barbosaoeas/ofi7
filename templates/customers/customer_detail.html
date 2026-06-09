@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+
+{% block title %}Cliente | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='flex flex-wrap items-center justify-between gap-3'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>{{ customer.name }}</h1>
+    <a href='{% url "customers:vehicle_create" customer.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+      Adicionar veículo
+    </a>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-2'>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Dados</h2>
+      <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
+        <div>
+          <dt class='text-[#A3A3A3]'>CPF/CNPJ</dt>
+          <dd class='mt-1'>{{ customer.document_cpf_cnpj }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>Telefone</dt>
+          <dd class='mt-1'>{{ customer.phone|default:'-' }}</dd>
+        </div>
+        <div>
+          <dt class='text-[#A3A3A3]'>E-mail</dt>
+          <dd class='mt-1'>{{ customer.email|default:'-' }}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <div class='flex items-center justify-between'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Veículos</h2>
+        <span class='text-sm text-[#A3A3A3]'>{{ customer.vehicles.count }}</span>
+      </div>
+
+      <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+        <table class='w-full text-left text-sm'>
+          <thead class='bg-[#141414] text-[#D4AF37]'>
+            <tr>
+              <th class='px-4 py-3 font-semibold'>Placa</th>
+              <th class='px-4 py-3 font-semibold'>Veículo</th>
+              <th class='px-4 py-3 font-semibold'>Ano</th>
+            </tr>
+          </thead>
+          <tbody class='divide-y divide-[#262626]'>
+            {% for vehicle in customer.vehicles.all %}
+              <tr class='hover:bg-[#121212]'>
+                <td class='px-4 py-3'>{{ vehicle.plate }}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>{{ vehicle.brand }} {{ vehicle.model }}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>{{ vehicle.year|default:'-' }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td class='px-4 py-6 text-[#A3A3A3]' colspan='3'>Nenhum veículo cadastrado.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6'>
+    <a href='{% url "customers:customer_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      Voltar para clientes
+    </a>
+  </div>
+{% endblock %}

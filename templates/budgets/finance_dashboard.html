@@ -1,0 +1,521 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Financeiro | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-7xl px-4 py-8{% endblock %}
+
+{% block content %}
+  <div class='flex flex-wrap items-center justify-between gap-3'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Financeiro</h1>
+  </div>
+
+  <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-xl border border-[#262626] bg-[#1A1A1A] p-4 md:grid-cols-6'>
+    <div>
+      <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_start'>De</label>
+      <input id='id_start' type='date' name='start' value='{{ filters.start|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+    </div>
+    <div>
+      <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_end'>Até</label>
+      <input id='id_end' type='date' name='end' value='{{ filters.end|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+    </div>
+    <div>
+      <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_direction'>Direção</label>
+      <select id='id_direction' name='direction' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+        <option value='' {% if not filters.direction %}selected{% endif %}>Todas</option>
+        <option value='IN' {% if filters.direction == 'IN' %}selected{% endif %}>Entradas</option>
+        <option value='OUT' {% if filters.direction == 'OUT' %}selected{% endif %}>Saídas</option>
+      </select>
+    </div>
+    <div>
+      <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_realized'>Status</label>
+      <select id='id_realized' name='realized' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+        <option value='' {% if filters.realized == '' %}selected{% endif %}>Todos</option>
+        <option value='0' {% if filters.realized == '0' %}selected{% endif %}>Em aberto</option>
+        <option value='1' {% if filters.realized == '1' %}selected{% endif %}>Realizados</option>
+      </select>
+    </div>
+    <div class='md:col-span-2'>
+      <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_category'>Tipo</label>
+      <select id='id_category' name='category' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+        <option value='' {% if not filters.category_id %}selected{% endif %}>Todos</option>
+        {% for c in categories %}
+          <option value='{{ c.id }}' {% if filters.category_id == c.id %}selected{% endif %}>
+            {{ c.get_direction_display }}{% if c.direction == 'OUT' and c.group %} · {{ c.get_group_display }}{% endif %} · {{ c.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class='md:col-span-6 flex flex-wrap items-center justify-end gap-3 pt-2'>
+      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+        Filtrar
+      </button>
+      <a href='{% url "budgets:finance_dashboard" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 text-sm hover:border-[#D4AF37]'>
+        Limpar
+      </a>
+    </div>
+  </form>
+
+  <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-4'>
+      <div class='text-xs text-[#A3A3A3]'>Previsto no período</div>
+      <div class='mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3'>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Entradas</div>
+          <div class='mt-1 text-lg font-semibold text-[#22c55e]'>R$ {{ expected_in|floatformat:2 }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Saídas</div>
+          <div class='mt-1 text-lg font-semibold text-[#ef4444]'>R$ {{ expected_out|floatformat:2 }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Saldo</div>
+          <div class='mt-1 text-lg font-semibold text-[#F5F5F5]'>R$ {{ expected_net|floatformat:2 }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-4'>
+      <div class='text-xs text-[#A3A3A3]'>Realizado no período</div>
+      <div class='mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3'>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Entradas</div>
+          <div class='mt-1 text-lg font-semibold text-[#22c55e]'>R$ {{ realized_in|floatformat:2 }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Saídas</div>
+          <div class='mt-1 text-lg font-semibold text-[#ef4444]'>R$ {{ realized_out|floatformat:2 }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#121212] p-3'>
+          <div class='text-xs text-[#A3A3A3]'>Saldo</div>
+          <div class='mt-1 text-lg font-semibold text-[#F5F5F5]'>R$ {{ realized_net|floatformat:2 }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6'>
+      <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-4'>
+        <div class='flex flex-wrap items-center justify-between gap-3'>
+          <h2 class='text-lg font-semibold text-[#D4AF37]'>Lançamentos</h2>
+          <div class='flex flex-wrap gap-3'>
+            <button type='button' data-open-modal='movement-create' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+              Novo lançamento
+            </button>
+            <button type='button' data-open-modal='categories' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 text-sm hover:border-[#D4AF37]'>
+              Tipos
+            </button>
+          </div>
+        </div>
+
+        <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+          <table class='w-full text-left text-sm'>
+            <thead class='bg-[#141414] text-[#D4AF37]'>
+              <tr>
+                <th class='px-4 py-3 font-semibold'>Venc.</th>
+                <th class='px-4 py-3 font-semibold'>Direção</th>
+                <th class='px-4 py-3 font-semibold'>Tipo</th>
+                <th class='px-4 py-3 font-semibold'>Descrição</th>
+                <th class='px-4 py-3 font-semibold'>Orçamento</th>
+                <th class='px-4 py-3 font-semibold text-right'>Valor</th>
+                <th class='px-4 py-3 font-semibold'>Status</th>
+                <th class='px-4 py-3 font-semibold text-right'>Ações</th>
+              </tr>
+            </thead>
+            <tbody class='divide-y divide-[#262626]'>
+              {% for m in movements %}
+                <tr class='hover:bg-[#121212]'>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>{{ m.due_date|date:'d/m/Y' }}</td>
+                  <td class='px-4 py-3'>
+                    {% if m.direction == 'IN' %}
+                      <span class='rounded-md bg-[#052e16] px-2 py-1 text-xs text-[#86efac]'>Entrada</span>
+                    {% else %}
+                      <span class='rounded-md bg-[#450a0a] px-2 py-1 text-xs text-[#fca5a5]'>Saída</span>
+                    {% endif %}
+                  </td>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.name }}{% else %}-{% endif %}</td>
+                  <td class='px-4 py-3'>{{ m.description|default:'-' }}</td>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>
+                    {% if m.budget %}
+                      <a class='hover:underline' href='{% url "budgets:budget_detail" m.budget.pk %}'>#{{ m.budget.display_number }}</a>
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td class='px-4 py-3 text-right'>R$ {{ m.amount|floatformat:2 }}</td>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.is_realized %}Realizado{% else %}Em aberto{% endif %}</td>
+                  <td class='px-4 py-3'>
+                    <div class='flex flex-wrap justify-end gap-2'>
+                      <form method='post' class='inline'>
+                        {% csrf_token %}
+                        <input type='hidden' name='action' value='toggle_movement_realized' />
+                        <input type='hidden' name='movement_id' value='{{ m.id }}' />
+                        <input type='hidden' name='next' value='{{ current_query }}' />
+                        <button type='submit' class='{% if m.is_realized %}rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]{% else %}rounded-md bg-[#052e16] px-3 py-2 text-xs text-[#86efac] hover:brightness-110{% endif %}'>
+                          {% if m.is_realized %}Reabrir{% else %}Confirmar{% endif %}
+                        </button>
+                      </form>
+
+                      <a href='{{ current_query }}{% if "?" in current_query %}&{% else %}?{% endif %}edit={{ m.id }}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                        Editar
+                      </a>
+
+                      <form method='post' class='inline' data-confirm='Excluir este lançamento?'>
+                        {% csrf_token %}
+                        <input type='hidden' name='action' value='delete_movement' />
+                        <input type='hidden' name='movement_id' value='{{ m.id }}' />
+                        <input type='hidden' name='next' value='{{ current_query }}' />
+                        <button type='submit' class='rounded-md border border-[#7f1d1d] bg-[#450a0a] px-3 py-2 text-xs text-[#fca5a5] hover:brightness-110'>
+                          Excluir
+                        </button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan='8' class='px-4 py-6 text-center text-sm text-[#A3A3A3]'>Sem lançamentos no período.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+  </div>
+
+  <div id='modal-movement-create' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4' data-modal='movement-create'>
+    <div class='w-full max-w-4xl overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A] shadow-2xl'>
+      <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-[#141414] px-4 py-3'>
+        <div class='text-sm font-semibold text-[#D4AF37]'>Novo lançamento</div>
+        <button type='button' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' data-close-modal='movement-create'>Fechar</button>
+      </div>
+      <form method='post' class='p-4 grid grid-cols-1 gap-3 md:grid-cols-6'>
+        {% csrf_token %}
+        <input type='hidden' name='action' value='create_movement' />
+        <input type='hidden' name='next' value='{{ current_query }}' />
+
+        <div class='md:col-span-2'>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_desc'>Descrição</label>
+          <input id='id_mov_desc' name='description' type='text' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+        </div>
+        <div>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_amount'>Valor (R$)</label>
+          <input id='id_mov_amount' name='amount' type='number' min='0' step='0.01' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+        </div>
+        <div>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_due'>Venc.</label>
+          <input id='id_mov_due' name='due_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+        </div>
+        <div>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_dir'>Direção</label>
+          <select id='id_mov_dir' name='direction' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+            <option value='IN'>Entrada</option>
+            <option value='OUT' selected>Saída</option>
+          </select>
+        </div>
+        <div>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_source'>Origem</label>
+          <select id='id_mov_source' name='source' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+            <option value='CUSTOMER'>Cliente</option>
+            <option value='INSURER'>Seguradora</option>
+            <option value='OTHER' selected>Outro</option>
+          </select>
+        </div>
+        <div id='mov-group-block' class='md:col-span-3'>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_group'>Grupo (saída)</label>
+          <select id='id_mov_group' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+            <option value=''>Todos</option>
+            {% for value, label in expense_groups %}
+              <option value='{{ value }}'>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class='md:col-span-3'>
+          <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_cat'>Tipo</label>
+          <select id='id_mov_cat' name='category_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+            <option value=''>-</option>
+            {% for c in categories %}
+              <option value='{{ c.id }}' data-direction='{{ c.direction }}' data-group='{{ c.group }}'>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class='md:col-span-2 flex items-center gap-2'>
+          <input id='id_mov_realized' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+          <label for='id_mov_realized' class='text-sm text-[#A3A3A3]'>Realizado</label>
+        </div>
+        <div class='md:col-span-1 flex justify-end'>
+          <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+            Lançar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if edit_movement %}
+    <div class='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4'>
+      <div class='w-full max-w-4xl overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A] shadow-2xl'>
+        <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-[#141414] px-4 py-3'>
+          <div class='text-sm font-semibold text-[#D4AF37]'>Editar lançamento</div>
+          <a href='{{ current_query_no_edit }}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>Fechar</a>
+        </div>
+        <form method='post' class='p-4 grid grid-cols-1 gap-3 md:grid-cols-6'>
+          {% csrf_token %}
+          <input type='hidden' name='action' value='update_movement' />
+          <input type='hidden' name='movement_id' value='{{ edit_movement.id }}' />
+          <input type='hidden' name='next' value='{{ current_query_no_edit }}' />
+
+          <div class='md:col-span-2'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_desc_edit'>Descrição</label>
+            <input id='id_mov_desc_edit' name='description' type='text' value='{{ edit_movement.description|default_if_none:"" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          </div>
+          <div>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_amount_edit'>Valor (R$)</label>
+            <input id='id_mov_amount_edit' name='amount' type='number' min='0' step='0.01' value='{{ edit_movement.amount|unlocalize }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          </div>
+          <div>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_due_edit'>Venc.</label>
+            <input id='id_mov_due_edit' name='due_date' type='date' value='{{ edit_movement.due_date|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          </div>
+          <div>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_dir_edit'>Direção</label>
+            <select id='id_mov_dir_edit' name='direction' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value='IN' {% if edit_movement.direction == 'IN' %}selected{% endif %}>Entrada</option>
+              <option value='OUT' {% if edit_movement.direction == 'OUT' %}selected{% endif %}>Saída</option>
+            </select>
+          </div>
+          <div>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_source_edit'>Origem</label>
+            <select id='id_mov_source_edit' name='source' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value='CUSTOMER' {% if edit_movement.source == 'CUSTOMER' %}selected{% endif %}>Cliente</option>
+              <option value='INSURER' {% if edit_movement.source == 'INSURER' %}selected{% endif %}>Seguradora</option>
+              <option value='OTHER' {% if edit_movement.source == 'OTHER' %}selected{% endif %}>Outro</option>
+            </select>
+          </div>
+          <div id='mov-group-block-edit' class='md:col-span-3'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_group_edit'>Grupo (saída)</label>
+            <select id='id_mov_group_edit' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value=''>Todos</option>
+              {% for value, label in expense_groups %}
+                <option value='{{ value }}'>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class='md:col-span-3'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_mov_cat_edit'>Tipo</label>
+            <select id='id_mov_cat_edit' name='category_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value=''>-</option>
+              {% for c in categories %}
+                <option value='{{ c.id }}' data-direction='{{ c.direction }}' data-group='{{ c.group }}' {% if edit_movement.category and edit_movement.category.id == c.id %}selected{% endif %}>{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class='md:col-span-2 flex items-center gap-2'>
+            <input id='id_mov_realized_edit' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' {% if edit_movement.is_realized %}checked{% endif %} />
+            <label for='id_mov_realized_edit' class='text-sm text-[#A3A3A3]'>Realizado</label>
+          </div>
+          <div class='md:col-span-1 flex justify-end'>
+            <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+              Salvar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
+  <div id='modal-categories' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4' data-modal='categories'>
+    <div class='w-full max-w-3xl overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A] shadow-2xl'>
+      <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-[#141414] px-4 py-3'>
+        <div class='text-sm font-semibold text-[#D4AF37]'>Tipos</div>
+        <button type='button' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' data-close-modal='categories'>Fechar</button>
+      </div>
+      <div class='p-4'>
+        <form method='post' class='grid grid-cols-1 gap-3 rounded-lg border border-[#262626] bg-[#121212] p-4 sm:grid-cols-6'>
+          {% csrf_token %}
+          <input type='hidden' name='action' value='create_category' />
+          <input type='hidden' name='next' value='{{ current_query }}' />
+          <div class='sm:col-span-3'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_cat_name'>Nome</label>
+            <input id='id_cat_name' name='name' type='text' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          </div>
+          <div class='sm:col-span-2'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_cat_dir'>Direção</label>
+            <select id='id_cat_dir' name='direction' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value='OUT' selected>Saída (Despesa)</option>
+              <option value='IN'>Entrada</option>
+            </select>
+          </div>
+          <div id='cat-group-block' class='sm:col-span-1'>
+            <label class='mb-1 block text-xs text-[#A3A3A3]' for='id_cat_group'>Grupo</label>
+            <select id='id_cat_group' name='group' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+              <option value=''>-</option>
+              {% for value, label in expense_groups %}
+                <option value='{{ value }}'>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class='sm:col-span-6 flex justify-end'>
+            <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+              Cadastrar tipo
+            </button>
+          </div>
+        </form>
+
+        <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+          <table class='w-full text-left text-sm'>
+            <thead class='bg-[#141414] text-[#D4AF37]'>
+              <tr>
+                <th class='px-4 py-3 font-semibold'>Direção</th>
+                <th class='px-4 py-3 font-semibold'>Grupo</th>
+                <th class='px-4 py-3 font-semibold'>Nome</th>
+                <th class='px-4 py-3 font-semibold text-right'></th>
+              </tr>
+            </thead>
+            <tbody class='divide-y divide-[#262626]'>
+              {% for c in categories %}
+                <tr class='hover:bg-[#121212]'>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>{{ c.get_direction_display }}</td>
+                  <td class='px-4 py-3 text-[#A3A3A3]'>
+                    {% if c.direction == 'OUT' and c.group %}
+                      {{ c.get_group_display }}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td class='px-4 py-3'>{{ c.name }}</td>
+                  <td class='px-4 py-3 text-right'>
+                    <form method='post' class='inline' data-confirm='Remover este tipo?'>
+                      {% csrf_token %}
+                      <input type='hidden' name='action' value='delete_category' />
+                      <input type='hidden' name='category_id' value='{{ c.id }}' />
+                      <input type='hidden' name='next' value='{{ current_query }}' />
+                      <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                        Remover
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan='4' class='px-4 py-6 text-center text-sm text-[#A3A3A3]'>Nenhum tipo cadastrado.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      function syncCategoryGroupUI(directionEl, groupEl) {
+        var block = document.getElementById('cat-group-block');
+        if (!directionEl || !groupEl || !block) return;
+        var dir = (directionEl.value || '').toUpperCase();
+        var show = dir === 'OUT';
+        block.style.display = show ? '' : 'none';
+        if (!show) groupEl.value = '';
+      }
+
+      function filterCategories(directionEl, groupEl, categoryEl) {
+        if (!directionEl || !categoryEl) return;
+        var dir = (directionEl.value || '').toUpperCase();
+        var group = (groupEl && dir === 'OUT') ? (groupEl.value || '').toUpperCase() : '';
+        var selectedOk = true;
+
+        Array.prototype.forEach.call(categoryEl.options, function (opt) {
+          if (!opt || !opt.value) return;
+          var optDir = (opt.getAttribute('data-direction') || '').toUpperCase();
+          var optGroup = (opt.getAttribute('data-group') || '').toUpperCase();
+          var show = (!optDir || !dir || optDir === dir) && (!group || optGroup === group);
+          opt.hidden = !show;
+          opt.disabled = !show;
+          if (opt.selected && !show) selectedOk = false;
+        });
+
+        if (!selectedOk) categoryEl.value = '';
+      }
+
+      function syncMovementGroupUI(directionEl, groupEl, categoryEl, blockId) {
+        var block = blockId ? document.getElementById(blockId) : null;
+        var dir = directionEl ? (directionEl.value || '').toUpperCase() : '';
+        var showGroup = dir === 'OUT';
+        if (block) block.style.display = showGroup ? '' : 'none';
+        if (groupEl && !showGroup) groupEl.value = '';
+        filterCategories(directionEl, groupEl, categoryEl);
+      }
+
+      function setGroupFromSelected(categoryEl, groupEl) {
+        if (!categoryEl || !groupEl) return;
+        var selected = categoryEl.options[categoryEl.selectedIndex];
+        if (!selected || groupEl.value) return;
+        groupEl.value = (selected.getAttribute('data-group') || '').toUpperCase();
+      }
+
+      function bind() {
+        var direction = document.getElementById('id_mov_dir');
+        var group = document.getElementById('id_mov_group');
+        var category = document.getElementById('id_mov_cat');
+        if (direction) direction.addEventListener('change', function () { syncMovementGroupUI(direction, group, category, 'mov-group-block'); });
+        if (group) group.addEventListener('change', function () { syncMovementGroupUI(direction, group, category, 'mov-group-block'); });
+        syncMovementGroupUI(direction, group, category, 'mov-group-block');
+
+        var directionEdit = document.getElementById('id_mov_dir_edit');
+        var groupEdit = document.getElementById('id_mov_group_edit');
+        var categoryEdit = document.getElementById('id_mov_cat_edit');
+        setGroupFromSelected(categoryEdit, groupEdit);
+        if (directionEdit) directionEdit.addEventListener('change', function () { syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit'); });
+        if (groupEdit) groupEdit.addEventListener('change', function () { syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit'); });
+        syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit');
+
+        var catDir = document.getElementById('id_cat_dir');
+        var catGroup = document.getElementById('id_cat_group');
+        if (catDir) catDir.addEventListener('change', function () { syncCategoryGroupUI(catDir, catGroup); });
+        syncCategoryGroupUI(catDir, catGroup);
+
+        document.querySelectorAll('[data-confirm]').forEach(function (form) {
+          form.addEventListener('submit', function (ev) {
+            var msg = form.getAttribute('data-confirm') || 'Confirmar?';
+            if (!window.confirm(msg)) ev.preventDefault();
+          });
+        });
+
+        function openModal(key) {
+          var el = document.querySelector('[data-modal=\"' + key + '\"]');
+          if (!el) return;
+          el.classList.remove('hidden');
+          el.classList.add('flex');
+        }
+
+        function closeModal(key) {
+          var el = document.querySelector('[data-modal=\"' + key + '\"]');
+          if (!el) return;
+          el.classList.add('hidden');
+          el.classList.remove('flex');
+        }
+
+        document.querySelectorAll('[data-open-modal]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            openModal(btn.getAttribute('data-open-modal'));
+          });
+        });
+
+        document.querySelectorAll('[data-close-modal]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            closeModal(btn.getAttribute('data-close-modal'));
+          });
+        });
+
+        document.querySelectorAll('[data-modal]').forEach(function (modal) {
+          modal.addEventListener('click', function (ev) {
+            if (ev.target === modal) closeModal(modal.getAttribute('data-modal'));
+          });
+        });
+      }
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+      else bind();
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang='pt-br'>
+  <head>
+    <meta charset='utf-8' />
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <title>{% block title %}Controle Oficina{% endblock %}</title>
+    <script src='https://cdn.tailwindcss.com'></script>
+    <style>
+      input[type='date'] {
+        color-scheme: dark;
+      }
+      input[type='date']::-webkit-calendar-picker-indicator {
+        filter: invert(78%) sepia(56%) saturate(750%) hue-rotate(2deg) brightness(105%) contrast(95%);
+        opacity: 1;
+      }
+    </style>
+  </head>
+  <body class='bg-[#0D0D0D] text-[#F5F5F5] font-sans antialiased'>
+    <div class='min-h-screen'>
+      {% if user.is_authenticated and user.role == 'VISUAL' and request.resolver_match.view_name == 'budgets:kanban_today' %}
+      {% else %}
+        <header class='border-b border-[#262626] bg-[#141414]'>
+          <div class='mx-auto flex max-w-6xl items-center justify-between px-4 py-4'>
+            <a href='{% url "core:public_index" %}' class='text-[#D4AF37] text-lg font-semibold tracking-wide'>
+              Controle Oficina
+            </a>
+            <nav class='flex items-center gap-3 text-sm'>
+              {% if user.is_authenticated %}
+                {% with role=user.role %}
+                {% if role != 'OPERATIONAL' and role != 'VISUAL' %}
+                  <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Orçamentos
+                  </a>
+                  <a href='{% url "budgets:budget_open_list" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Orçamento s/aprovação
+                  </a>
+                {% endif %}
+
+                {% if role == 'MANAGER' or role == 'FINANCE' %}
+                  <a href='{% url "budgets:finance_dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Financeiro
+                  </a>
+                  <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    OS
+                  </a>
+                {% endif %}
+
+                <a href='{% url "budgets:kanban_today" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                  Kanban
+                </a>
+
+                {% if role != 'OPERATIONAL' and role != 'VISUAL' %}
+                  <a href='{% url "budgets:vehicle_entry_kanban" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Kanban de entrada de veículo
+                  </a>
+                {% endif %}
+
+                {% if role != 'VISUAL' %}
+                  <div class='relative'>
+                    <input id='nav-relatorios' type='checkbox' class='peer hidden' />
+                    <label for='nav-relatorios' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37] cursor-pointer select-none'>
+                      Relatórios
+                    </label>
+                    <div class='absolute right-0 z-10 mt-2 hidden w-56 overflow-hidden rounded-md border border-[#262626] bg-[#1A1A1A] shadow-lg peer-checked:block'>
+                      <a href='{% url "budgets:commission_open_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Comissões
+                      </a>
+                      {% if role == 'MANAGER' or role == 'FINANCE' or role == 'ESTIMATOR' %}
+                        <a href='{% url "budgets:report_pieces" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                          Peças
+                        </a>
+                      {% endif %}
+                    </div>
+                  </div>
+                {% endif %}
+
+                {% if role == 'MANAGER' or role == 'FINANCE' %}
+                  <div class='relative'>
+                    <input id='nav-cadastros' type='checkbox' class='peer hidden' />
+                    <label for='nav-cadastros' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37] cursor-pointer select-none'>
+                      Cadastros
+                    </label>
+                    <div class='absolute right-0 z-10 mt-2 hidden w-56 overflow-hidden rounded-md border border-[#262626] bg-[#1A1A1A] shadow-lg peer-checked:block'>
+                      <a href='{% url "customers:customer_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Clientes
+                      </a>
+                      <a href='{% url "users:collaborator_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Colaboradores
+                      </a>
+                      <a href='{% url "budgets:service_catalog_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Serviços
+                      </a>
+                    </div>
+                  </div>
+                {% endif %}
+
+                {% if role != 'OPERATIONAL' and role != 'VISUAL' %}
+                  <a href='{% url "core:dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Dashboard
+                  </a>
+                {% endif %}
+                {% endwith %}
+                <form method='post' action='{% url "users:logout" %}'>
+                  {% csrf_token %}
+                  <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                    Sair
+                  </button>
+                </form>
+              {% else %}
+                <a href='{% url "users:login" %}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                  Entrar
+                </a>
+                <a href='{% url "users:register" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 font-semibold text-[#0D0D0D]'>
+                  Cadastre-se
+                </a>
+              {% endif %}
+            </nav>
+          </div>
+        </header>
+      {% endif %}
+
+      <main class='{% block main_class %}mx-auto max-w-6xl px-4 py-8{% endblock %}'>
+        {% if messages %}
+          <div class='mb-6 space-y-2'>
+            {% for message in messages %}
+              <div class='rounded-lg border border-[#262626] bg-[#1A1A1A] px-4 py-3 text-sm'>
+                {{ message }}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    <script>
+      (function () {
+        function onlyDigits(value) {
+          return (value || '').toString().replace(/\D+/g, '');
+        }
+
+        function maskCpf(digits) {
+          var d = digits.slice(0, 11);
+          if (d.length <= 3) return d;
+          if (d.length <= 6) return d.slice(0, 3) + '.' + d.slice(3);
+          if (d.length <= 9) return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6);
+          return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9);
+        }
+
+        function maskCnpj(digits) {
+          var d = digits.slice(0, 14);
+          if (d.length <= 2) return d;
+          if (d.length <= 5) return d.slice(0, 2) + '.' + d.slice(2);
+          if (d.length <= 8) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5);
+          if (d.length <= 12) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8);
+          return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12);
+        }
+
+        function maskDoc(digits) {
+          if (digits.length > 11) return maskCnpj(digits);
+          return maskCpf(digits);
+        }
+
+        function maskPhone(digits) {
+          var d = digits.slice(0, 11);
+          if (d.length <= 2) return d.length ? '(' + d : '';
+          var ddd = d.slice(0, 2);
+          var rest = d.slice(2);
+          if (rest.length <= 4) return '(' + ddd + ') ' + rest;
+          if (rest.length <= 8) return '(' + ddd + ') ' + rest.slice(0, 4) + '-' + rest.slice(4);
+          return '(' + ddd + ') ' + rest.slice(0, 5) + '-' + rest.slice(5);
+        }
+
+        function applyMaskToInput(input) {
+          var mask = input.getAttribute('data-mask');
+          if (!mask) return;
+          var digits = onlyDigits(input.value);
+          if (mask === 'cpf') input.value = maskCpf(digits);
+          if (mask === 'cnpj') input.value = maskCnpj(digits);
+          if (mask === 'doc') input.value = maskDoc(digits);
+          if (mask === 'phone') input.value = maskPhone(digits);
+        }
+
+        function normalizeUrlInput(input) {
+          var value = (input.value || '').trim();
+          if (!value) return;
+          if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value)) return;
+          input.value = 'https://' + value;
+        }
+
+        function bind() {
+          document.querySelectorAll('input[data-mask]').forEach(function (el) {
+            el.addEventListener('input', function () {
+              applyMaskToInput(el);
+            });
+            el.addEventListener('blur', function () {
+              applyMaskToInput(el);
+            });
+            applyMaskToInput(el);
+          });
+
+          document.querySelectorAll("input[type='url']").forEach(function (el) {
+            el.addEventListener('blur', function () {
+              normalizeUrlInput(el);
+            });
+          });
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', bind);
+        } else {
+          bind();
+        }
+      })();
+    </script>
+  </body>
+</html>

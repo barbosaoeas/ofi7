@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+
+{% block title %}Novo cliente | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-2xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Novo cliente</h1>
+
+    <form method='post' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      {% csrf_token %}
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.name.id_for_label }}'>Nome</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+        {% if form.name.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.name.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.document_cpf_cnpj.id_for_label }}'>CPF/CNPJ</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' inputmode='numeric' data-mask='doc' name='{{ form.document_cpf_cnpj.html_name }}' id='{{ form.document_cpf_cnpj.id_for_label }}' value='{{ form.document_cpf_cnpj.value|default_if_none:"" }}' required />
+        {% if form.document_cpf_cnpj.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.document_cpf_cnpj.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.phone.id_for_label }}'>Telefone</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' inputmode='tel' data-mask='phone' name='{{ form.phone.html_name }}' id='{{ form.phone.id_for_label }}' value='{{ form.phone.value|default_if_none:"" }}' />
+        {% if form.phone.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.phone.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.email.id_for_label }}'>E-mail</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='email' name='{{ form.email.html_name }}' id='{{ form.email.id_for_label }}' value='{{ form.email.value|default_if_none:"" }}' />
+        {% if form.email.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.email.errors }}</div>{% endif %}
+      </div>
+
+      {% if form.non_field_errors %}
+        <div class='md:col-span-2 rounded-lg border border-[#AA882C] bg-[#121212] px-4 py-3 text-sm text-[#F5F5F5]'>
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <div class='md:col-span-2 flex flex-wrap gap-3'>
+        <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Salvar
+        </button>
+        <a href='{% url "customers:customer_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Cancelar
+        </a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

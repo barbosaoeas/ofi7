@@ -1,0 +1,235 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Editar orçamento #{{ object.display_number }} | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-3xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Editar orçamento #{{ object.display_number }}</h1>
+      <div class='flex flex-wrap gap-3'>
+        {% if needs_finance and (user.role == 'MANAGER' or user.role == 'FINANCE') %}
+          <a href='{% url "budgets:budget_update" object.pk %}?finance=1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+            Registrar financeiro
+          </a>
+        {% endif %}
+        <a href='{% url "budgets:budget_detail" object.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Voltar
+        </a>
+      </div>
+    </div>
+
+    <div class='mt-4 rounded-lg border border-[#262626] bg-[#121212] px-4 py-3 text-sm text-[#A3A3A3]'>
+      Cliente: {{ object.customer.name }} · Veículo: {{ object.vehicle.plate }}
+    </div>
+
+    <form method='post' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div class='md:col-span-2 rounded-lg border border-[#AA882C] bg-[#121212] px-4 py-3 text-sm text-[#F5F5F5]'>
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.status.id_for_label }}'>Status</label>
+        <select class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' name='{{ form.status.html_name }}' id='{{ form.status.id_for_label }}' required>
+          {% for value, label in form.status.field.choices %}
+            <option value='{{ value }}' {% if form.status.value == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% if form.status.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.status.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]'>Total</label>
+        <div class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]'>R$ {{ computed_total_amount|floatformat:2 }}</div>
+      </div>
+
+      <div class='md:col-span-2' id='refusal-block'>
+        <div>
+          <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.refusal_reason_code.id_for_label }}'>Motivo recusa</label>
+          <select class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' name='{{ form.refusal_reason_code.html_name }}' id='{{ form.refusal_reason_code.id_for_label }}'>
+            <option value=''>-</option>
+            {% for value, label in form.refusal_reason_code.field.choices %}
+              <option value='{{ value }}' {% if form.refusal_reason_code.value == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          {% if form.refusal_reason_code.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.refusal_reason_code.errors }}</div>{% endif %}
+        </div>
+
+        <div class='mt-4'>
+          <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.refusal_reason.id_for_label }}'>Detalhes</label>
+          <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.refusal_reason.html_name }}' id='{{ form.refusal_reason.id_for_label }}' value='{{ form.refusal_reason.value|default_if_none:"" }}' />
+          {% if form.refusal_reason.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.refusal_reason.errors }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.entry_date.id_for_label }}'>Data entrada</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.entry_date.html_name }}' id='{{ form.entry_date.id_for_label }}' value='{% if form.is_bound %}{{ form.entry_date.value|default_if_none:"" }}{% elif object and object.entry_date %}{{ object.entry_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.entry_date.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.entry_date.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.repair_start_date.id_for_label }}'>Início reparo</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.repair_start_date.html_name }}' id='{{ form.repair_start_date.id_for_label }}' value='{% if form.is_bound %}{{ form.repair_start_date.value|default_if_none:"" }}{% elif object and object.repair_start_date %}{{ object.repair_start_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.repair_start_date.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.repair_start_date.errors }}</div>{% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.expected_delivery_date.id_for_label }}'>Previsão entrega</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5] focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.expected_delivery_date.html_name }}' id='{{ form.expected_delivery_date.id_for_label }}' value='{% if form.is_bound %}{{ form.expected_delivery_date.value|default_if_none:"" }}{% elif object and object.expected_delivery_date %}{{ object.expected_delivery_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.expected_delivery_date.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.expected_delivery_date.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='flex items-center gap-2 text-sm text-[#A3A3A3]' for='{{ form.allow_repair_without_parts.id_for_label }}'>
+          <input type='checkbox' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' name='{{ form.allow_repair_without_parts.html_name }}' id='{{ form.allow_repair_without_parts.id_for_label }}' {% if form.allow_repair_without_parts.value %}checked{% endif %} />
+          Autorizar seguir com o reparo sem as peças
+        </label>
+        {% if form.allow_repair_without_parts.errors %}<div class='mt-1 text-sm text-[#D4AF37]'>{{ form.allow_repair_without_parts.errors }}</div>{% endif %}
+      </div>
+
+      <div class='md:col-span-2 flex flex-wrap gap-3'>
+        <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Salvar
+        </button>
+        <a href='{% url "budgets:budget_detail" object.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Cancelar
+        </a>
+      </div>
+    </form>
+  </div>
+
+  {% if show_finance_modal %}
+    <div class='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4'>
+      <div class='w-full max-w-2xl overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A] shadow-2xl'>
+        <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-[#141414] px-4 py-3'>
+          <div class='text-sm font-semibold text-[#D4AF37]'>Financeiro (aprovação do orçamento)</div>
+          <a href='{% url "budgets:budget_detail" object.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+            Pular
+          </a>
+        </div>
+        <form method='post' action='{% url "budgets:budget_finance_create" object.pk %}' class='p-4'>
+          {% csrf_token %}
+
+          <div class='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <div class='sm:col-span-2'>
+              <label class='mb-1 block text-sm text-[#D4AF37]' for='id_fin_kind'>Tipo</label>
+              <select id='id_fin_kind' name='kind' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                <option value='PARTICULAR'>Particular</option>
+                <option value='SEGURADORA'>Seguradora</option>
+              </select>
+            </div>
+
+            <div>
+              <label class='mb-1 block text-sm text-[#D4AF37]'>Total</label>
+              <div class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>R$ {{ computed_total_amount|floatformat:2 }}</div>
+            </div>
+
+            <div>
+              <label class='mb-1 block text-sm text-[#D4AF37]' for='id_fin_default_due'>Venc. padrão</label>
+              <input id='id_fin_default_due' type='date' value='{{ finance_default_due_date|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' disabled />
+            </div>
+          </div>
+
+          <div id='fin-particular' class='mt-4'>
+            <div class='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+              <div>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_entry_amount'>Entrada (R$)</label>
+                <input id='id_entry_amount' name='entry_amount' type='number' min='0' step='0.01' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+              <div>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_entry_due_date'>Data entrada</label>
+                <input id='id_entry_due_date' name='entry_due_date' type='date' value='{{ today|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+              <div class='sm:col-span-2'>
+                <label class='flex items-center gap-2 text-sm text-[#A3A3A3]'>
+                  <input type='checkbox' name='entry_received' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+                  Recebido hoje (dar baixa)
+                </label>
+              </div>
+              <div class='sm:col-span-2'>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_remainder_due_date'>Vencimento do saldo</label>
+                <input id='id_remainder_due_date' name='remainder_due_date' type='date' value='{{ finance_default_due_date|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+            </div>
+          </div>
+
+          <div id='fin-seguradora' class='mt-4 hidden'>
+            <div class='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+              <div>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_franchise_amount'>Franquia (cliente) (R$)</label>
+                <input id='id_franchise_amount' name='franchise_amount' type='number' min='0' step='0.01' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+              <div>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_franchise_due_date'>Venc. franquia</label>
+                <input id='id_franchise_due_date' name='franchise_due_date' type='date' value='{{ today|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+              <div class='sm:col-span-2'>
+                <label class='mb-1 block text-sm text-[#D4AF37]' for='id_insurer_due_date'>Venc. seguradora</label>
+                <input id='id_insurer_due_date' name='insurer_due_date' type='date' value='{{ finance_default_due_date|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+            </div>
+          </div>
+
+          <div class='mt-6 flex flex-wrap justify-end gap-3'>
+            <a href='{% url "budgets:budget_update" object.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+              Voltar
+            </a>
+            <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+              Salvar financeiro
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
+  <script>
+    (function () {
+      function toggleRefusal() {
+        var status = document.getElementById('{{ form.status.id_for_label }}');
+        var block = document.getElementById('refusal-block');
+        if (!status || !block) return;
+        var show = status.value === 'NOT_APPROVED';
+        block.style.display = show ? '' : 'none';
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () {
+          var status = document.getElementById('{{ form.status.id_for_label }}');
+          if (status) status.addEventListener('change', toggleRefusal);
+          toggleRefusal();
+        });
+      } else {
+        var status = document.getElementById('{{ form.status.id_for_label }}');
+        if (status) status.addEventListener('change', toggleRefusal);
+        toggleRefusal();
+      }
+
+      function toggleFinance() {
+        var kind = document.getElementById('id_fin_kind');
+        var p = document.getElementById('fin-particular');
+        var s = document.getElementById('fin-seguradora');
+        if (!kind || !p || !s) return;
+        var isInsurer = (kind.value || '').toUpperCase() === 'SEGURADORA';
+        p.classList.toggle('hidden', isInsurer);
+        s.classList.toggle('hidden', !isInsurer);
+      }
+
+      function bindFinance() {
+        var kind = document.getElementById('id_fin_kind');
+        if (kind) kind.addEventListener('change', toggleFinance);
+        toggleFinance();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bindFinance);
+      } else {
+        bindFinance();
+      }
+    })();
+  </script>
+{% endblock %}

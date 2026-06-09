@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='grid grid-cols-1 gap-6 md:grid-cols-2'>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Bem-vindo ao Controle Oficina</h1>
+      <p class='mt-3 text-[#A3A3A3]'>
+        Sistema de gestão para funilaria e pintura: orçamentos, pátio produtivo e financeiro.
+      </p>
+      <div class='mt-6 flex flex-wrap gap-3'>
+        <a href='{% url "users:login" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Entrar
+        </a>
+        <a href='{% url "users:register" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+          Cadastre-se
+        </a>
+      </div>
+    </div>
+
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Acesso por perfil</h2>
+      <ul class='mt-3 space-y-2 text-sm text-[#A3A3A3]'>
+        <li>Gerente: visão e indicadores</li>
+        <li>Orçamentista: agenda e importação de XML</li>
+        <li>Financeiro: caixa, recebimentos e comissões</li>
+        <li>Operacional: Kanban e controle de tempo</li>
+      </ul>
+    </div>
+  </div>
+{% endblock %}

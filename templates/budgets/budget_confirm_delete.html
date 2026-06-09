@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}Excluir orçamento #{{ object.pk }} | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-2xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Excluir orçamento #{{ object.pk }}</h1>
+    <p class='mt-3 text-sm text-[#A3A3A3]'>
+      Esta ação remove o orçamento e as peças vinculadas. O cliente e o veículo não serão excluídos.
+    </p>
+
+    <div class='mt-4 rounded-lg border border-[#262626] bg-[#121212] px-4 py-3 text-sm text-[#A3A3A3]'>
+      Cliente: {{ object.customer.name }} · Veículo: {{ object.vehicle.plate }} · Total: R$ {{ object.total_amount|floatformat:2 }}
+    </div>
+
+    <form method='post' class='mt-6 flex flex-wrap gap-3'>
+      {% csrf_token %}
+      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+        Confirmar exclusão
+      </button>
+      <a href='{% url "budgets:budget_detail" object.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        Cancelar
+      </a>
+    </form>
+  </div>
+{% endblock %}

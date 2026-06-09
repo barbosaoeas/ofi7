@@ -1,0 +1,295 @@
+{% extends 'base.html' %}
+
+{% block title %}Relatório de Peças | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='flex flex-wrap items-center justify-between gap-3'>
+    <div>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Relatório de Peças</h1>
+      <p class='mt-1 text-sm text-[#A3A3A3]'>Data referência: {{ selected_date|date:'d/m/Y' }}</p>
+    </div>
+    <form method='get' class='flex items-end gap-2'>
+      <div>
+        <label class='block text-xs text-[#A3A3A3]' for='id_report_date'>Data</label>
+        <input id='id_report_date' name='date' type='date' value='{{ selected_date|date:"Y-m-d" }}' class='mt-1 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+      </div>
+      <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>Filtrar</button>
+    </form>
+  </div>
+
+  <style>
+    #pieces-print-host {
+      display: none;
+    }
+
+    @media print {
+      @page {
+        size: A4 landscape;
+        margin: 8mm;
+      }
+      html,
+      body {
+        margin: 0 !important;
+        padding: 0 !important;
+        height: auto !important;
+      }
+      body {
+        background: #ffffff !important;
+        color: #000000 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      a {
+        color: #000000 !important;
+        text-decoration: none !important;
+      }
+      table {
+        color: #000000 !important;
+      }
+      thead {
+        background: #f3f4f6 !important;
+        color: #000000 !important;
+      }
+      th,
+      td {
+        border-color: #d1d5db !important;
+      }
+
+      body.print-pieces-modal header,
+      body.print-pieces-modal main,
+      body.print-pieces-modal #pieces-modal {
+        display: none !important;
+      }
+
+      body.print-pieces-modal .min-h-screen {
+        display: none !important;
+        min-height: 0 !important;
+      }
+
+      body.print-pieces-modal #pieces-print-host {
+        display: block !important;
+        width: 100% !important;
+        max-width: none !important;
+      }
+
+      body.print-pieces-modal #pieces-print-host,
+      body.print-pieces-modal #pieces-print-host * {
+        color: #000000 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        border-color: #d1d5db !important;
+      }
+      body.print-pieces-modal #pieces-print-host table {
+        width: 100% !important;
+      }
+      body.print-pieces-modal #pieces-print-host th,
+      body.print-pieces-modal #pieces-print-host td {
+        font-size: 11px !important;
+        padding: 6px 8px !important;
+      }
+      body.print-pieces-modal #pieces-print-host th:nth-child(6),
+      body.print-pieces-modal #pieces-print-host td:nth-child(6) {
+        white-space: nowrap !important;
+      }
+      body.print-pieces-modal #pieces-print-host thead {
+        background: #f3f4f6 !important;
+      }
+      body.print-pieces-modal #pieces-print-host .rounded-full {
+        border-color: #111827 !important;
+        background: transparent !important;
+        white-space: nowrap !important;
+      }
+    }
+  </style>
+
+  <div class='mt-4 overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A]'>
+    <table class='w-full text-left text-sm'>
+      <thead class='bg-[#141414] text-[#D4AF37]'>
+        <tr>
+          <th class='px-4 py-3 font-semibold'>Orçamento</th>
+          <th class='px-4 py-3 font-semibold'>Cliente</th>
+          <th class='px-4 py-3 font-semibold'>Veículo</th>
+          <th class='px-4 py-3 font-semibold'>Total</th>
+          <th class='px-4 py-3 font-semibold'>Aguardando</th>
+          <th class='px-4 py-3 font-semibold'>Atrasadas</th>
+          <th class='px-4 py-3 font-semibold'>Não compradas</th>
+          <th class='px-4 py-3 font-semibold'>Chegaram</th>
+          <th class='px-4 py-3 font-semibold'></th>
+        </tr>
+      </thead>
+      <tbody class='divide-y divide-[#262626]'>
+        {% for row in rows %}
+          <tr class='hover:bg-[#121212]'>
+            <td class='px-4 py-3'>
+              <a class='hover:underline' href='{% url "budgets:budget_detail" row.budget.pk %}'>#{{ row.budget.display_number }}</a>
+            </td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.budget.customer.name }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.budget.vehicle.plate }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.total }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.pending }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.late }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.not_bought }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ row.arrived }}</td>
+            <td class='px-4 py-3 text-right'>
+              <button type='button' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' data-open-pieces='{{ row.budget.pk }}'>
+                Ver peças
+              </button>
+              <div id='pieces-content-{{ row.budget.pk }}' class='hidden'>
+                <div class='mb-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-[#262626] bg-[#121212] p-3'>
+                  <div class='flex items-start gap-3'>
+                    <div class='h-12 w-12 rounded-lg border border-[#262626] bg-[#0D0D0D]'></div>
+                    <div>
+                      <div class='text-sm font-semibold text-[#D4AF37]'>Funilaria Oficina (Exemplo)</div>
+                      <div class='mt-0.5 text-xs text-[#A3A3A3]'>Rua Exemplo, 123 · Centro · Cidade/UF · (11) 99999-9999</div>
+                    </div>
+                  </div>
+                  <div class='text-xs text-[#A3A3A3]'>
+                    <div><span class='text-[#D4AF37]'>Orçamento:</span> #{{ row.budget.display_number }} · <span class='text-[#D4AF37]'>Data:</span> {{ selected_date|date:'d/m/Y' }}</div>
+                    <div class='mt-0.5'><span class='text-[#D4AF37]'>Cliente:</span> {{ row.budget.customer.name }}</div>
+                    <div class='mt-0.5'><span class='text-[#D4AF37]'>Veículo:</span> {{ row.budget.vehicle.plate }} · {{ row.budget.vehicle.brand }} {{ row.budget.vehicle.model }}{% if row.budget.vehicle.color %} · {{ row.budget.vehicle.color }}{% endif %}{% if row.budget.vehicle.year %} · {{ row.budget.vehicle.year }}{% endif %}</div>
+                  </div>
+                </div>
+
+                <div class='overflow-hidden rounded-lg border border-[#262626] bg-[#0D0D0D]'>
+                  <table class='w-full text-left text-sm'>
+                    <thead class='bg-[#141414] text-[#D4AF37]'>
+                      <tr>
+                        <th class='px-3 py-2 font-semibold'>Peça</th>
+                        <th class='px-3 py-2 font-semibold'>Fornecedor</th>
+                        <th class='px-3 py-2 font-semibold'>Compra</th>
+                        <th class='px-3 py-2 font-semibold'>Prev. chegada</th>
+                        <th class='px-3 py-2 font-semibold'>Chegou</th>
+                        <th class='px-3 py-2 font-semibold'>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody class='divide-y divide-[#262626]'>
+                      {% for p in row.pieces %}
+                        <tr class='hover:bg-[#121212]'>
+                          <td class='px-3 py-2'>{{ p.name }}</td>
+                          <td class='px-3 py-2 text-[#A3A3A3]'>{{ p.provider }}</td>
+                          <td class='px-3 py-2 text-[#A3A3A3]'>{% if p.purchase_date %}{{ p.purchase_date|date:'d/m/Y' }}{% else %}-{% endif %}</td>
+                          <td class='px-3 py-2 text-[#A3A3A3]'>{% if p.expected_arrival_date %}{{ p.expected_arrival_date|date:'d/m/Y' }}{% else %}-{% endif %}</td>
+                          <td class='px-3 py-2 text-[#A3A3A3]'>{% if p.arrived %}Sim{% if p.arrival_date %} · {{ p.arrival_date|date:'d/m/Y' }}{% endif %}{% else %}Não{% endif %}</td>
+                          <td class='px-3 py-2'>
+                            <span class='rounded-full border px-2 py-0.5 text-xs {{ p.status_color }}'>{{ p.status_label }}</span>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td class='px-4 py-6 text-[#A3A3A3]' colspan='9'>Nenhum orçamento com peças cadastrado.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div id='pieces-modal' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4'>
+    <div class='w-full max-w-6xl overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A] shadow-2xl'>
+      <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-[#141414] px-4 py-3'>
+        <div class='text-sm font-semibold text-[#D4AF37]' id='pieces-modal-title'>Peças</div>
+        <div class='flex items-center gap-2 print-hide'>
+          <button type='button' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' id='pieces-modal-print'>
+            Imprimir
+          </button>
+          <button type='button' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' id='pieces-modal-close'>
+            Fechar
+          </button>
+        </div>
+      </div>
+      <div class='print-area max-h-[75vh] overflow-auto p-4' id='pieces-modal-body'></div>
+    </div>
+  </div>
+
+  <div id='pieces-print-host'></div>
+
+  <script>
+    (function () {
+      var isPrinting = false;
+
+      function openModal(budgetId) {
+        var modal = document.getElementById('pieces-modal');
+        var body = document.getElementById('pieces-modal-body');
+        var title = document.getElementById('pieces-modal-title');
+        var content = document.getElementById('pieces-content-' + budgetId);
+        if (!modal || !body || !content) return;
+        body.innerHTML = content.innerHTML;
+        if (title) title.textContent = 'Status das peças';
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+      }
+
+      function closeModal() {
+        var modal = document.getElementById('pieces-modal');
+        var body = document.getElementById('pieces-modal-body');
+        if (!modal) return;
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        if (body) body.innerHTML = '';
+      }
+
+      function cleanupPrint() {
+        if (!isPrinting) return;
+        isPrinting = false;
+        document.body.classList.remove('print-pieces-modal');
+        var host = document.getElementById('pieces-print-host');
+        if (host) host.innerHTML = '';
+      }
+
+      function printModal() {
+        var modal = document.getElementById('pieces-modal');
+        var body = document.getElementById('pieces-modal-body');
+        if (!modal || modal.classList.contains('hidden') || !body) return;
+
+        var host = document.getElementById('pieces-print-host');
+        if (!host) return;
+        if (host.parentNode !== document.body) document.body.appendChild(host);
+        host.innerHTML = body.innerHTML;
+
+        isPrinting = true;
+        document.body.classList.add('print-pieces-modal');
+        void host.offsetHeight;
+        window.setTimeout(function () {
+          window.print();
+        }, 150);
+      }
+
+      function bind() {
+        document.querySelectorAll('[data-open-pieces]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            openModal(btn.getAttribute('data-open-pieces'));
+          });
+        });
+
+        var close = document.getElementById('pieces-modal-close');
+        if (close) close.addEventListener('click', closeModal);
+
+        var printBtn = document.getElementById('pieces-modal-print');
+        if (printBtn) printBtn.addEventListener('click', printModal);
+
+        var modal = document.getElementById('pieces-modal');
+        if (modal) {
+          modal.addEventListener('click', function (ev) {
+            if (ev.target === modal) closeModal();
+          });
+        }
+
+        document.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') closeModal();
+        });
+
+        window.addEventListener('afterprint', cleanupPrint);
+        window.addEventListener('focus', cleanupPrint);
+      }
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+      else bind();
+    })();
+  </script>
+{% endblock %}

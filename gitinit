@@ -1,0 +1,1 @@
+git remote add orign git remote add origin "https://github.com/barbosaoeas/ofi7.git" git branch -m main git push -u origin main
