@@ -14,7 +14,7 @@
           Baixar XML
         </a>
       {% endif %}
-      {% if work_order and (user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE') %}
+      {% if work_order and user.is_superuser or work_order and user.role == 'MANAGER' or work_order and user.role == 'FINANCE' %}
         <a href='{% url "budgets:workorder_detail" work_order.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
           Abrir OS
         </a>

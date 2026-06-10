@@ -8,7 +8,7 @@
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <h1 class='text-2xl font-semibold text-[#D4AF37]'>Editar orçamento #{{ object.display_number }}</h1>
       <div class='flex flex-wrap gap-3'>
-        {% if needs_finance and (user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE') %}
+        {% if needs_finance and user.is_superuser or needs_finance and user.role == 'MANAGER' or needs_finance and user.role == 'FINANCE' %}
           <a href='{% url "budgets:budget_update" object.pk %}?finance=1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
             Registrar financeiro
           </a>
