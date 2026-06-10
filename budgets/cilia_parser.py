@@ -466,10 +466,6 @@ def extract_service_lines(xml_bytes):
         if tipo_peca:
             is_piece = True
 
-        is_replacement_piece = is_piece and troca
-        if is_replacement_piece:
-            continue
-
         is_service = (not is_piece) or (hours_ri > 0) or (hours_rep > 0) or (hours_paint > 0)
         if not is_service:
             continue

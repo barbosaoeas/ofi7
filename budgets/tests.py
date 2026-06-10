@@ -9,6 +9,7 @@ from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
 from .models import Budget, CommissionLine, WorkOrder, WorkOrderTask
+from .cilia_parser import extract_service_lines
 from .views import capped_work_delta_seconds
 
 
@@ -145,6 +146,42 @@ class SmokePermissionsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f'#{approved.display_number}')
         self.assertNotContains(response, '#9002')
+
+
+class CiliaParserTests(TestCase):
+    def test_replacement_piece_with_paint_hours_keeps_labor_line(self):
+        xml = """
+        <orcamento>
+          <padrao_mao_de_obra>
+            <valor_hora_mao_de_obra>120.0000</valor_hora_mao_de_obra>
+            <valor_hora_reparacao>120.0000</valor_hora_reparacao>
+            <valor_hora_pintura>120.0000</valor_hora_pintura>
+          </padrao_mao_de_obra>
+          <itens_orcamento>
+            <item>
+              <tipo_item>Peca</tipo_item>
+              <codigo>ABC123</codigo>
+              <nome>PORTA TRASEIRA ESQ</nome>
+              <tipo_peca>Genuina</tipo_peca>
+              <troca>true</troca>
+              <remocao_instalacao>true</remocao_instalacao>
+              <pintura>true</pintura>
+              <reparacao>false</reparacao>
+              <hora_remocao_instalacao>1.00</hora_remocao_instalacao>
+              <hora_reparacao>0.00</hora_reparacao>
+              <hora_pintura>7.00</hora_pintura>
+              <preco>1090.0000</preco>
+              <preco_liquido>1090.0000</preco_liquido>
+            </item>
+          </itens_orcamento>
+        </orcamento>
+        """
+        lines = extract_service_lines(xml.encode('utf-8'))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]['description'], 'PORTA TRASEIRA ESQ')
+        self.assertEqual(lines[0]['pintura_hours'], Decimal('3.50'))
+        self.assertEqual(lines[0]['preparacao_hours'], Decimal('3.50'))
+        self.assertFalse(lines[0]['is_third_party'])
 
 
 class CommissionConfidentialityTests(TestCase):
