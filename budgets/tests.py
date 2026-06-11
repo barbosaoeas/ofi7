@@ -8,9 +8,9 @@ from django.utils import timezone
 from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
-from .models import Budget, CommissionLine, WorkOrder, WorkOrderTask
+from .models import Budget, CommissionLine, Piece, WorkOrder, WorkOrderTask
 from .cilia_parser import extract_service_lines
-from .views import capped_work_delta_seconds
+from .views import capped_work_delta_seconds, parse_xml_created_at
 
 
 class SmokePermissionsTests(TestCase):
@@ -182,6 +182,60 @@ class CiliaParserTests(TestCase):
         self.assertEqual(lines[0]['pintura_hours'], Decimal('3.50'))
         self.assertEqual(lines[0]['preparacao_hours'], Decimal('3.50'))
         self.assertFalse(lines[0]['is_third_party'])
+
+
+class PendingPartsBlockTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.operational_user = CustomUser.objects.create_user(
+            email='op-block@test.com',
+            password=self.password,
+            role=CustomUser.Role.OPERATIONAL,
+        )
+        self.collaborator = Collaborator.objects.create(
+            name='Operador',
+            email=self.operational_user.email,
+            function=Collaborator.Function.OPERATIONAL,
+        )
+
+    def test_cannot_start_task_when_shop_parts_pending(self):
+        self.client.login(email=self.operational_user.email, password=self.password)
+        customer = Customer.objects.create(name='Cliente', document_cpf_cnpj='123')
+        vehicle = Vehicle.objects.create(customer=customer, plate='CCC1C11', brand='Marca', model='Modelo')
+        budget = Budget.objects.create(
+            customer=customer,
+            vehicle=vehicle,
+            status=Budget.Status.AUTHORIZED,
+            entry_date=timezone.localdate(),
+            allow_repair_without_parts=False,
+        )
+        Piece.objects.create(
+            budget=budget,
+            name='PARA-CHOQUE',
+            provider_type=Piece.ProviderType.SHOP,
+            arrived=False,
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        task = WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            collaborator=self.collaborator,
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+
+        response = self.client.post(reverse('budgets:kanban_task_start', kwargs={'pk': task.pk}), follow=True)
+        self.assertEqual(response.status_code, 200)
+
+        task.refresh_from_db()
+        self.assertNotEqual(task.status, WorkOrderTask.Status.RUNNING)
+
+
+class XMLCreatedAtTests(TestCase):
+    def test_parse_xml_created_at_iso_date(self):
+        xml = b"<orcamento><data_orcamento>2024-02-10</data_orcamento></orcamento>"
+        dt = parse_xml_created_at(xml)
+        self.assertIsNotNone(dt)
+        self.assertEqual(dt.date().isoformat(), "2024-02-10")
 
 
 class CommissionConfidentialityTests(TestCase):

@@ -27,6 +27,130 @@ from .models import Budget, CashCategory, CashMovement, CommissionLine, Piece, S
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
 
 
+def budget_has_pending_shop_parts(budget):
+    if not budget or not getattr(budget, 'id', None):
+        return False
+    return Piece.objects.filter(
+        budget_id=budget.id,
+        provider_type=Piece.ProviderType.SHOP,
+        arrived=False,
+        arrival_date__isnull=True,
+    ).exists()
+
+
+def parse_xml_created_at(xml_bytes):
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except Exception:
+        return None
+
+    candidates = {
+        'data_orcamento',
+        'dataorcamento',
+        'data_criacao',
+        'datacriacao',
+        'data_criado',
+        'datacriado',
+        'data_emissao',
+        'dataemissao',
+        'dt_orcamento',
+        'dtorcamento',
+        'dt_criacao',
+        'dtcriacao',
+    }
+
+    def parse_raw(raw):
+        text = (raw or '').strip()
+        if not text:
+            return None
+        text = text.replace('Z', '+00:00')
+
+        try:
+            dt = datetime.fromisoformat(text)
+            if isinstance(dt, datetime):
+                return dt
+        except Exception:
+            dt = None
+
+        parts = text.split()
+        date_part = parts[0] if parts else ''
+        time_part = parts[1] if len(parts) > 1 else ''
+
+        if '/' in date_part:
+            try:
+                d = date.fromisoformat('-'.join(reversed(date_part.split('/'))))
+                if time_part:
+                    try:
+                        hhmmss = time_part.split(':')
+                        hh = int(hhmmss[0])
+                        mm = int(hhmmss[1]) if len(hhmmss) > 1 else 0
+                        ss = int(hhmmss[2]) if len(hhmmss) > 2 else 0
+                        return datetime(d.year, d.month, d.day, hh, mm, ss)
+                    except Exception:
+                        return datetime(d.year, d.month, d.day)
+                return datetime(d.year, d.month, d.day)
+            except Exception:
+                return None
+        return None
+
+    def iter_candidates():
+        for el in root.iter():
+            if el is None or el.tag is None:
+                continue
+            tag = str(el.tag).split('}')[-1].lower()
+            yield tag, el
+
+    for tag, el in iter_candidates():
+        if tag not in candidates:
+            continue
+
+        raw = ''.join(el.itertext()).strip()
+        raw = raw or el.attrib.get('value', '')
+        dt = parse_raw(raw)
+        if dt is None:
+            continue
+
+        tz = timezone.get_current_timezone()
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, tz)
+        dt_local = timezone.localtime(dt, tz)
+        if dt_local.year < 2000 or dt_local.year > (timezone.localdate().year + 1):
+            continue
+        return dt_local
+
+    for tag, el in iter_candidates():
+        if 'data' not in tag and not tag.startswith('dt'):
+            continue
+        if not ('orc' in tag or 'cria' in tag or 'emiss' in tag):
+            continue
+        if tag in candidates:
+            continue
+
+        raw = ''.join(el.itertext()).strip()
+        raw = raw or el.attrib.get('value', '')
+        dt = parse_raw(raw)
+        if dt is None:
+            continue
+
+        tz = timezone.get_current_timezone()
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt, tz)
+        dt_local = timezone.localtime(dt, tz)
+        if dt_local.year < 2000 or dt_local.year > (timezone.localdate().year + 1):
+            continue
+        return dt_local
+
+    for tag, el in iter_candidates():
+        if el is None or el.tag is None:
+            continue
+        if tag in candidates:
+            continue
+        if tag == 'data':
+            continue
+
+    return None
+
+
 def capped_work_delta_seconds(last_started_at, now, allow_overtime):
     if last_started_at is None:
         return 0, None
@@ -736,6 +860,20 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.error(request, 'Selecione um colaborador antes de iniciar.')
             return redirect('budgets:kanban_today')
 
+        budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+        if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)):
+            has_pending_shop_parts = budget_has_pending_shop_parts(budget)
+            if has_pending_shop_parts:
+                messages.warning(
+                    request,
+                    'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
+                    'ou até liberar "seguir sem as peças".',
+                )
+                next_url = (request.POST.get('next') or '').strip()
+                if next_url:
+                    return redirect(next_url)
+                return redirect('budgets:kanban_today')
+
         has_running = WorkOrderTask.objects.filter(
             collaborator_id=task.collaborator_id,
             status=WorkOrderTask.Status.RUNNING,
@@ -913,6 +1051,7 @@ class WorkOrderTaskToggleOvertimeView(LoginRequiredMixin, RoleRequiredMixin, Vie
         value = (request.POST.get('allow_overtime') or '').strip().lower()
         task.allow_overtime = value in ('1', 'true', 'on', 'yes')
         task.save(update_fields=['allow_overtime'])
+        messages.success(request, 'Extra atualizado.')
 
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
@@ -1295,6 +1434,15 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
                 had_error = True
                 messages.error(request, 'Status inválido.')
             else:
+                if status == WorkOrderTask.Status.RUNNING:
+                    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+                    if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)) and budget_has_pending_shop_parts(budget):
+                        had_error = True
+                        messages.error(
+                            request,
+                            'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
+                            'ou até liberar "seguir sem as peças".',
+                        )
                 task.status = status
                 update_fields.append('status')
 
@@ -1328,7 +1476,9 @@ class PieceCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
             form.instance.arrived = True
         else:
             form.instance.arrived = arrived
-        return super().form_valid(form)
+        response = super().form_valid(form)
+        messages.success(self.request, 'Peça salva.')
+        return response
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1359,7 +1509,9 @@ class PieceUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             form.instance.arrived = True
         else:
             form.instance.arrived = arrived
-        return super().form_valid(form)
+        response = super().form_valid(form)
+        messages.success(self.request, 'Peça salva.')
+        return response
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1378,6 +1530,12 @@ class PieceDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
 
     def get_queryset(self):
         return super().get_queryset().select_related('budget')
+
+    def delete(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        response = super().delete(request, *args, **kwargs)
+        messages.success(request, 'Peça removida.')
+        return response
 
     def get_success_url(self):
         return reverse('budgets:budget_detail', kwargs={'pk': self.object.budget_id})
@@ -1515,7 +1673,8 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         context['today'] = timezone.localdate()
         can_access_finance = bool(
             getattr(self.request, 'user', None)
-            and getattr(self.request.user, 'role', None) in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+            and getattr(self.request.user, 'role', None)
+            in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
         )
         needs_finance = bool(
             can_access_finance
@@ -1551,24 +1710,21 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         if status == Budget.Status.AUTHORIZED:
             if not form.cleaned_data.get('entry_date'):
                 form.add_error('entry_date', 'Informe a data de entrada do veículo.')
-            if not form.cleaned_data.get('repair_start_date'):
-                form.add_error('repair_start_date', 'Informe a data de início do reparo.')
+                messages.error(self.request, 'Para aprovar, informe a data de entrada do veículo.')
             allow_repair_without_parts = bool(form.cleaned_data.get('allow_repair_without_parts'))
 
             try:
-                has_pending_shop_parts = self.object.pieces.filter(
-                    provider_type=Piece.ProviderType.SHOP,
-                    arrived=False,
-                ).exists()
+                has_pending_shop_parts = budget_has_pending_shop_parts(self.object)
             except Exception:
                 has_pending_shop_parts = False
 
-            if has_pending_shop_parts and form.cleaned_data.get('repair_start_date'):
-                if not allow_repair_without_parts:
-                    form.add_error(
-                        'repair_start_date',
-                        'Existem peças da oficina pendentes. Marque como chegaram antes de iniciar o reparo ou libere para seguir sem as peças.',
-                    )
+            if has_pending_shop_parts and form.cleaned_data.get('repair_start_date') and not allow_repair_without_parts:
+                messages.warning(
+                    self.request,
+                    'Existem peças da oficina pendentes. O orçamento pode ser aprovado, mas o reparo não pode ser iniciado '
+                    'até marcar as peças como chegaram ou liberar para seguir sem as peças.',
+                )
+                form.instance.repair_start_date = None
 
             if form.errors:
                 return self.form_invalid(form)
@@ -1582,6 +1738,21 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         else:
             form.instance.approved_at = None
         response = super().form_valid(form)
+        if transitioned_to_authorized:
+            messages.success(self.request, 'Orçamento aprovado.')
+        else:
+            messages.success(self.request, 'Orçamento salvo.')
+
+        try:
+            has_pending_shop_parts_after = budget_has_pending_shop_parts(self.object)
+        except Exception:
+            has_pending_shop_parts_after = False
+        if self.object.status == Budget.Status.AUTHORIZED and has_pending_shop_parts_after and not self.object.allow_repair_without_parts:
+            messages.warning(
+                self.request,
+                'Atenção: orçamento aprovado com peças da oficina pendentes. O reparo fica bloqueado até as peças chegarem '
+                'ou até liberar "seguir sem as peças".',
+            )
         if self.object.status == Budget.Status.AUTHORIZED and not WorkOrder.objects.filter(budget=self.object).exists():
             xml = self.object.source_xml or ''
             vehicle_image_url = ''
@@ -1596,6 +1767,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             work_order = WorkOrder.objects.create(
                 budget=self.object,
                 vehicle_image_url=vehicle_image_url,
+                created_at=self.object.created_at,
             )
             if xml:
                 try:
@@ -1657,7 +1829,11 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
 
         if transitioned_to_authorized and not CashMovement.objects.filter(budget=self.object).exists():
             user = getattr(self.request, 'user', None)
-            if user and getattr(user, 'role', None) in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE):
+            if user and getattr(user, 'role', None) in (
+                CustomUser.Role.MANAGER,
+                CustomUser.Role.FINANCE,
+                CustomUser.Role.ESTIMATOR,
+            ):
                 url = reverse('budgets:budget_update', kwargs={'pk': self.object.pk})
                 return redirect(f'{url}?finance=1')
 
@@ -1668,7 +1844,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
 
 
 class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def post(self, request, pk):
         budget = Budget.objects.select_related('customer', 'vehicle').filter(pk=pk).first()
@@ -1744,6 +1920,12 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                 elif kind == 'SEGURADORA':
                     franchise_amount = parse_money(request.POST.get('franchise_amount'))
                     franchise_due = parse_date(request.POST.get('franchise_due_date'), today)
+                    franchise_received = (request.POST.get('franchise_received') or '').strip().lower() in (
+                        '1',
+                        'true',
+                        'on',
+                        'yes',
+                    )
                     insurer_due = parse_date(
                         request.POST.get('insurer_due_date'),
                         budget.expected_delivery_date or budget.entry_date or today,
@@ -1764,7 +1946,8 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                             description=f'Orçamento #{budget.display_number} - Franquia',
                             amount=franchise_amount,
                             due_date=franchise_due,
-                            is_realized=False,
+                            is_realized=franchise_received,
+                            realized_at=timezone.now() if franchise_received else None,
                         )
                     if insurer_amount > 0:
                         CashMovement.objects.create(
@@ -1903,6 +2086,7 @@ class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
     def form_valid(self, form):
         xml_file = form.cleaned_data['xml_file']
         xml_bytes = xml_file.read()
+        xml_created_at = parse_xml_created_at(xml_bytes)
 
         try:
             (
@@ -2033,6 +2217,9 @@ class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
                             'source_xml',
                         ]
                     )
+                    if xml_created_at is not None:
+                        budget.created_at = xml_created_at
+                        budget.save(update_fields=['created_at'])
                 break
             except OperationalError as exc:
                 if 'locked' not in str(exc).lower():

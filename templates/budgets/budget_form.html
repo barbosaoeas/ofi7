@@ -8,7 +8,7 @@
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <h1 class='text-2xl font-semibold text-[#D4AF37]'>Editar orçamento #{{ object.display_number }}</h1>
       <div class='flex flex-wrap gap-3'>
-        {% if needs_finance and user.is_superuser or needs_finance and user.role == 'MANAGER' or needs_finance and user.role == 'FINANCE' %}
+        {% if needs_finance and user.is_superuser or needs_finance and user.role == 'MANAGER' or needs_finance and user.role == 'FINANCE' or needs_finance and user.role == 'ESTIMATOR' %}
           <a href='{% url "budgets:budget_update" object.pk %}?finance=1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
             Registrar financeiro
           </a>
@@ -136,6 +136,17 @@
           </div>
 
           <div id='fin-particular' class='mt-4'>
+            <div class='mb-3 flex flex-wrap items-center gap-4 text-sm text-[#A3A3A3]'>
+              <div class='text-[#D4AF37] font-semibold'>Tem entrada?</div>
+              <label class='flex items-center gap-2'>
+                <input type='radio' name='has_entry' value='1' class='h-4 w-4' checked />
+                Sim
+              </label>
+              <label class='flex items-center gap-2'>
+                <input type='radio' name='has_entry' value='0' class='h-4 w-4' />
+                Não
+              </label>
+            </div>
             <div class='grid grid-cols-1 gap-4 sm:grid-cols-2'>
               <div>
                 <label class='mb-1 block text-sm text-[#D4AF37]' for='id_entry_amount'>Entrada (R$)</label>
@@ -159,6 +170,17 @@
           </div>
 
           <div id='fin-seguradora' class='mt-4 hidden'>
+            <div class='mb-3 flex flex-wrap items-center gap-4 text-sm text-[#A3A3A3]'>
+              <div class='text-[#D4AF37] font-semibold'>Tem franquia/entrada?</div>
+              <label class='flex items-center gap-2'>
+                <input type='radio' name='has_franchise' value='1' class='h-4 w-4' checked />
+                Sim
+              </label>
+              <label class='flex items-center gap-2'>
+                <input type='radio' name='has_franchise' value='0' class='h-4 w-4' />
+                Não
+              </label>
+            </div>
             <div class='grid grid-cols-1 gap-4 sm:grid-cols-2'>
               <div>
                 <label class='mb-1 block text-sm text-[#D4AF37]' for='id_franchise_amount'>Franquia (cliente) (R$)</label>
@@ -167,6 +189,12 @@
               <div>
                 <label class='mb-1 block text-sm text-[#D4AF37]' for='id_franchise_due_date'>Venc. franquia</label>
                 <input id='id_franchise_due_date' name='franchise_due_date' type='date' value='{{ today|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+              </div>
+              <div class='sm:col-span-2'>
+                <label class='flex items-center gap-2 text-sm text-[#A3A3A3]'>
+                  <input type='checkbox' name='franchise_received' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+                  Franquia recebida hoje (dar baixa)
+                </label>
               </div>
               <div class='sm:col-span-2'>
                 <label class='mb-1 block text-sm text-[#D4AF37]' for='id_insurer_due_date'>Venc. seguradora</label>
@@ -219,10 +247,50 @@
         s.classList.toggle('hidden', !isInsurer);
       }
 
+      function toggleEntryFields() {
+        var radios = document.querySelectorAll('input[name=\"has_entry\"]');
+        if (!radios || radios.length === 0) return;
+        var has = document.querySelector('input[name=\"has_entry\"]:checked');
+        var enabled = has && has.value === '1';
+        var amount = document.getElementById('id_entry_amount');
+        var due = document.getElementById('id_entry_due_date');
+        var received = document.querySelector('input[name=\"entry_received\"]');
+        if (amount) {
+          amount.disabled = !enabled;
+          if (!enabled) amount.value = '';
+        }
+        if (due) due.disabled = !enabled;
+        if (received) received.disabled = !enabled;
+      }
+
+      function toggleFranchiseFields() {
+        var radios = document.querySelectorAll('input[name=\"has_franchise\"]');
+        if (!radios || radios.length === 0) return;
+        var has = document.querySelector('input[name=\"has_franchise\"]:checked');
+        var enabled = has && has.value === '1';
+        var amount = document.getElementById('id_franchise_amount');
+        var due = document.getElementById('id_franchise_due_date');
+        var received = document.querySelector('input[name=\"franchise_received\"]');
+        if (amount) {
+          amount.disabled = !enabled;
+          if (!enabled) amount.value = '';
+        }
+        if (due) due.disabled = !enabled;
+        if (received) received.disabled = !enabled;
+      }
+
       function bindFinance() {
         var kind = document.getElementById('id_fin_kind');
         if (kind) kind.addEventListener('change', toggleFinance);
         toggleFinance();
+        document.querySelectorAll('input[name=\"has_entry\"]').forEach(function (el) {
+          el.addEventListener('change', toggleEntryFields);
+        });
+        document.querySelectorAll('input[name=\"has_franchise\"]').forEach(function (el) {
+          el.addEventListener('change', toggleFranchiseFields);
+        });
+        toggleEntryFields();
+        toggleFranchiseFields();
       }
 
       if (document.readyState === 'loading') {
