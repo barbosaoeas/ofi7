@@ -1,7 +1,7 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
-from django.views.generic import CreateView, DetailView, ListView
+from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from core.views import RoleRequiredMixin
 from users.models import CustomUser
@@ -50,3 +50,20 @@ class VehicleCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
 
     def get_success_url(self):
         return reverse('customers:customer_detail', kwargs={'pk': self.customer.pk})
+
+
+class VehicleUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+    model = Vehicle
+    template_name = 'customers/vehicle_form.html'
+    fields = ('plate', 'brand', 'model', 'color', 'year', 'image_file', 'image_url')
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        next_url = (self.request.GET.get('next') or '').strip()
+        if next_url.startswith('/'):
+            return redirect(next_url)
+        return response
+
+    def get_success_url(self):
+        return reverse('customers:customer_detail', kwargs={'pk': self.object.customer_id})

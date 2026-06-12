@@ -1,0 +1,329 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Dashboard Financeiro | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-7xl px-4 py-8{% endblock %}
+
+{% block content %}
+  <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
+
+  <div class='rounded-3xl border border-[#262626] bg-gradient-to-br from-[#1A1A1A] via-[#151515] to-[#101010] p-6 shadow-2xl'>
+    <div class='flex flex-wrap items-center justify-between gap-4'>
+      <div>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Dashboard Financeiro</div>
+        <h1 class='mt-2 text-3xl font-semibold text-[#F5F5F5]'>Visão executiva do caixa</h1>
+        <p class='mt-2 text-sm text-[#A3A3A3]'>
+          Período: {{ range_start|date:'d/m/Y' }} até {{ range_end|date:'d/m/Y' }}.
+        </p>
+      </div>
+      <div class='flex flex-wrap gap-3'>
+        <div class='flex flex-wrap gap-2'>
+          <a href='{% url "budgets:finance_insights" %}?range=month' class='{% if range_key == "month" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+            Mês atual
+          </a>
+          <a href='{% url "budgets:finance_insights" %}?range=3m' class='{% if range_key == "3m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+            3 meses
+          </a>
+          <a href='{% url "budgets:finance_insights" %}?range=12m' class='{% if range_key == "12m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+            12 meses
+          </a>
+        </div>
+        <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+          Voltar para lançamentos
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
+    <div class='rounded-2xl border border-[#1f3b2d] bg-gradient-to-br from-[#0d1f16] to-[#0a140f] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#86efac]'>A Receber em aberto</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ receivable_open|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Entradas ainda não realizadas</div>
+    </div>
+    <div class='rounded-2xl border border-[#5f1f1f] bg-gradient-to-br from-[#3b0a0a] to-[#220808] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#fca5a5]'>A Pagar em aberto</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ payable_open|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Saídas ainda não realizadas</div>
+    </div>
+    <div class='rounded-2xl border border-[#5b3b13] bg-gradient-to-br from-[#2a1e06] to-[#1d1403] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#fcd34d]'>Em atraso</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ overdue_total|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Valores vencidos e ainda abertos</div>
+    </div>
+    <div class='rounded-2xl border border-[#233a57] bg-gradient-to-br from-[#0b1f3b] to-[#091728] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#93c5fd]'>Saldo projetado</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ projected_balance|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Receber aberto menos pagar aberto</div>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Entradas e saídas por mês</h2>
+        <p class='text-sm text-[#A3A3A3]'>Comparativo previsto x realizado.</p>
+      </div>
+      <div class='h-[360px]'>
+        <canvas id='finance-month-chart'></canvas>
+      </div>
+    </div>
+
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Situação dos lançamentos</h2>
+        <p class='text-sm text-[#A3A3A3]'>Distribuição de valores abertos e realizados.</p>
+      </div>
+      <div class='h-[360px]'>
+        <canvas id='finance-status-chart'></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-3'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Despesas por categoria</h2>
+        <p class='text-sm text-[#A3A3A3]'>Top categorias no intervalo analisado.</p>
+      </div>
+      <div class='h-[360px]'>
+        <canvas id='finance-category-chart'></canvas>
+      </div>
+    </div>
+
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Resumo rápido</h2>
+        <p class='text-sm text-[#A3A3A3]'>Principais pontos para decisão.</p>
+      </div>
+      <div class='space-y-3'>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Caixa pressiona?</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>
+            {% if projected_balance < 0 %}
+              Atenção: o saldo projetado está negativo.
+            {% else %}
+              O saldo projetado segue positivo.
+            {% endif %}
+          </div>
+        </div>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Prioridade</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>Cobrar os recebimentos em aberto e atacar os itens vencidos primeiro.</div>
+        </div>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Uso sugerido</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>Cadastre despesas fixas usando recorrência mensal para deixar o dash mais fiel.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Previsto x realizado por semana (mês atual)</h2>
+        <p class='text-sm text-[#A3A3A3]'>Ótimo para ver se o caixa está acontecendo no ritmo certo.</p>
+      </div>
+      <div class='h-[360px]'>
+        <canvas id='finance-week-chart'></canvas>
+      </div>
+    </div>
+
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Atrasados por categoria</h2>
+        <p class='text-sm text-[#A3A3A3]'>Somente lançamentos vencidos e ainda em aberto.</p>
+      </div>
+      <div class='h-[360px]'>
+        <canvas id='finance-overdue-category-chart'></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 rounded-3xl border border-[#262626] bg-[#161616] p-5'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Top 10 atrasados</h2>
+        <p class='text-sm text-[#A3A3A3]'>Clique para abrir o lançamento e ajustar/confirmar.</p>
+      </div>
+      <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+        Ir para lançamentos
+      </a>
+    </div>
+
+    <div class='mt-4 overflow-hidden rounded-2xl border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Venc.</th>
+            <th class='px-4 py-3 font-semibold'>Tipo</th>
+            <th class='px-4 py-3 font-semibold'>Descrição</th>
+            <th class='px-4 py-3 font-semibold text-right'>Valor</th>
+            <th class='px-4 py-3 font-semibold text-right'></th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626] bg-[#111111]'>
+          {% for m in overdue_items %}
+            <tr class='hover:bg-[#171717]'>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{{ m.due_date|date:'d/m/Y' }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.name }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3'>{{ m.description|default:'-' }}</td>
+              <td class='px-4 py-3 text-right font-semibold'>R$ {{ m.amount|floatformat:2 }}</td>
+              <td class='px-4 py-3 text-right'>
+                <a href='{% url "budgets:finance_dashboard" %}?edit={{ m.id }}' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                  Abrir
+                </a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan='5' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Nenhum lançamento atrasado em aberto.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ month_labels|json_script:"month-labels-data" }}
+  {{ expected_in_series|json_script:"expected-in-data" }}
+  {{ expected_out_series|json_script:"expected-out-data" }}
+  {{ realized_in_series|json_script:"realized-in-data" }}
+  {{ realized_out_series|json_script:"realized-out-data" }}
+  {{ category_labels|json_script:"category-labels-data" }}
+  {{ category_values|json_script:"category-values-data" }}
+  {{ status_labels|json_script:"status-labels-data" }}
+  {{ status_values|json_script:"status-values-data" }}
+  {{ weekly_labels|json_script:"weekly-labels-data" }}
+  {{ weekly_expected_in|json_script:"weekly-expected-in-data" }}
+  {{ weekly_expected_out|json_script:"weekly-expected-out-data" }}
+  {{ weekly_realized_in|json_script:"weekly-realized-in-data" }}
+  {{ weekly_realized_out|json_script:"weekly-realized-out-data" }}
+  {{ overdue_category_labels|json_script:"overdue-category-labels-data" }}
+  {{ overdue_category_values|json_script:"overdue-category-values-data" }}
+
+  <script>
+    (function () {
+      function readJSON(id) {
+        var el = document.getElementById(id);
+        if (!el) return [];
+        return JSON.parse(el.textContent);
+      }
+
+      var labels = readJSON('month-labels-data');
+      var expectedIn = readJSON('expected-in-data');
+      var expectedOut = readJSON('expected-out-data');
+      var realizedIn = readJSON('realized-in-data');
+      var realizedOut = readJSON('realized-out-data');
+      var categoryLabels = readJSON('category-labels-data');
+      var categoryValues = readJSON('category-values-data');
+      var statusLabels = readJSON('status-labels-data');
+      var statusValues = readJSON('status-values-data');
+      var weeklyLabels = readJSON('weekly-labels-data');
+      var weeklyExpectedIn = readJSON('weekly-expected-in-data');
+      var weeklyExpectedOut = readJSON('weekly-expected-out-data');
+      var weeklyRealizedIn = readJSON('weekly-realized-in-data');
+      var weeklyRealizedOut = readJSON('weekly-realized-out-data');
+      var overdueCatLabels = readJSON('overdue-category-labels-data');
+      var overdueCatValues = readJSON('overdue-category-values-data');
+
+      Chart.defaults.color = '#d4d4d4';
+      Chart.defaults.borderColor = '#262626';
+
+      new Chart(document.getElementById('finance-month-chart'), {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            { label: 'Previsto entrada', data: expectedIn, backgroundColor: '#22c55e' },
+            { label: 'Previsto saída', data: expectedOut, backgroundColor: '#ef4444' },
+            { label: 'Realizado entrada', data: realizedIn, backgroundColor: '#86efac' },
+            { label: 'Realizado saída', data: realizedOut, backgroundColor: '#fca5a5' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+
+      new Chart(document.getElementById('finance-status-chart'), {
+        type: 'doughnut',
+        data: {
+          labels: statusLabels,
+          datasets: [
+            {
+              data: statusValues,
+              backgroundColor: ['#f59e0b', '#22c55e']
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } }
+        }
+      });
+
+      new Chart(document.getElementById('finance-category-chart'), {
+        type: 'bar',
+        data: {
+          labels: categoryLabels,
+          datasets: [
+            {
+              label: 'Despesas',
+              data: categoryValues,
+              backgroundColor: '#60a5fa'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true } }
+        }
+      });
+
+      new Chart(document.getElementById('finance-week-chart'), {
+        type: 'bar',
+        data: {
+          labels: weeklyLabels,
+          datasets: [
+            { label: 'Previsto entrada', data: weeklyExpectedIn, backgroundColor: '#22c55e' },
+            { label: 'Previsto saída', data: weeklyExpectedOut, backgroundColor: '#ef4444' },
+            { label: 'Realizado entrada', data: weeklyRealizedIn, backgroundColor: '#86efac' },
+            { label: 'Realizado saída', data: weeklyRealizedOut, backgroundColor: '#fca5a5' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+
+      new Chart(document.getElementById('finance-overdue-category-chart'), {
+        type: 'bar',
+        data: {
+          labels: overdueCatLabels,
+          datasets: [
+            { label: 'Atrasados', data: overdueCatValues, backgroundColor: '#f59e0b' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          indexAxis: 'y',
+          plugins: { legend: { display: false } },
+          scales: { x: { beginAtZero: true } }
+        }
+      });
+    })();
+  </script>
+{% endblock %}

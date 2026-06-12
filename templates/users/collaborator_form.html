@@ -65,8 +65,9 @@
       <div>
         <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_file.id_for_label }}'>Imagem (arquivo)</label>
         {% if object and object.image_file %}
-          <div class='mb-2 text-sm text-[#A3A3A3]'>
-            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_file.url }}' target='_blank' rel='noreferrer'>
+          <div class='mb-3 flex items-center gap-3 rounded-lg border border-[#262626] bg-[#0D0D0D] p-3'>
+            <img src='{{ object.image_file.url }}' alt='{{ object.name }}' class='h-16 w-16 rounded-full border border-[#262626] object-cover' />
+            <a class='text-sm underline hover:text-[#D4AF37]' href='{{ object.image_file.url }}' target='_blank' rel='noreferrer'>
               Ver imagem atual
             </a>
           </div>
@@ -78,8 +79,9 @@
       <div>
         <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.image_url.id_for_label }}'>Imagem (URL opcional)</label>
         {% if object and object.image_url %}
-          <div class='mb-2 text-sm text-[#A3A3A3]'>
-            <a class='underline hover:text-[#D4AF37]' href='{{ object.image_url }}' target='_blank' rel='noreferrer'>
+          <div class='mb-3 flex items-center gap-3 rounded-lg border border-[#262626] bg-[#0D0D0D] p-3'>
+            <img src='{{ object.image_url }}' alt='{{ object.name }}' class='h-16 w-16 rounded-full border border-[#262626] object-cover' />
+            <a class='text-sm underline hover:text-[#D4AF37]' href='{{ object.image_url }}' target='_blank' rel='noreferrer'>
               Abrir URL atual
             </a>
           </div>

@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, UpdateView
+from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import time
@@ -21,7 +22,7 @@ from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
 from .forms import CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, ThirdPartyServiceForm
-from .models import Budget, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, ThirdPartyService, WorkOrder, WorkOrderTask
+from .models import Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, ThirdPartyService, WorkOrder, WorkOrderTask
 
 
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
@@ -151,6 +152,14 @@ def parse_xml_created_at(xml_bytes):
     return None
 
 
+def add_months(base_date, months):
+    month_index = (base_date.month - 1) + months
+    year = base_date.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(base_date.day, monthrange(year, month)[1])
+    return date(year, month, day)
+
+
 def capped_work_delta_seconds(last_started_at, now, allow_overtime):
     if last_started_at is None:
         return 0, None
@@ -247,9 +256,23 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             return Decimal('0')
         raw = raw.replace('R$', '').strip()
         raw = raw.replace(' ', '')
-        raw = raw.replace('.', '')
-        raw = raw.replace(',', '.')
+        if ',' in raw and '.' in raw:
+            raw = raw.replace('.', '').replace(',', '.')
+        elif ',' in raw:
+            raw = raw.replace(',', '.')
         return Decimal(raw)
+
+    def _parse_positive_int(self, value, default=1, minimum=1, maximum=60):
+        raw = (value or '').strip()
+        try:
+            parsed = int(raw)
+        except Exception:
+            parsed = default
+        if parsed < minimum:
+            parsed = minimum
+        if parsed > maximum:
+            parsed = maximum
+        return parsed
 
     def _get_filters(self, request):
         today = timezone.localdate()
@@ -278,8 +301,7 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             'category_id': category_id_int,
         }
 
-    def get(self, request):
-        f = self._get_filters(request)
+    def _build_context(self, request, f):
         qs = CashMovement.objects.select_related('budget', 'category', 'budget__customer', 'budget__vehicle').all()
         qs = qs.filter(due_date__gte=f['start'], due_date__lte=f['end'])
         if f['direction']:
@@ -301,6 +323,18 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         )
         realized_out = sum(
             [m.amount for m in movements if m.direction == CashMovement.Direction.OUT and m.is_realized],
+            Decimal('0'),
+        )
+        open_in = sum(
+            [m.amount for m in movements if m.direction == CashMovement.Direction.IN and not m.is_realized],
+            Decimal('0'),
+        )
+        open_out = sum(
+            [m.amount for m in movements if m.direction == CashMovement.Direction.OUT and not m.is_realized],
+            Decimal('0'),
+        )
+        overdue_open = sum(
+            [m.amount for m in movements if not m.is_realized and m.due_date and m.due_date < f['today']],
             Decimal('0'),
         )
 
@@ -341,8 +375,16 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             'realized_in': realized_in,
             'realized_out': realized_out,
             'realized_net': realized_in - realized_out,
+            'open_in': open_in,
+            'open_out': open_out,
+            'overdue_open': overdue_open,
+            'movement_count': len(movements),
         }
-        return render(request, self.template_name, context)
+        return context
+
+    def get(self, request):
+        f = self._get_filters(request)
+        return render(request, self.template_name, self._build_context(request, f))
 
     def post(self, request):
         action = (request.POST.get('action') or '').strip()
@@ -434,18 +476,70 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
                 messages.error(request, 'Informe um valor válido.')
                 return redirect(next_url or 'budgets:finance_dashboard')
 
+            recurrence_total = self._parse_positive_int(request.POST.get('recurrence_total'), default=1)
+            split_entry = (request.POST.get('split_entry') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+            entry_amount = Decimal('0')
+            if split_entry:
+                try:
+                    entry_amount = self._parse_money(request.POST.get('entry_amount'))
+                except Exception:
+                    entry_amount = None
+                if direction != CashMovement.Direction.IN:
+                    messages.error(request, 'Entrada com saldo futuro está disponível apenas para lançamentos de entrada.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+                if recurrence_total > 1:
+                    messages.error(request, 'Use recorrência ou entrada com saldo futuro. Os dois juntos não podem ser lançados agora.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+                if entry_amount is None or entry_amount <= 0 or entry_amount >= amount:
+                    messages.error(request, 'A entrada precisa ser maior que zero e menor que o valor total.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+                balance_due_date = self._parse_date(request.POST.get('balance_due_date'), add_months(due_date, 1))
+
             if movement is None:
-                CashMovement.objects.create(
-                    direction=direction,
-                    source=source,
-                    category_id=category_id,
-                    description=description,
-                    amount=amount,
-                    due_date=due_date,
-                    is_realized=is_realized,
-                    realized_at=timezone.now() if is_realized else None,
-                )
-                messages.success(request, 'Lançamento criado.')
+                if split_entry:
+                    balance_amount = (amount - entry_amount).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    CashMovement.objects.create(
+                        direction=direction,
+                        source=source,
+                        category_id=category_id,
+                        description=(description or 'Entrada manual').strip(),
+                        amount=entry_amount,
+                        due_date=due_date,
+                        is_realized=is_realized,
+                        realized_at=timezone.now() if is_realized else None,
+                    )
+                    CashMovement.objects.create(
+                        direction=direction,
+                        source=source,
+                        category_id=category_id,
+                        description=f'{(description or "Entrada manual").strip()} - Saldo',
+                        amount=balance_amount,
+                        due_date=balance_due_date,
+                        is_realized=False,
+                        realized_at=None,
+                    )
+                    messages.success(request, 'Entrada e saldo lançados com sucesso.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+
+                recurrence_group = uuid4().hex if recurrence_total > 1 else ''
+                for idx in range(recurrence_total):
+                    CashMovement.objects.create(
+                        direction=direction,
+                        source=source,
+                        category_id=category_id,
+                        description=description,
+                        amount=amount,
+                        due_date=add_months(due_date, idx),
+                        is_realized=is_realized if idx == 0 else False,
+                        realized_at=timezone.now() if is_realized and idx == 0 else None,
+                        recurrence_group=recurrence_group,
+                        recurrence_index=idx + 1,
+                        recurrence_total=recurrence_total,
+                    )
+                if recurrence_total > 1:
+                    messages.success(request, f'Lançamento recorrente criado com {recurrence_total} meses.')
+                else:
+                    messages.success(request, 'Lançamento criado.')
                 return redirect(next_url or 'budgets:finance_dashboard')
 
             movement.direction = direction
@@ -508,6 +602,162 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
 
         messages.error(request, 'Ação inválida.')
         return redirect(next_url or 'budgets:finance_dashboard')
+
+
+class FinanceInsightsView(FinanceDashboardView):
+    template_name = 'budgets/finance_insights.html'
+
+    def get(self, request):
+        today = timezone.localdate()
+        start_month = date(today.year, today.month, 1)
+        end_month = add_months(start_month, 1) - timedelta(days=1)
+
+        range_key = (request.GET.get('range') or '').strip().lower()
+        if range_key not in ('month', '3m', '12m'):
+            range_key = 'month'
+        months_total = 1
+        if range_key == '3m':
+            months_total = 3
+        if range_key == '12m':
+            months_total = 12
+
+        month_starts = [add_months(start_month, offset) for offset in range(-(months_total - 1), 1)]
+        range_start = month_starts[0]
+        range_end = end_month
+
+        movements = list(
+            CashMovement.objects.select_related('category')
+            .filter(due_date__gte=range_start, due_date__lte=range_end)
+            .order_by('due_date', 'id')
+        )
+
+        month_labels = [m.strftime('%b/%Y') for m in month_starts]
+        expected_in_series = []
+        expected_out_series = []
+        realized_in_series = []
+        realized_out_series = []
+
+        for month_start in month_starts:
+            month_end = add_months(month_start, 1) - timedelta(days=1)
+            month_items = [m for m in movements if m.due_date and month_start <= m.due_date <= month_end]
+            expected_in_series.append(float(sum([m.amount for m in month_items if m.direction == CashMovement.Direction.IN], Decimal('0'))))
+            expected_out_series.append(float(sum([m.amount for m in month_items if m.direction == CashMovement.Direction.OUT], Decimal('0'))))
+            realized_in_series.append(
+                float(
+                    sum(
+                        [m.amount for m in month_items if m.direction == CashMovement.Direction.IN and m.is_realized],
+                        Decimal('0'),
+                    )
+                )
+            )
+            realized_out_series.append(
+                float(
+                    sum(
+                        [m.amount for m in month_items if m.direction == CashMovement.Direction.OUT and m.is_realized],
+                        Decimal('0'),
+                    )
+                )
+            )
+
+        category_totals = {}
+        for movement in movements:
+            if movement.direction != CashMovement.Direction.OUT:
+                continue
+            label = movement.category.name if movement.category else 'Sem tipo'
+            category_totals[label] = category_totals.get(label, Decimal('0')) + (movement.amount or Decimal('0'))
+        top_categories = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)[:8]
+
+        open_amount = sum([m.amount for m in movements if not m.is_realized], Decimal('0'))
+        realized_amount = sum([m.amount for m in movements if m.is_realized], Decimal('0'))
+        receivable_open = sum(
+            [m.amount for m in movements if m.direction == CashMovement.Direction.IN and not m.is_realized],
+            Decimal('0'),
+        )
+        payable_open = sum(
+            [m.amount for m in movements if m.direction == CashMovement.Direction.OUT and not m.is_realized],
+            Decimal('0'),
+        )
+        overdue_total = sum(
+            [m.amount for m in movements if not m.is_realized and m.due_date and m.due_date < today],
+            Decimal('0'),
+        )
+
+        month_movements = [m for m in movements if m.due_date and start_month <= m.due_date <= end_month]
+        weekly_labels = []
+        weekly_expected_in = []
+        weekly_expected_out = []
+        weekly_realized_in = []
+        weekly_realized_out = []
+        for week_index in range(1, 6):
+            week_start = start_month + timedelta(days=(week_index - 1) * 7)
+            week_end = min(start_month + timedelta(days=(week_index * 7) - 1), end_month)
+            if week_start > end_month:
+                continue
+            weekly_labels.append(f'Semana {week_index}')
+            week_items = [m for m in month_movements if week_start <= m.due_date <= week_end]
+            weekly_expected_in.append(
+                float(sum([m.amount for m in week_items if m.direction == CashMovement.Direction.IN], Decimal('0')))
+            )
+            weekly_expected_out.append(
+                float(sum([m.amount for m in week_items if m.direction == CashMovement.Direction.OUT], Decimal('0')))
+            )
+            weekly_realized_in.append(
+                float(
+                    sum(
+                        [m.amount for m in week_items if m.direction == CashMovement.Direction.IN and m.is_realized],
+                        Decimal('0'),
+                    )
+                )
+            )
+            weekly_realized_out.append(
+                float(
+                    sum(
+                        [m.amount for m in week_items if m.direction == CashMovement.Direction.OUT and m.is_realized],
+                        Decimal('0'),
+                    )
+                )
+            )
+
+        overdue_qs = (
+            CashMovement.objects.select_related('category')
+            .filter(is_realized=False, due_date__isnull=False, due_date__lt=today)
+            .order_by('due_date', 'id')
+        )
+        overdue_category_totals = {}
+        for movement in overdue_qs.iterator():
+            label = movement.category.name if movement.category else 'Sem tipo'
+            overdue_category_totals[label] = overdue_category_totals.get(label, Decimal('0')) + (movement.amount or Decimal('0'))
+        overdue_top_categories = sorted(overdue_category_totals.items(), key=lambda item: item[1], reverse=True)[:8]
+        overdue_items = list(overdue_qs[:10])
+
+        context = {
+            'today': today,
+            'range_start': range_start,
+            'range_end': range_end,
+            'range_key': range_key,
+            'month_labels': month_labels,
+            'expected_in_series': expected_in_series,
+            'expected_out_series': expected_out_series,
+            'realized_in_series': realized_in_series,
+            'realized_out_series': realized_out_series,
+            'category_labels': [name for name, _ in top_categories],
+            'category_values': [float(value) for _, value in top_categories],
+            'weekly_labels': weekly_labels,
+            'weekly_expected_in': weekly_expected_in,
+            'weekly_expected_out': weekly_expected_out,
+            'weekly_realized_in': weekly_realized_in,
+            'weekly_realized_out': weekly_realized_out,
+            'overdue_items': overdue_items,
+            'overdue_category_labels': [name for name, _ in overdue_top_categories],
+            'overdue_category_values': [float(value) for _, value in overdue_top_categories],
+            'status_labels': ['Em aberto', 'Realizado'],
+            'status_values': [float(open_amount), float(realized_amount)],
+            'receivable_open': receivable_open,
+            'payable_open': payable_open,
+            'overdue_total': overdue_total,
+            'projected_balance': receivable_open - payable_open,
+        }
+        return render(request, self.template_name, context)
 
 
 class VehicleEntryKanbanView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -1589,12 +1839,13 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             super()
             .get_queryset()
             .select_related('customer', 'vehicle')
-            .prefetch_related('pieces', 'third_party_services')
+            .prefetch_related('pieces', 'third_party_services', 'photos')
         )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['pieces_parts'] = self.object.pieces.all()
+        context['photos'] = self.object.photos.all()
         context['third_party_form'] = ThirdPartyServiceForm()
         context['today'] = timezone.localdate()
         try:
@@ -1626,6 +1877,43 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             context['third_party_services'] = manual_third_party
             context['third_party_services_total'] = manual_third_party_total
         return context
+
+
+class BudgetPhotoCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        budget = Budget.objects.filter(pk=pk).only('id').first()
+        if budget is None:
+            raise Http404('Orçamento não encontrado.')
+
+        image_file = request.FILES.get('image_file')
+        caption = (request.POST.get('caption') or '').strip()
+        if image_file is None:
+            messages.error(request, 'Selecione uma foto para enviar.')
+            return redirect('budgets:budget_detail', pk=budget.pk)
+
+        BudgetPhoto.objects.create(
+            budget=budget,
+            image_file=image_file,
+            caption=caption,
+        )
+        messages.success(request, 'Foto do orçamento salva.')
+        return redirect('budgets:budget_detail', pk=budget.pk)
+
+
+class BudgetPhotoDeleteView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        photo = BudgetPhoto.objects.select_related('budget').filter(pk=pk).first()
+        if photo is None:
+            raise Http404('Foto não encontrada.')
+
+        budget_id = photo.budget_id
+        photo.delete()
+        messages.success(request, 'Foto removida.')
+        return redirect('budgets:budget_detail', pk=budget_id)
 
 
 class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
@@ -1869,8 +2157,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                 return Decimal('0')
             raw = raw.replace('R$', '').strip()
             raw = raw.replace(' ', '')
-            raw = raw.replace('.', '')
-            raw = raw.replace(',', '.')
+            if ',' in raw and '.' in raw:
+                raw = raw.replace('.', '').replace(',', '.')
+            elif ',' in raw:
+                raw = raw.replace(',', '.')
             return Decimal(raw)
 
         def parse_date(value, default_date):

@@ -2,13 +2,14 @@ from datetime import date, datetime, time as dt_time
 from decimal import Decimal
 
 from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
 
 from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
-from .models import Budget, CommissionLine, Piece, WorkOrder, WorkOrderTask
+from .models import Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, WorkOrder, WorkOrderTask
 from .cilia_parser import extract_service_lines
 from .views import capped_work_delta_seconds, parse_xml_created_at
 
@@ -34,9 +35,11 @@ class SmokePermissionsTests(TestCase):
         self.client.login(email=self.manager.email, password=self.password)
         urls = [
             reverse('core:dashboard'),
+            reverse('core:system_settings'),
             reverse('budgets:budget_list'),
             reverse('budgets:budget_open_list'),
             reverse('budgets:finance_dashboard'),
+            reverse('budgets:finance_insights'),
             reverse('budgets:workorder_list'),
             reverse('budgets:kanban_today'),
             reverse('budgets:vehicle_entry_kanban'),
@@ -63,10 +66,12 @@ class SmokePermissionsTests(TestCase):
         ]
         blocked = [
             'budgets:finance_dashboard',
+            'budgets:finance_insights',
             'budgets:workorder_list',
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'core:system_settings',
         ]
         for name in allowed:
             r = self.client.get(reverse(name))
@@ -86,12 +91,14 @@ class SmokePermissionsTests(TestCase):
             'budgets:budget_list',
             'budgets:budget_open_list',
             'budgets:finance_dashboard',
+            'budgets:finance_insights',
             'budgets:workorder_list',
             'budgets:vehicle_entry_kanban',
             'budgets:report_pieces',
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'core:system_settings',
         ]
         for name in allowed:
             r = self.client.get(reverse(name))
@@ -109,6 +116,7 @@ class SmokePermissionsTests(TestCase):
             'budgets:budget_list',
             'budgets:budget_open_list',
             'budgets:finance_dashboard',
+            'budgets:finance_insights',
             'budgets:workorder_list',
             'budgets:vehicle_entry_kanban',
             'budgets:commission_open_list',
@@ -116,6 +124,7 @@ class SmokePermissionsTests(TestCase):
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'core:system_settings',
         ]
         for name in allowed:
             r = self.client.get(reverse(name))
@@ -236,6 +245,118 @@ class XMLCreatedAtTests(TestCase):
         dt = parse_xml_created_at(xml)
         self.assertIsNotNone(dt)
         self.assertEqual(dt.date().isoformat(), "2024-02-10")
+
+
+class FinanceMovementTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='finance-manager@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.category_in = CashCategory.objects.create(
+            name='Recebimento avulso',
+            direction=CashMovement.Direction.IN,
+        )
+        self.category_out = CashCategory.objects.create(
+            name='Aluguel',
+            direction=CashMovement.Direction.OUT,
+            group=CashCategory.ExpenseGroup.ADMIN,
+        )
+
+    def test_create_recurring_monthly_movements(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(
+            reverse('budgets:finance_dashboard'),
+            {
+                'action': 'create_movement',
+                'description': 'Aluguel loja',
+                'amount': '1000.00',
+                'due_date': '2026-06-10',
+                'direction': 'OUT',
+                'source': 'OTHER',
+                'category_id': str(self.category_out.id),
+                'recurrence_total': '3',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CashMovement.objects.count(), 3)
+        dates = list(CashMovement.objects.order_by('due_date').values_list('due_date', flat=True))
+        self.assertEqual([d.isoformat() for d in dates], ['2026-06-10', '2026-07-10', '2026-08-10'])
+
+    def test_create_manual_entry_with_balance_forward(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(
+            reverse('budgets:finance_dashboard'),
+            {
+                'action': 'create_movement',
+                'description': 'Recebimento cliente',
+                'amount': '900.00',
+                'due_date': '2026-06-10',
+                'direction': 'IN',
+                'source': 'CUSTOMER',
+                'category_id': str(self.category_in.id),
+                'is_realized': 'on',
+                'split_entry': 'on',
+                'entry_amount': '300.00',
+                'balance_due_date': '2026-07-05',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CashMovement.objects.count(), 2)
+        first = CashMovement.objects.order_by('due_date', 'id').first()
+        second = CashMovement.objects.order_by('due_date', 'id').last()
+        self.assertEqual(first.amount, Decimal('300.00'))
+        self.assertTrue(first.is_realized)
+        self.assertEqual(second.amount, Decimal('600.00'))
+        self.assertFalse(second.is_realized)
+        self.assertEqual(second.due_date.isoformat(), '2026-07-05')
+
+
+class FinanceInsightsTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='dash-manager@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+
+    def test_finance_insights_default_month(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        r = self.client.get(reverse('budgets:finance_insights'))
+        self.assertEqual(r.status_code, 200)
+
+    def test_finance_insights_range_12m(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        r = self.client.get(reverse('budgets:finance_insights') + '?range=12m')
+        self.assertEqual(r.status_code, 200)
+
+
+class BudgetPhotoTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='photo-manager@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.customer = Customer.objects.create(name='Cliente Foto', document_cpf_cnpj='555')
+        self.vehicle = Vehicle.objects.create(customer=self.customer, plate='FFF1F11', brand='Marca', model='Modelo')
+        self.budget = Budget.objects.create(customer=self.customer, vehicle=self.vehicle, status=Budget.Status.PENDING)
+
+    def test_budget_photo_upload(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        upload = SimpleUploadedFile('orcamento.jpg', b'filecontent', content_type='image/jpeg')
+        response = self.client.post(
+            reverse('budgets:budget_photo_create', kwargs={'pk': self.budget.pk}),
+            {'caption': 'Lateral', 'image_file': upload},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(BudgetPhoto.objects.filter(budget=self.budget).count(), 1)
 
 
 class CommissionConfidentialityTests(TestCase):

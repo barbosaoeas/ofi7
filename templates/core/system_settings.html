@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+
+{% block title %}Configuração | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-4xl px-4 py-8{% endblock %}
+
+{% block content %}
+  <div class='rounded-3xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h1 class='text-2xl font-semibold text-[#D4AF37]'>Configuração</h1>
+        <p class='mt-1 text-sm text-[#A3A3A3]'>Nome, endereço, cores e logo do sistema.</p>
+      </div>
+    </div>
+
+    <form method='post' enctype='multipart/form-data' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      {% csrf_token %}
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_name'>Nome</label>
+        <input id='id_name' name='name' type='text' value='{{ settings.name|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+      </div>
+
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_address'>Endereço</label>
+        <input id='id_address' name='address' type='text' value='{{ settings.address|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_phone'>Telefone</label>
+        <input id='id_phone' name='phone' type='text' data-mask='phone' value='{{ settings.phone|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_logo'>Logo</label>
+        <input id='id_logo' name='logo' type='file' accept='image/*' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+        {% if settings.logo %}
+          <div class='mt-2 text-sm text-[#A3A3A3]'>Logo atual:</div>
+          <img src='{{ settings.logo.url }}' alt='Logo' class='mt-2 h-16 w-auto rounded-lg border border-[#262626] bg-[#0D0D0D] p-2' />
+        {% endif %}
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_primary_color'>Cor primária</label>
+        <input id='id_primary_color' name='primary_color' type='text' value='{{ settings.primary_color|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+      </div>
+
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='id_secondary_color'>Cor secundária</label>
+        <input id='id_secondary_color' name='secondary_color' type='text' value='{{ settings.secondary_color|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-4 py-3 text-sm text-[#F5F5F5]' />
+      </div>
+
+      <div class='md:col-span-2 flex flex-wrap justify-end gap-3 pt-2'>
+        <a href='{% url "core:dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+          Voltar
+        </a>
+        <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-5 py-3 text-sm font-semibold text-[#0D0D0D]'>
+          Salvar
+        </button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

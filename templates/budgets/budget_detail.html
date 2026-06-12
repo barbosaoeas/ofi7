@@ -57,7 +57,23 @@
     </div>
 
     <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Veículo</h2>
+      <div class='flex flex-wrap items-center justify-between gap-3'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Veículo</h2>
+        {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' %}
+          <a href='{% url "customers:vehicle_update" budget.vehicle.pk %}?next={{ request.get_full_path|urlencode }}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+            Editar foto
+          </a>
+        {% endif %}
+      </div>
+      <div class='mt-4'>
+        {% if budget.vehicle.photo_url %}
+          <a href='{{ budget.vehicle.photo_url }}' target='_blank' rel='noreferrer' class='block overflow-hidden rounded-lg border border-[#262626] hover:border-[#D4AF37]'>
+            <img src='{{ budget.vehicle.photo_url }}' alt='Veículo {{ budget.vehicle.plate }}' class='h-48 w-full object-cover' />
+          </a>
+        {% else %}
+          <div class='rounded-lg border border-[#262626] bg-[#141414] px-4 py-6 text-sm text-[#A3A3A3]'>Sem imagem</div>
+        {% endif %}
+      </div>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
         <div>
           <dt class='text-[#A3A3A3]'>Placa</dt>
@@ -77,6 +93,64 @@
         </div>
       </dl>
     </div>
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Fotos do orçamento</h2>
+        <p class='mt-1 text-sm text-[#A3A3A3]'>Registre avarias, detalhes e evolução do serviço.</p>
+      </div>
+      <span class='rounded-full border border-[#404040] bg-[#262626] px-3 py-1 text-sm text-[#A3A3A3]'>{{ photos|length }} foto{{ photos|length|pluralize }}</span>
+    </div>
+
+    <form class='mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto]' method='post' action='{% url "budgets:budget_photo_create" budget.pk %}' enctype='multipart/form-data'>
+      {% csrf_token %}
+      <div>
+        <label class='block text-sm text-[#A3A3A3]' for='id_budget_photo_caption'>Legenda</label>
+        <input id='id_budget_photo_caption' name='caption' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Ex.: lateral direita antes da funilaria' />
+      </div>
+      <div>
+        <label class='block text-sm text-[#A3A3A3]' for='id_budget_photo_file'>Foto</label>
+        <input id='id_budget_photo_file' name='image_file' type='file' accept='image/*' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[#262626] file:px-3 file:py-2 file:text-sm file:text-[#F5F5F5]' required />
+      </div>
+      <div class='flex items-end'>
+        <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>Enviar foto</button>
+      </div>
+    </form>
+
+    {% if photos %}
+      <div class='mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3'>
+        {% for photo in photos %}
+          <div class='overflow-hidden rounded-xl border border-[#262626] bg-[#121212]'>
+            <a href='{{ photo.image_url }}' target='_blank' rel='noreferrer' class='block'>
+              <img src='{{ photo.image_url }}' alt='Foto orçamento {{ budget.display_number }}' class='h-56 w-full bg-[#0D0D0D] object-cover' />
+            </a>
+            <div class='space-y-3 p-4'>
+              <div>
+                <div class='text-sm font-medium text-[#F5F5F5]'>{{ photo.caption|default:'Sem legenda' }}</div>
+                <div class='mt-1 text-xs text-[#A3A3A3]'>{{ photo.created_at|date:'d/m/Y H:i' }}</div>
+              </div>
+              <div class='flex flex-wrap gap-2'>
+                <a href='{{ photo.image_url }}' target='_blank' rel='noreferrer' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                  Abrir
+                </a>
+                <form method='post' action='{% url "budgets:budget_photo_delete" photo.pk %}' onsubmit='return confirm("Excluir esta foto do orçamento?");'>
+                  {% csrf_token %}
+                  <button type='submit' class='rounded-md border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-2 text-xs text-[#FECACA] hover:border-[#DC2626]'>
+                    Excluir
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class='mt-6 rounded-lg border border-dashed border-[#404040] bg-[#121212] px-4 py-8 text-center text-sm text-[#A3A3A3]'>
+        Nenhuma foto cadastrada neste orçamento.
+      </div>
+    {% endif %}
   </div>
 
   <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>

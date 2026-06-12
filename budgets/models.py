@@ -114,6 +114,29 @@ class ThirdPartyService(models.Model):
         return self.description
 
 
+class BudgetPhoto(models.Model):
+    budget = models.ForeignKey(Budget, on_delete=models.CASCADE, related_name='photos')
+    image_file = models.FileField(upload_to='uploads/budgets/')
+    caption = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-created_at', '-id')
+
+    @property
+    def image_url(self):
+        try:
+            if self.image_file:
+                return self.image_file.url
+        except Exception:
+            pass
+        return ''
+
+    def __str__(self):
+        label = self.caption or f'Foto {self.pk}'
+        return f'{self.budget} - {label}'
+
+
 class ServiceCatalog(models.Model):
     class CommissionMode(models.TextChoices):
         NONE = 'NONE', 'Sem comissão'
@@ -234,6 +257,9 @@ class CashMovement(models.Model):
     due_date = models.DateField(null=True, blank=True)
     is_realized = models.BooleanField(default=False)
     realized_at = models.DateTimeField(null=True, blank=True)
+    recurrence_group = models.CharField(max_length=36, blank=True)
+    recurrence_index = models.PositiveIntegerField(default=1)
+    recurrence_total = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

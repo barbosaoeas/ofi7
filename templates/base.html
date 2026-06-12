@@ -19,10 +19,15 @@
     <div class='min-h-screen'>
       {% if user.is_authenticated and not user.is_superuser and user.role == 'VISUAL' and request.resolver_match.view_name == 'budgets:kanban_today' %}
       {% else %}
-        <header class='border-b border-[#262626] bg-[#141414]'>
+        <header class='sticky top-0 z-50 border-b border-[#262626] bg-[#141414]'>
           <div class='mx-auto flex max-w-6xl items-center justify-between px-4 py-4'>
-            <a href='{% url "core:public_index" %}' class='text-[#D4AF37] text-lg font-semibold tracking-wide'>
-              Controle Oficina
+            <a href='{% url "core:public_index" %}' class='flex items-center gap-3 text-lg font-semibold tracking-wide'>
+              {% if system_settings and system_settings.logo %}
+                <img src='{{ system_settings.logo.url }}' alt='Logo' class='h-9 w-9 rounded-md border border-[#262626] bg-[#0D0D0D] object-contain p-1' />
+              {% endif %}
+              <span style='color:{% if system_settings and system_settings.primary_color %}{{ system_settings.primary_color }}{% else %}#D4AF37{% endif %}'>
+                {% if system_settings and system_settings.name %}{{ system_settings.name }}{% else %}Controle Oficina{% endif %}
+              </span>
             </a>
             <nav class='flex items-center gap-3 text-sm'>
               {% if user.is_authenticated %}
@@ -89,6 +94,9 @@
                       </a>
                       <a href='{% url "budgets:service_catalog_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
                         Serviços
+                      </a>
+                      <a href='{% url "core:system_settings" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Configuração
                       </a>
                     </div>
                   </div>

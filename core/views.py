@@ -1,9 +1,12 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib import messages
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
+from django.utils import timezone
+from django.views import View
 from django.views.generic import TemplateView
 
 from users.models import CustomUser
+from .models import SystemSettings
 
 
 class RoleRequiredMixin:
@@ -49,3 +52,36 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         ):
             return redirect('budgets:kanban_today')
         return super().dispatch(request, *args, **kwargs)
+
+
+class SystemSettingsView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get(self, request):
+        settings_obj = SystemSettings.get_solo()
+        return render(request, 'core/system_settings.html', {'settings': settings_obj})
+
+    def post(self, request):
+        settings_obj = SystemSettings.get_solo()
+
+        settings_obj.name = (request.POST.get('name') or '').strip()
+        settings_obj.address = (request.POST.get('address') or '').strip()
+        settings_obj.phone = (request.POST.get('phone') or '').strip()
+        settings_obj.primary_color = (request.POST.get('primary_color') or '').strip()
+        settings_obj.secondary_color = (request.POST.get('secondary_color') or '').strip()
+
+        logo = request.FILES.get('logo')
+        if logo:
+            settings_obj.logo = logo
+
+        if not settings_obj.name:
+            settings_obj.name = 'Controle Oficina'
+        if not settings_obj.primary_color:
+            settings_obj.primary_color = '#D4AF37'
+        if not settings_obj.secondary_color:
+            settings_obj.secondary_color = '#AA882C'
+
+        settings_obj.updated_at = timezone.now()
+        settings_obj.save()
+        messages.success(request, 'Configuração salva.')
+        return redirect('core:system_settings')

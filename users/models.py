@@ -77,5 +77,14 @@ class Collaborator(models.Model):
     class Meta:
         ordering = ('name',)
 
+    @property
+    def photo_url(self):
+        try:
+            if self.image_file:
+                return self.image_file.url
+        except Exception:
+            pass
+        return self.image_url or ''
+
     def __str__(self):
         return self.name

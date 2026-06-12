@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 
-{% block title %}Novo veículo | Controle Oficina{% endblock %}
+{% block title %}{% if object %}Editar veículo {{ object.plate }}{% else %}Novo veículo{% endif %} | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='mx-auto max-w-2xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Novo veículo</h1>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>{% if object %}Editar veículo{% else %}Novo veículo{% endif %}</h1>
 
     <form method='post' enctype='multipart/form-data' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2'>
       {% csrf_token %}
