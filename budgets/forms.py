@@ -1,7 +1,7 @@
 from django import forms
 from decimal import Decimal, InvalidOperation
 
-from .models import Piece, ServiceCatalog
+from .models import BankAccount, Piece, ServiceCatalog, Supplier
 
 class CiliaXMLUploadForm(forms.Form):
     xml_file = forms.FileField(label='Arquivo XML (Cilia)')
@@ -102,4 +102,56 @@ class PieceForm(forms.ModelForm):
             'arrived',
             'cost_price',
             'profit_percent',
+        )
+
+
+class BankAccountForm(forms.ModelForm):
+    def clean(self):
+        cleaned = super().clean()
+        bank_name = (cleaned.get('bank_name') or '').strip()
+        account_name = (cleaned.get('account_name') or '').strip()
+        branch = (cleaned.get('branch') or '').strip()
+        account_number = (cleaned.get('account_number') or '').strip()
+
+        if bank_name and account_name:
+            duplicate_qs = BankAccount.objects.filter(
+                bank_name__iexact=bank_name,
+                account_name__iexact=account_name,
+                branch__iexact=branch,
+                account_number__iexact=account_number,
+            )
+            if self.instance.pk:
+                duplicate_qs = duplicate_qs.exclude(pk=self.instance.pk)
+            if duplicate_qs.exists():
+                raise forms.ValidationError('Já existe uma conta bancária com esses mesmos dados.')
+
+        return cleaned
+
+    class Meta:
+        model = BankAccount
+        fields = (
+            'bank_name',
+            'account_name',
+            'branch',
+            'account_number',
+            'account_type',
+            'pix_key',
+            'initial_balance',
+            'initial_balance_date',
+            'is_active',
+        )
+
+
+class SupplierForm(forms.ModelForm):
+    class Meta:
+        model = Supplier
+        fields = (
+            'name',
+            'kind',
+            'document',
+            'phone',
+            'email',
+            'contact_name',
+            'notes',
+            'is_active',
         )

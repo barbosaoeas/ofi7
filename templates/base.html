@@ -95,6 +95,12 @@
                       <a href='{% url "budgets:service_catalog_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
                         Serviços
                       </a>
+                      <a href='{% url "budgets:bank_account_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Bancos
+                      </a>
+                      <a href='{% url "budgets:supplier_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                        Fornecedores
+                      </a>
                       <a href='{% url "core:system_settings" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
                         Configuração
                       </a>
@@ -210,6 +216,20 @@
           document.querySelectorAll("input[type='url']").forEach(function (el) {
             el.addEventListener('blur', function () {
               normalizeUrlInput(el);
+            });
+          });
+
+          document.querySelectorAll("form[data-disable-on-submit='true']").forEach(function (form) {
+            form.addEventListener('submit', function () {
+              var submitButtons = form.querySelectorAll("button[type='submit'], input[type='submit']");
+              submitButtons.forEach(function (btn) {
+                btn.disabled = true;
+                btn.classList.add('opacity-60', 'cursor-not-allowed');
+                if (btn.tagName === 'BUTTON' && !btn.getAttribute('data-original-label')) {
+                  btn.setAttribute('data-original-label', btn.textContent);
+                  btn.textContent = 'Salvando...';
+                }
+              });
             });
           });
         }

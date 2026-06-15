@@ -18,13 +18,13 @@
       </div>
       <div class='flex flex-wrap gap-3'>
         <div class='flex flex-wrap gap-2'>
-          <a href='{% url "budgets:finance_insights" %}?range=month' class='{% if range_key == "month" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=month{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "month" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             Mês atual
           </a>
-          <a href='{% url "budgets:finance_insights" %}?range=3m' class='{% if range_key == "3m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=3m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "3m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             3 meses
           </a>
-          <a href='{% url "budgets:finance_insights" %}?range=12m' class='{% if range_key == "12m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=12m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "12m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             12 meses
           </a>
         </div>
@@ -34,6 +34,35 @@
       </div>
     </div>
   </div>
+
+  <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4 md:grid-cols-4'>
+    <input type='hidden' name='range' value='{{ range_key }}' />
+    <div>
+      <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_dash_direction'>Direção</label>
+      <select id='id_dash_direction' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+        <option value='' {% if not filters.direction %}selected{% endif %}>Todas</option>
+        <option value='IN' {% if filters.direction == 'IN' %}selected{% endif %}>Entradas</option>
+        <option value='OUT' {% if filters.direction == 'OUT' %}selected{% endif %}>Saídas</option>
+      </select>
+    </div>
+    <div>
+      <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_dash_source'>Origem</label>
+      <select id='id_dash_source' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+        <option value='' {% if not filters.source %}selected{% endif %}>Todas</option>
+        {% for source in source_options %}
+          <option value='{{ source.value }}' data-direction='{{ source.directions }}' {% if filters.source == source.value %}selected{% endif %}>{{ source.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class='md:col-span-2 flex items-end justify-end gap-3'>
+      <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2.5 text-sm font-semibold text-[#0D0D0D]'>
+        Filtrar
+      </button>
+      <a href='{% url "budgets:finance_insights" %}?range={{ range_key }}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-2.5 text-sm hover:border-[#D4AF37]'>
+        Limpar
+      </a>
+    </div>
+  </form>
 
   <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
     <div class='rounded-2xl border border-[#1f3b2d] bg-gradient-to-br from-[#0d1f16] to-[#0a140f] p-5'>
@@ -119,6 +148,28 @@
     </div>
   </div>
 
+  <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Melhores perfis de cliente</h2>
+        <p class='text-sm text-[#A3A3A3]'>Compara o faturamento entre particular, seguradoras, empresa e outras origens.</p>
+      </div>
+      <div class='h-[320px]'>
+        <canvas id='finance-profile-chart'></canvas>
+      </div>
+    </div>
+
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-3'>
+      <div class='mb-4'>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Seguradoras com mais serviços</h2>
+        <p class='text-sm text-[#A3A3A3]'>Mostra quem mais aprovou orçamento e trouxe valor para a oficina.</p>
+      </div>
+      <div class='h-[320px]'>
+        <canvas id='finance-insurer-chart'></canvas>
+      </div>
+    </div>
+  </div>
+
   <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
     <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
       <div class='mb-4'>
@@ -186,6 +237,37 @@
     </div>
   </div>
 
+  <div class='mt-6 rounded-3xl border border-[#262626] bg-[#161616] p-5'>
+    <div class='mb-4'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Ranking detalhado das seguradoras</h2>
+      <p class='text-sm text-[#A3A3A3]'>Quantidade de orçamentos autorizados e valor aprovado por seguradora.</p>
+    </div>
+    <div class='overflow-hidden rounded-2xl border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Seguradora</th>
+            <th class='px-4 py-3 font-semibold text-right'>Orçamentos</th>
+            <th class='px-4 py-3 font-semibold text-right'>Valor aprovado</th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626] bg-[#111111]'>
+          {% for insurer in insurer_ranking %}
+            <tr class='hover:bg-[#171717]'>
+              <td class='px-4 py-3'>{{ insurer.name }}</td>
+              <td class='px-4 py-3 text-right text-[#A3A3A3]'>{{ insurer.budget_count }}</td>
+              <td class='px-4 py-3 text-right font-semibold'>R$ {{ insurer.approved_total|floatformat:2 }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan='3' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Nenhuma seguradora identificada no período selecionado.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   {{ month_labels|json_script:"month-labels-data" }}
   {{ expected_in_series|json_script:"expected-in-data" }}
   {{ expected_out_series|json_script:"expected-out-data" }}
@@ -193,6 +275,8 @@
   {{ realized_out_series|json_script:"realized-out-data" }}
   {{ category_labels|json_script:"category-labels-data" }}
   {{ category_values|json_script:"category-values-data" }}
+  {{ profile_labels|json_script:"profile-labels-data" }}
+  {{ profile_values|json_script:"profile-values-data" }}
   {{ status_labels|json_script:"status-labels-data" }}
   {{ status_values|json_script:"status-values-data" }}
   {{ weekly_labels|json_script:"weekly-labels-data" }}
@@ -202,9 +286,42 @@
   {{ weekly_realized_out|json_script:"weekly-realized-out-data" }}
   {{ overdue_category_labels|json_script:"overdue-category-labels-data" }}
   {{ overdue_category_values|json_script:"overdue-category-values-data" }}
+  {{ insurer_labels|json_script:"insurer-labels-data" }}
+  {{ insurer_budget_counts|json_script:"insurer-budget-counts-data" }}
+  {{ insurer_amount_values|json_script:"insurer-amount-values-data" }}
 
   <script>
     (function () {
+      function syncSourceOptions(sourceId, directionId) {
+        var sourceSelect = document.getElementById(sourceId);
+        var direction = document.getElementById(directionId);
+        if (!sourceSelect || !direction) return;
+
+        var dir = (direction.value || '').toUpperCase();
+        var selectedOk = false;
+        Array.prototype.forEach.call(sourceSelect.options, function (opt) {
+          if (!opt || !opt.value) return;
+          var allowed = (opt.getAttribute('data-direction') || '').toUpperCase().split(',');
+          var show = !dir || allowed.indexOf(dir) >= 0;
+          opt.hidden = !show;
+          opt.disabled = !show;
+          if (opt.selected && show) selectedOk = true;
+          if (opt.selected && !show) opt.selected = false;
+        });
+
+        if (!selectedOk) {
+          sourceSelect.value = dir === 'IN' ? 'PARTICULAR' : (dir === 'OUT' ? 'COMPANY' : '');
+        }
+      }
+
+      var dashDirection = document.getElementById('id_dash_direction');
+      if (dashDirection) {
+        dashDirection.addEventListener('change', function () {
+          syncSourceOptions('id_dash_source', 'id_dash_direction');
+        });
+        syncSourceOptions('id_dash_source', 'id_dash_direction');
+      }
+
       function readJSON(id) {
         var el = document.getElementById(id);
         if (!el) return [];
@@ -218,6 +335,8 @@
       var realizedOut = readJSON('realized-out-data');
       var categoryLabels = readJSON('category-labels-data');
       var categoryValues = readJSON('category-values-data');
+      var profileLabels = readJSON('profile-labels-data');
+      var profileValues = readJSON('profile-values-data');
       var statusLabels = readJSON('status-labels-data');
       var statusValues = readJSON('status-values-data');
       var weeklyLabels = readJSON('weekly-labels-data');
@@ -227,6 +346,9 @@
       var weeklyRealizedOut = readJSON('weekly-realized-out-data');
       var overdueCatLabels = readJSON('overdue-category-labels-data');
       var overdueCatValues = readJSON('overdue-category-values-data');
+      var insurerLabels = readJSON('insurer-labels-data');
+      var insurerBudgetCounts = readJSON('insurer-budget-counts-data');
+      var insurerAmountValues = readJSON('insurer-amount-values-data');
 
       Chart.defaults.color = '#d4d4d4';
       Chart.defaults.borderColor = '#262626';
@@ -289,6 +411,24 @@
         }
       });
 
+      new Chart(document.getElementById('finance-profile-chart'), {
+        type: 'doughnut',
+        data: {
+          labels: profileLabels,
+          datasets: [
+            {
+              data: profileValues,
+              backgroundColor: ['#D4AF37', '#3b82f6', '#22c55e', '#f97316', '#a855f7']
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } }
+        }
+      });
+
       new Chart(document.getElementById('finance-week-chart'), {
         type: 'bar',
         data: {
@@ -322,6 +462,23 @@
           indexAxis: 'y',
           plugins: { legend: { display: false } },
           scales: { x: { beginAtZero: true } }
+        }
+      });
+
+      new Chart(document.getElementById('finance-insurer-chart'), {
+        type: 'bar',
+        data: {
+          labels: insurerLabels,
+          datasets: [
+            { label: 'Orçamentos', data: insurerBudgetCounts, backgroundColor: '#D4AF37' },
+            { label: 'Valor aprovado (R$)', data: insurerAmountValues, backgroundColor: '#3b82f6' }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom' } },
+          scales: { y: { beginAtZero: true } }
         }
       });
     })();

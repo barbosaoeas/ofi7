@@ -52,17 +52,16 @@
           <option value='1' {% if filters.realized == '1' %}selected{% endif %}>Realizados</option>
         </select>
       </div>
-      <div class='md:col-span-2'>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_category'>Tipo</label>
-        <select id='id_category' name='category' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
-          <option value='' {% if not filters.category_id %}selected{% endif %}>Todos</option>
-          {% for c in categories %}
-            <option value='{{ c.id }}' {% if filters.category_id == c.id %}selected{% endif %}>
-              {{ c.get_direction_display }}{% if c.direction == 'OUT' and c.group %} · {{ c.get_group_display }}{% endif %} · {{ c.name }}
-            </option>
+      <div>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_filter_source'>Origem</label>
+        <select id='id_filter_source' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+          <option value='' {% if not filters.origin_category_id %}selected{% endif %}>Todas</option>
+          {% for origin in origin_options %}
+            <option value='{{ origin.value }}' data-direction='{{ origin.direction }}' {% if filters.origin_category_id == origin.value %}selected{% endif %}>{{ origin.label }}</option>
           {% endfor %}
         </select>
       </div>
+      <div class='md:col-span-2'></div>
       <div class='md:col-span-6 flex flex-wrap items-center justify-end gap-3 pt-1'>
         <div class='mr-auto text-xs text-[#737373]'>{{ movement_count }} lançamento(s) no período selecionado</div>
         <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2.5 text-sm font-semibold text-[#0D0D0D]'>
@@ -110,9 +109,12 @@
       <table class='w-full text-left text-sm'>
         <thead class='bg-[#141414] text-[#D4AF37]'>
           <tr>
-            <th class='px-4 py-3 font-semibold'>Venc.</th>
+            <th class='px-4 py-3 font-semibold'>Lanç.</th>
+            <th class='px-4 py-3 font-semibold'>Pagamento</th>
             <th class='px-4 py-3 font-semibold'>Direção</th>
-            <th class='px-4 py-3 font-semibold'>Tipo</th>
+            <th class='px-4 py-3 font-semibold'>Origem</th>
+            <th class='px-4 py-3 font-semibold'>Banco</th>
+            <th class='px-4 py-3 font-semibold'>Cliente / Fornecedor</th>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Orçamento</th>
             <th class='px-4 py-3 font-semibold text-right'>Valor</th>
@@ -123,6 +125,9 @@
         <tbody class='divide-y divide-[#262626] bg-[#111111]'>
           {% for m in movements %}
             <tr class='hover:bg-[#171717]{% if not m.is_realized and m.due_date and m.due_date < filters.today %} bg-[#160808]{% endif %}'>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {{ m.launch_date|date:'d/m/Y'|default:'-' }}
+              </td>
               <td class='px-4 py-3 text-[#A3A3A3]'>
                 <div class='flex flex-wrap items-center gap-2'>
                   <div>{{ m.due_date|date:'d/m/Y' }}</div>
@@ -138,7 +143,15 @@
                   <span class='rounded-full border border-[#7f1d1d] bg-[#450a0a] px-2.5 py-1 text-xs text-[#fca5a5]'>Saída</span>
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.name }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.get_direction_display }}{% if m.category.direction == 'OUT' and m.category.group %} · {{ m.category.get_group_display }}{% endif %} · {{ m.category.name }}{% else %}{{ m.get_source_display }}{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.bank_account %}{{ m.bank_account.bank_name }} - {{ m.bank_account.account_name }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if m.direction == 'IN' %}
+                  {{ m.customer.name|default:'-' }}
+                {% else %}
+                  {% if m.supplier %}{{ m.supplier.name }}{% else %}-{% endif %}
+                {% endif %}
+              </td>
               <td class='px-4 py-3'>
                 <div>{{ m.description|default:'-' }}</div>
                 {% if m.recurrence_total > 1 %}
@@ -192,7 +205,7 @@
             </tr>
           {% empty %}
             <tr>
-              <td colspan='8' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Sem lançamentos no período.</td>
+              <td colspan='11' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Sem lançamentos no período.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -223,7 +236,11 @@
           <input id='id_mov_amount' name='amount' type='number' min='0' step='0.01' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
         </div>
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due'>Vencimento</label>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_launch'>Data lançamento</label>
+          <input id='id_mov_launch' name='launch_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+        </div>
+        <div class='md:col-span-2'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due'>Data pagamento</label>
           <input id='id_mov_due' name='due_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
         </div>
         <div class='md:col-span-1'>
@@ -235,31 +252,42 @@
         </div>
         <div class='md:col-span-2'>
           <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_source'>Origem</label>
-          <select id='id_mov_source' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
-            <option value='CUSTOMER'>Cliente</option>
-            <option value='INSURER'>Seguradora</option>
-            <option value='OTHER' selected>Outro</option>
-          </select>
-        </div>
-
-        <div id='mov-group-block' class='md:col-span-3'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_group'>Grupo da saída</label>
-          <select id='id_mov_group' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
-            <option value=''>Todos</option>
-            {% for value, label in expense_groups %}
-              <option value='{{ value }}'>{{ label }}</option>
+          <input id='id_mov_source_value' type='hidden' name='source' value='COMPANY' />
+          <select id='id_mov_source' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <option value=''>Selecione</option>
+            {% for origin in origin_options %}
+              <option value='{{ origin.value }}' data-direction='{{ origin.direction }}'>{{ origin.label }}</option>
             {% endfor %}
           </select>
         </div>
         <div class='md:col-span-3'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_cat'>Tipo</label>
-          <select id='id_mov_cat' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
-            <option value=''>-</option>
-            {% for c in categories %}
-              <option value='{{ c.id }}' data-direction='{{ c.direction }}' data-group='{{ c.group }}'>{{ c.name }}</option>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_bank_account'>Banco/Conta</label>
+          <select id='id_mov_bank_account' name='bank_account_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' required>
+            <option value=''>Selecione</option>
+            {% for bank in bank_accounts %}
+              <option value='{{ bank.id }}'>{{ bank.bank_name }} - {{ bank.account_name }}</option>
             {% endfor %}
           </select>
         </div>
+        <div id='customer-block' class='md:col-span-3'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_customer'>Cliente</label>
+          <select id='id_mov_customer' name='customer_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <option value=''>Selecione</option>
+            {% for customer in customers %}
+              <option value='{{ customer.id }}'>{{ customer.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id='supplier-block' class='md:col-span-3'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_supplier'>Fornecedor</label>
+          <select id='id_mov_supplier' name='supplier_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <option value=''>-</option>
+            {% for supplier in suppliers %}
+              <option value='{{ supplier.id }}'>{{ supplier.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
         <div class='md:col-span-2'>
           <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_recurrence_total'>Recorrência mensal</label>
           <input id='id_mov_recurrence_total' name='recurrence_total' type='number' min='1' max='60' value='1' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
@@ -269,8 +297,8 @@
           <input id='id_mov_realized' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
           <label for='id_mov_realized' class='text-sm text-[#A3A3A3]'>Marcar como realizado agora</label>
         </div>
-        <div class='md:col-span-2 flex items-center gap-2 pt-6'>
-          <input id='id_mov_split_entry' type='checkbox' name='split_entry' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+        <div id='split-entry-toggle' class='md:col-span-2 flex items-center gap-2 pt-6'>
+          <input id='id_mov_split_entry' type='checkbox' name='split_entry' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' disabled />
           <label for='id_mov_split_entry' class='text-sm text-[#A3A3A3]'>Entrada agora e saldo depois</label>
         </div>
 
@@ -328,7 +356,11 @@
             <input id='id_mov_amount_edit' name='amount' type='number' min='0' step='0.01' value='{{ edit_movement.amount|unlocalize }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
           </div>
           <div class='md:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due_edit'>Vencimento</label>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_launch_edit'>Data lançamento</label>
+            <input id='id_mov_launch_edit' name='launch_date' type='date' value='{{ edit_movement.launch_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+          </div>
+          <div class='md:col-span-2'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due_edit'>Data pagamento</label>
             <input id='id_mov_due_edit' name='due_date' type='date' value='{{ edit_movement.due_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
           </div>
           <div class='md:col-span-1'>
@@ -340,27 +372,38 @@
           </div>
           <div class='md:col-span-2'>
             <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_source_edit'>Origem</label>
-            <select id='id_mov_source_edit' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
-              <option value='CUSTOMER' {% if edit_movement.source == 'CUSTOMER' %}selected{% endif %}>Cliente</option>
-              <option value='INSURER' {% if edit_movement.source == 'INSURER' %}selected{% endif %}>Seguradora</option>
-              <option value='OTHER' {% if edit_movement.source == 'OTHER' %}selected{% endif %}>Outro</option>
-            </select>
-          </div>
-          <div id='mov-group-block-edit' class='md:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_group_edit'>Grupo da saída</label>
-            <select id='id_mov_group_edit' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
-              <option value=''>Todos</option>
-              {% for value, label in expense_groups %}
-                <option value='{{ value }}'>{{ label }}</option>
+            <input id='id_mov_source_value_edit' type='hidden' name='source' value='{{ edit_movement.source|default:"COMPANY" }}' />
+            <select id='id_mov_source_edit' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+              <option value=''>Selecione</option>
+              {% for origin in origin_options %}
+                <option value='{{ origin.value }}' data-direction='{{ origin.direction }}' {% if edit_movement.category and edit_movement.category.id == origin.value %}selected{% endif %}>{{ origin.label }}</option>
               {% endfor %}
             </select>
           </div>
           <div class='md:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_cat_edit'>Tipo</label>
-            <select id='id_mov_cat_edit' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_bank_account_edit'>Banco/Conta</label>
+            <select id='id_mov_bank_account_edit' name='bank_account_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' required>
+              <option value=''>Selecione</option>
+              {% for bank in bank_accounts %}
+                <option value='{{ bank.id }}' {% if edit_movement.bank_account and edit_movement.bank_account.id == bank.id %}selected{% endif %}>{{ bank.bank_name }} - {{ bank.account_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id='customer-block-edit' class='md:col-span-3'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_customer_edit'>Cliente</label>
+            <select id='id_mov_customer_edit' name='customer_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+              <option value=''>Selecione</option>
+              {% for customer in customers %}
+                <option value='{{ customer.id }}' {% if edit_movement.customer and edit_movement.customer.id == customer.id %}selected{% endif %}>{{ customer.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id='supplier-block-edit' class='md:col-span-3'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_supplier_edit'>Fornecedor</label>
+            <select id='id_mov_supplier_edit' name='supplier_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
               <option value=''>-</option>
-              {% for c in categories %}
-                <option value='{{ c.id }}' data-direction='{{ c.direction }}' data-group='{{ c.group }}' {% if edit_movement.category and edit_movement.category.id == c.id %}selected{% endif %}>{{ c.name }}</option>
+              {% for supplier in suppliers %}
+                <option value='{{ supplier.id }}' {% if edit_movement.supplier and edit_movement.supplier.id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
               {% endfor %}
             </select>
           </div>
@@ -471,44 +514,10 @@
         if (!show) groupEl.value = '';
       }
 
-      function filterCategories(directionEl, groupEl, categoryEl) {
-        if (!directionEl || !categoryEl) return;
-        var dir = (directionEl.value || '').toUpperCase();
-        var group = (groupEl && dir === 'OUT') ? (groupEl.value || '').toUpperCase() : '';
-        var selectedOk = true;
-
-        Array.prototype.forEach.call(categoryEl.options, function (opt) {
-          if (!opt || !opt.value) return;
-          var optDir = (opt.getAttribute('data-direction') || '').toUpperCase();
-          var optGroup = (opt.getAttribute('data-group') || '').toUpperCase();
-          var show = (!optDir || !dir || optDir === dir) && (!group || optGroup === group);
-          opt.hidden = !show;
-          opt.disabled = !show;
-          if (opt.selected && !show) selectedOk = false;
-        });
-
-        if (!selectedOk) categoryEl.value = '';
-      }
-
-      function syncMovementGroupUI(directionEl, groupEl, categoryEl, blockId) {
-        var block = blockId ? document.getElementById(blockId) : null;
-        var dir = directionEl ? (directionEl.value || '').toUpperCase() : '';
-        var showGroup = dir === 'OUT';
-        if (block) block.style.display = showGroup ? '' : 'none';
-        if (groupEl && !showGroup) groupEl.value = '';
-        filterCategories(directionEl, groupEl, categoryEl);
-      }
-
-      function setGroupFromSelected(categoryEl, groupEl) {
-        if (!categoryEl || !groupEl) return;
-        var selected = categoryEl.options[categoryEl.selectedIndex];
-        if (!selected || groupEl.value) return;
-        groupEl.value = (selected.getAttribute('data-group') || '').toUpperCase();
-      }
-
       function syncSplitEntryUI() {
         var direction = document.getElementById('id_mov_dir');
         var splitCheckbox = document.getElementById('id_mov_split_entry');
+        var splitToggle = document.getElementById('split-entry-toggle');
         var splitBlock = document.getElementById('split-entry-block');
         var recurrenceInput = document.getElementById('id_mov_recurrence_total');
         if (!direction || !splitCheckbox || !splitBlock || !recurrenceInput) return;
@@ -517,33 +526,88 @@
         var show = isIn && splitCheckbox.checked;
         splitCheckbox.disabled = !isIn;
         if (!isIn) splitCheckbox.checked = false;
+        if (splitToggle) {
+          splitToggle.classList.toggle('opacity-60', !isIn);
+          splitToggle.classList.toggle('cursor-not-allowed', !isIn);
+        }
         splitBlock.classList.toggle('hidden', !show);
         recurrenceInput.disabled = show;
         if (show) recurrenceInput.value = '1';
       }
 
-      function bind() {
-        var direction = document.getElementById('id_mov_dir');
-        var group = document.getElementById('id_mov_group');
-        var category = document.getElementById('id_mov_cat');
-        if (direction) direction.addEventListener('change', function () {
-          syncMovementGroupUI(direction, group, category, 'mov-group-block');
-          syncSplitEntryUI();
+      function syncSourceOptions(sourceId, directionId) {
+        var sourceSelect = document.getElementById(sourceId);
+        var direction = document.getElementById(directionId);
+        if (!sourceSelect || !direction) return;
+
+        var dir = (direction.value || '').toUpperCase();
+        var selectedOk = !sourceSelect.value;
+        var firstVisibleValue = '';
+        Array.prototype.forEach.call(sourceSelect.options, function (opt) {
+          if (!opt || !opt.value) return;
+          var allowed = (opt.getAttribute('data-direction') || '').toUpperCase().split(',');
+          var show = !dir || allowed.indexOf(dir) >= 0;
+          opt.hidden = !show;
+          opt.disabled = !show;
+          if (show && !firstVisibleValue) firstVisibleValue = opt.value;
+          if (opt.selected && show) selectedOk = true;
+          if (opt.selected && !show) opt.selected = false;
         });
-        if (group) group.addEventListener('change', function () { syncMovementGroupUI(direction, group, category, 'mov-group-block'); });
-        syncMovementGroupUI(direction, group, category, 'mov-group-block');
+
+        if (!selectedOk) {
+          sourceSelect.value = firstVisibleValue;
+        }
+      }
+
+      function syncDerivedSourceValue(hiddenSourceId, directionId) {
+        var hiddenSource = document.getElementById(hiddenSourceId);
+        var direction = document.getElementById(directionId);
+        if (!hiddenSource || !direction) return;
+        hiddenSource.value = (direction.value || '').toUpperCase() === 'IN' ? 'PARTICULAR' : 'COMPANY';
+      }
+
+      function syncCounterpartyUI(directionId, customerBlockId, customerSelectId, supplierBlockId, supplierSelectId, sourceId, hiddenSourceId) {
+        var direction = document.getElementById(directionId);
+        var customerBlock = document.getElementById(customerBlockId);
+        var customerSelect = document.getElementById(customerSelectId);
+        var supplierBlock = document.getElementById(supplierBlockId);
+        var supplierSelect = document.getElementById(supplierSelectId);
+        if (!direction) return;
+
+        var isIn = (direction.value || '').toUpperCase() === 'IN';
+        if (customerBlock) customerBlock.style.display = isIn ? '' : 'none';
+        if (supplierBlock) supplierBlock.style.display = isIn ? 'none' : '';
+        if (customerSelect) {
+          customerSelect.required = isIn;
+          if (!isIn) customerSelect.value = '';
+        }
+        if (supplierSelect && isIn) supplierSelect.value = '';
+        syncSourceOptions(sourceId, directionId);
+        syncDerivedSourceValue(hiddenSourceId, directionId);
+      }
+
+      function bind() {
+        var filterDirection = document.getElementById('id_direction');
+        var filterSource = document.getElementById('id_filter_source');
+        if (filterDirection) filterDirection.addEventListener('change', function () { syncSourceOptions('id_filter_source', 'id_direction'); });
+        if (filterSource) syncSourceOptions('id_filter_source', 'id_direction');
+
+        var direction = document.getElementById('id_mov_dir');
+        if (direction) direction.addEventListener('change', function () {
+          syncSplitEntryUI();
+          syncCounterpartyUI('id_mov_dir', 'customer-block', 'id_mov_customer', 'supplier-block', 'id_mov_supplier', 'id_mov_source', 'id_mov_source_value');
+        });
 
         var splitCheckbox = document.getElementById('id_mov_split_entry');
         if (splitCheckbox) splitCheckbox.addEventListener('change', syncSplitEntryUI);
         syncSplitEntryUI();
+        syncCounterpartyUI('id_mov_dir', 'customer-block', 'id_mov_customer', 'supplier-block', 'id_mov_supplier', 'id_mov_source', 'id_mov_source_value');
 
         var directionEdit = document.getElementById('id_mov_dir_edit');
-        var groupEdit = document.getElementById('id_mov_group_edit');
-        var categoryEdit = document.getElementById('id_mov_cat_edit');
-        setGroupFromSelected(categoryEdit, groupEdit);
-        if (directionEdit) directionEdit.addEventListener('change', function () { syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit'); });
-        if (groupEdit) groupEdit.addEventListener('change', function () { syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit'); });
-        syncMovementGroupUI(directionEdit, groupEdit, categoryEdit, 'mov-group-block-edit');
+        if (directionEdit) directionEdit.addEventListener('change', function () {
+          syncCounterpartyUI('id_mov_dir_edit', 'customer-block-edit', 'id_mov_customer_edit', 'supplier-block-edit', 'id_mov_supplier_edit', 'id_mov_source_edit', 'id_mov_source_value_edit');
+        });
+        syncCounterpartyUI('id_mov_dir_edit', 'customer-block-edit', 'id_mov_customer_edit', 'supplier-block-edit', 'id_mov_supplier_edit', 'id_mov_source_edit', 'id_mov_source_value_edit');
 
         var catDir = document.getElementById('id_cat_dir');
         var catGroup = document.getElementById('id_cat_group');

@@ -155,6 +155,61 @@ class ServiceCatalog(models.Model):
         return self.name
 
 
+class BankAccount(models.Model):
+    class AccountType(models.TextChoices):
+        CHECKING = 'CHECKING', 'Corrente'
+        SAVINGS = 'SAVINGS', 'Poupanca'
+        CASH = 'CASH', 'Caixa'
+        DIGITAL = 'DIGITAL', 'Digital'
+        OTHER = 'OTHER', 'Outro'
+
+    bank_name = models.CharField(max_length=120)
+    account_name = models.CharField(max_length=120)
+    branch = models.CharField(max_length=30, blank=True)
+    account_number = models.CharField(max_length=40, blank=True)
+    account_type = models.CharField(max_length=20, choices=AccountType.choices, default=AccountType.CHECKING)
+    pix_key = models.CharField(max_length=120, blank=True)
+    initial_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    initial_balance_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('bank_name', 'account_name')
+        verbose_name = 'Conta bancária'
+        verbose_name_plural = 'Contas bancárias'
+
+    def __str__(self):
+        return f'{self.bank_name} - {self.account_name}'
+
+
+class Supplier(models.Model):
+    class Kind(models.TextChoices):
+        SERVICE = 'SERVICE', 'Servico'
+        MATERIAL = 'MATERIAL', 'Material'
+        BOTH = 'BOTH', 'Servico e material'
+
+    name = models.CharField(max_length=150)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.BOTH)
+    document = models.CharField(max_length=20, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    email = models.EmailField(blank=True)
+    contact_name = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('name',)
+        verbose_name = 'Fornecedor'
+        verbose_name_plural = 'Fornecedores'
+
+    def __str__(self):
+        return self.name
+
+
 class WorkOrder(models.Model):
     class Status(models.TextChoices):
         OPEN = 'OPEN', 'Aberta'
@@ -238,9 +293,14 @@ class CashMovement(models.Model):
         OUT = 'OUT', 'Saída'
 
     class Source(models.TextChoices):
-        CUSTOMER = 'CUSTOMER', 'Cliente'
-        INSURER = 'INSURER', 'Seguradora'
-        OTHER = 'OTHER', 'Outro'
+        PARTICULAR = 'PARTICULAR', 'Particular'
+        INSURERS = 'INSURERS', 'Seguradoras'
+        COMPANY = 'COMPANY', 'Empresa'
+        PARTS_SALE = 'PARTS_SALE', 'Venda de pecas'
+        LOANS = 'LOANS', 'Emprestimos'
+        CUSTOMER = 'CUSTOMER', 'Particular (legado)'
+        INSURER = 'INSURER', 'Seguradoras (legado)'
+        OTHER = 'OTHER', 'Empresa (legado)'
 
     category = models.ForeignKey(
         'CashCategory',
@@ -250,10 +310,14 @@ class CashMovement(models.Model):
         related_name='movements',
     )
     budget = models.ForeignKey(Budget, on_delete=models.PROTECT, null=True, blank=True, related_name='cash_movements')
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_movements')
+    bank_account = models.ForeignKey('BankAccount', on_delete=models.PROTECT, null=True, blank=True, related_name='movements')
+    supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='movements')
     direction = models.CharField(max_length=10, choices=Direction.choices, default=Direction.IN)
-    source = models.CharField(max_length=20, choices=Source.choices, default=Source.OTHER)
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.COMPANY)
     description = models.CharField(max_length=255, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    launch_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)
     is_realized = models.BooleanField(default=False)
     realized_at = models.DateTimeField(null=True, blank=True)

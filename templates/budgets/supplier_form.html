@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if object %}Editar fornecedor{% else %}Novo fornecedor{% endif %} | Controle Oficina{% endblock %}
+
+{% block content %}
+  <div class='mx-auto max-w-3xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>{% if object %}Editar fornecedor{% else %}Novo fornecedor{% endif %}</h1>
+      <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>Voltar</a>
+    </div>
+
+    <form method='post' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2' data-disable-on-submit='true'>
+      {% csrf_token %}
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.name.id_for_label }}'>Nome</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+      </div>
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.kind.id_for_label }}'>Tipo</label>
+        <select class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' name='{{ form.kind.html_name }}' id='{{ form.kind.id_for_label }}'>
+          {% for v, label in form.kind.field.choices %}
+            <option value='{{ v }}' {% if form.kind.value == v %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.document.id_for_label }}'>CPF/CNPJ</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' type='text' inputmode='numeric' data-mask='doc' name='{{ form.document.html_name }}' id='{{ form.document.id_for_label }}' value='{{ form.document.value|default_if_none:"" }}' />
+      </div>
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.phone.id_for_label }}'>Telefone</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' type='text' inputmode='tel' data-mask='phone' name='{{ form.phone.html_name }}' id='{{ form.phone.id_for_label }}' value='{{ form.phone.value|default_if_none:"" }}' />
+      </div>
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.email.id_for_label }}'>E-mail</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' type='email' name='{{ form.email.html_name }}' id='{{ form.email.id_for_label }}' value='{{ form.email.value|default_if_none:"" }}' />
+      </div>
+      <div>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.contact_name.id_for_label }}'>Contato</label>
+        <input class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' type='text' name='{{ form.contact_name.html_name }}' id='{{ form.contact_name.id_for_label }}' value='{{ form.contact_name.value|default_if_none:"" }}' />
+      </div>
+      <div class='md:col-span-2'>
+        <label class='mb-1 block text-sm text-[#D4AF37]' for='{{ form.notes.id_for_label }}'>Observações</label>
+        <textarea class='w-full rounded-md border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]' name='{{ form.notes.html_name }}' id='{{ form.notes.id_for_label }}' rows='3'>{{ form.notes.value|default_if_none:"" }}</textarea>
+      </div>
+      <div class='md:col-span-2'>
+        <label class='flex items-center gap-2 text-sm text-[#A3A3A3]' for='{{ form.is_active.id_for_label }}'>
+          <input type='checkbox' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' name='{{ form.is_active.html_name }}' id='{{ form.is_active.id_for_label }}' {% if form.is_active.value %}checked{% endif %} />
+          Fornecedor ativo
+        </label>
+      </div>
+      <div class='md:col-span-2 flex flex-wrap gap-3'>
+        <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>Salvar</button>
+        <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>Cancelar</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

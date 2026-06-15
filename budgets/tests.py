@@ -9,7 +9,7 @@ from django.utils import timezone
 from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
-from .models import Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, WorkOrder, WorkOrderTask
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, Supplier, WorkOrder, WorkOrderTask
 from .cilia_parser import extract_service_lines
 from .views import capped_work_delta_seconds, parse_xml_created_at
 
@@ -48,6 +48,8 @@ class SmokePermissionsTests(TestCase):
             reverse('customers:customer_list'),
             reverse('users:collaborator_list'),
             reverse('budgets:service_catalog_list'),
+            reverse('budgets:bank_account_list'),
+            reverse('budgets:supplier_list'),
         ]
         for url in urls:
             r = self.client.get(url)
@@ -71,6 +73,8 @@ class SmokePermissionsTests(TestCase):
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'budgets:bank_account_list',
+            'budgets:supplier_list',
             'core:system_settings',
         ]
         for name in allowed:
@@ -98,6 +102,8 @@ class SmokePermissionsTests(TestCase):
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'budgets:bank_account_list',
+            'budgets:supplier_list',
             'core:system_settings',
         ]
         for name in allowed:
@@ -124,6 +130,8 @@ class SmokePermissionsTests(TestCase):
             'customers:customer_list',
             'users:collaborator_list',
             'budgets:service_catalog_list',
+            'budgets:bank_account_list',
+            'budgets:supplier_list',
             'core:system_settings',
         ]
         for name in allowed:
@@ -259,6 +267,15 @@ class FinanceMovementTests(TestCase):
             name='Recebimento avulso',
             direction=CashMovement.Direction.IN,
         )
+        self.bank_account = BankAccount.objects.create(
+            bank_name='Banco Teste',
+            account_name='Conta Principal',
+        )
+        self.customer = Customer.objects.create(name='Cliente Financeiro', document_cpf_cnpj='111')
+        self.supplier = Supplier.objects.create(
+            name='Fornecedor Teste',
+            kind=Supplier.Kind.BOTH,
+        )
         self.category_out = CashCategory.objects.create(
             name='Aluguel',
             direction=CashMovement.Direction.OUT,
@@ -273,9 +290,12 @@ class FinanceMovementTests(TestCase):
                 'action': 'create_movement',
                 'description': 'Aluguel loja',
                 'amount': '1000.00',
+                'launch_date': '2026-06-01',
                 'due_date': '2026-06-10',
                 'direction': 'OUT',
-                'source': 'OTHER',
+                'source': 'COMPANY',
+                'bank_account_id': str(self.bank_account.id),
+                'supplier_id': str(self.supplier.id),
                 'category_id': str(self.category_out.id),
                 'recurrence_total': '3',
             },
@@ -285,6 +305,8 @@ class FinanceMovementTests(TestCase):
         self.assertEqual(CashMovement.objects.count(), 3)
         dates = list(CashMovement.objects.order_by('due_date').values_list('due_date', flat=True))
         self.assertEqual([d.isoformat() for d in dates], ['2026-06-10', '2026-07-10', '2026-08-10'])
+        self.assertTrue(CashMovement.objects.filter(bank_account=self.bank_account, supplier=self.supplier).exists())
+        self.assertTrue(CashMovement.objects.filter(launch_date=date(2026, 6, 1)).exists())
 
     def test_create_manual_entry_with_balance_forward(self):
         self.client.login(email=self.manager.email, password=self.password)
@@ -294,9 +316,12 @@ class FinanceMovementTests(TestCase):
                 'action': 'create_movement',
                 'description': 'Recebimento cliente',
                 'amount': '900.00',
+                'launch_date': '2026-06-03',
                 'due_date': '2026-06-10',
                 'direction': 'IN',
-                'source': 'CUSTOMER',
+                'source': 'PARTICULAR',
+                'customer_id': str(self.customer.id),
+                'bank_account_id': str(self.bank_account.id),
                 'category_id': str(self.category_in.id),
                 'is_realized': 'on',
                 'split_entry': 'on',
@@ -313,7 +338,76 @@ class FinanceMovementTests(TestCase):
         self.assertTrue(first.is_realized)
         self.assertEqual(second.amount, Decimal('600.00'))
         self.assertFalse(second.is_realized)
+        self.assertEqual(first.customer, self.customer)
+        self.assertEqual(first.launch_date.isoformat(), '2026-06-03')
         self.assertEqual(second.due_date.isoformat(), '2026-07-05')
+
+    def test_manual_entry_requires_customer(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(
+            reverse('budgets:finance_dashboard'),
+            {
+                'action': 'create_movement',
+                'description': 'Recebimento sem cliente',
+                'amount': '100.00',
+                'launch_date': '2026-06-03',
+                'due_date': '2026-06-10',
+                'direction': 'IN',
+                'source': 'PARTICULAR',
+                'bank_account_id': str(self.bank_account.id),
+                'category_id': str(self.category_in.id),
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CashMovement.objects.count(), 0)
+
+    def test_out_movement_rejects_entry_only_source(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(
+            reverse('budgets:finance_dashboard'),
+            {
+                'action': 'create_movement',
+                'description': 'Saida invalida',
+                'amount': '100.00',
+                'launch_date': '2026-06-03',
+                'due_date': '2026-06-10',
+                'direction': 'OUT',
+                'source': 'PARTICULAR',
+                'bank_account_id': str(self.bank_account.id),
+                'supplier_id': str(self.supplier.id),
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CashMovement.objects.count(), 0)
+
+    def test_dashboard_filter_by_origin_category_respects_direction(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        CashMovement.objects.create(
+            description='Recebimento de peca',
+            amount=Decimal('150.00'),
+            direction=CashMovement.Direction.IN,
+            source=CashMovement.Source.PARTS_SALE,
+            customer=self.customer,
+            bank_account=self.bank_account,
+            category=self.category_in,
+            due_date=date(2026, 6, 10),
+        )
+        CashMovement.objects.create(
+            description='Despesa da empresa',
+            amount=Decimal('90.00'),
+            direction=CashMovement.Direction.OUT,
+            source=CashMovement.Source.COMPANY,
+            supplier=self.supplier,
+            bank_account=self.bank_account,
+            category=self.category_out,
+            due_date=date(2026, 6, 10),
+        )
+        response = self.client.get(reverse('budgets:finance_dashboard') + f'?direction=IN&source={self.category_in.id}')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['movements']), 1)
+        self.assertEqual(response.context['movements'][0].category_id, self.category_in.id)
 
 
 class FinanceInsightsTests(TestCase):
@@ -323,6 +417,17 @@ class FinanceInsightsTests(TestCase):
             email='dash-manager@test.com',
             password=self.password,
             role=CustomUser.Role.MANAGER,
+        )
+        self.category_in = CashCategory.objects.create(
+            name='Recebimento dash',
+            direction=CashMovement.Direction.IN,
+        )
+        self.customer = Customer.objects.create(name='Cliente Dash', document_cpf_cnpj='222')
+        self.vehicle = Vehicle.objects.create(
+            customer=self.customer,
+            plate='ABC1234',
+            model='Onix',
+            brand='Chevrolet',
         )
 
     def test_finance_insights_default_month(self):
@@ -334,6 +439,127 @@ class FinanceInsightsTests(TestCase):
         self.client.login(email=self.manager.email, password=self.password)
         r = self.client.get(reverse('budgets:finance_insights') + '?range=12m')
         self.assertEqual(r.status_code, 200)
+
+    def test_finance_insights_filter_by_source(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        CashMovement.objects.create(
+            description='Venda de peca no dash',
+            amount=Decimal('250.00'),
+            direction=CashMovement.Direction.IN,
+            source=CashMovement.Source.PARTS_SALE,
+            category=self.category_in,
+            due_date=timezone.localdate(),
+        )
+        r = self.client.get(reverse('budgets:finance_insights') + '?range=month&direction=IN&source=PARTS_SALE')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.context['filters']['source'], 'PARTS_SALE')
+
+    def test_finance_insights_insurer_ranking_from_xml(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            approved_at=timezone.now(),
+            total_amount=Decimal('1800.00'),
+            source_xml='<orcamento><seguradora>Porto Seguro</seguradora></orcamento>',
+        )
+        r = self.client.get(reverse('budgets:finance_insights') + '?range=month')
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('Porto Seguro', r.context['insurer_labels'])
+
+
+class BankAccountDeleteTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='bank-delete@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.bank_account = BankAccount.objects.create(
+            bank_name='Banco Delete',
+            account_name='Conta Teste',
+        )
+        self.category_out = CashCategory.objects.create(
+            name='Despesa teste',
+            direction=CashMovement.Direction.OUT,
+            group=CashCategory.ExpenseGroup.ADMIN,
+        )
+
+    def test_delete_bank_account_missing_redirects_instead_of_404(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(reverse('budgets:bank_account_delete', kwargs={'pk': 9999}), follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Conta bancária não encontrada.')
+
+    def test_delete_bank_account_in_use_shows_message(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        CashMovement.objects.create(
+            description='Saida protegida',
+            amount=Decimal('150.00'),
+            direction=CashMovement.Direction.OUT,
+            source=CashMovement.Source.COMPANY,
+            bank_account=self.bank_account,
+            category=self.category_out,
+            due_date=date(2026, 6, 10),
+        )
+        response = self.client.post(
+            reverse('budgets:bank_account_delete', kwargs={'pk': self.bank_account.pk}),
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Esta conta bancária está vinculada a lançamentos e não pode ser excluída.')
+        self.assertTrue(BankAccount.objects.filter(pk=self.bank_account.pk).exists())
+
+
+class BankAccountFormTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='bank-form@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+
+    def test_create_bank_account_prevents_duplicate(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        BankAccount.objects.create(
+            bank_name='Banco XPTO',
+            account_name='Conta Principal',
+            branch='1234',
+            account_number='99999-0',
+        )
+        response = self.client.post(
+            reverse('budgets:bank_account_create'),
+            {
+                'bank_name': 'banco xpto',
+                'account_name': 'conta principal',
+                'branch': '1234',
+                'account_number': '99999-0',
+                'account_type': BankAccount.AccountType.CHECKING,
+                'pix_key': '',
+                'initial_balance': '0',
+                'initial_balance_date': '',
+                'is_active': 'on',
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Já existe uma conta bancária com esses mesmos dados.')
+        self.assertEqual(BankAccount.objects.count(), 1)
+
+    def test_bank_account_list_has_back_button(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.get(reverse('budgets:bank_account_list'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Voltar')
+
+    def test_supplier_form_uses_standard_masks(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.get(reverse('budgets:supplier_create'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-mask='doc'", html=False)
+        self.assertContains(response, "data-mask='phone'", html=False)
 
 
 class BudgetPhotoTests(TestCase):

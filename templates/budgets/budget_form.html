@@ -147,6 +147,16 @@
               <label class='mb-1 block text-sm text-[#D4AF37]' for='id_fin_default_due'>Venc. padrão</label>
               <input id='id_fin_default_due' type='date' value='{{ finance_default_due_date|date:"Y-m-d" }}' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' disabled />
             </div>
+
+            <div class='sm:col-span-2'>
+              <label class='mb-1 block text-sm text-[#D4AF37]' for='id_fin_bank_account'>Banco/Conta</label>
+              <select id='id_fin_bank_account' name='bank_account_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' required>
+                <option value=''>Selecione</option>
+                {% for bank in bank_accounts %}
+                  <option value='{{ bank.id }}'>{{ bank.bank_name }} - {{ bank.account_name }}</option>
+                {% endfor %}
+              </select>
+            </div>
           </div>
 
           <div id='fin-particular' class='mt-4'>

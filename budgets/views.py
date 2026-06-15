@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef
+from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -21,8 +22,8 @@ from core.views import RoleRequiredMixin
 from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
-from .forms import CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, ThirdPartyServiceForm
-from .models import Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, ThirdPartyService, WorkOrder, WorkOrderTask
+from .forms import BankAccountForm, CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
 
 
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
@@ -152,6 +153,54 @@ def parse_xml_created_at(xml_bytes):
     return None
 
 
+def parse_xml_insurer_name(xml_bytes):
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except Exception:
+        return ''
+
+    explicit_tags = {
+        'seguradora',
+        'nome_seguradora',
+        'nomeseguradora',
+        'seguradora_nome',
+        'seguradoranome',
+        'companhia_seguros',
+        'companhiaseguros',
+        'nome_companhia',
+        'nomecompanhia',
+        'cia_seguros',
+        'ciaseguros',
+        'associacao',
+        'associação',
+        'nome_associacao',
+        'nomeassociacao',
+    }
+    partial_tags = ('segur', 'companh', 'cia_', 'associ')
+
+    def normalize_candidate(value):
+        text = (value or '').strip().strip('-').strip()
+        if not text:
+            return ''
+        if text.isdigit():
+            return ''
+        lowered = text.lower()
+        if lowered in {'sim', 'nao', 'não', 'true', 'false'}:
+            return ''
+        return text
+
+    for el in root.iter():
+        if el is None or el.tag is None:
+            continue
+        tag = str(el.tag).split('}')[-1].lower()
+        if tag not in explicit_tags and not any(part in tag for part in partial_tags):
+            continue
+        candidate = normalize_candidate(''.join(el.itertext()).strip() or el.attrib.get('value', ''))
+        if candidate:
+            return candidate
+    return ''
+
+
 def add_months(base_date, months):
     month_index = (base_date.month - 1) + months
     year = base_date.year + (month_index // 12)
@@ -274,6 +323,101 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             parsed = maximum
         return parsed
 
+    def _source_aliases(self):
+        return {
+            CashMovement.Source.CUSTOMER: CashMovement.Source.PARTICULAR,
+            CashMovement.Source.INSURER: CashMovement.Source.INSURERS,
+            CashMovement.Source.OTHER: CashMovement.Source.COMPANY,
+        }
+
+    def _allowed_sources_by_direction(self):
+        return {
+            CashMovement.Direction.IN: {
+                CashMovement.Source.PARTICULAR,
+                CashMovement.Source.INSURERS,
+                CashMovement.Source.COMPANY,
+                CashMovement.Source.PARTS_SALE,
+                CashMovement.Source.LOANS,
+            },
+            CashMovement.Direction.OUT: {
+                CashMovement.Source.COMPANY,
+                CashMovement.Source.LOANS,
+            },
+        }
+
+    def _source_options(self):
+        return [
+            {
+                'value': CashMovement.Source.PARTICULAR,
+                'label': 'Particular',
+                'directions': 'IN',
+            },
+            {
+                'value': CashMovement.Source.INSURERS,
+                'label': 'Seguradoras',
+                'directions': 'IN',
+            },
+            {
+                'value': CashMovement.Source.COMPANY,
+                'label': 'Empresa',
+                'directions': 'IN,OUT',
+            },
+            {
+                'value': CashMovement.Source.PARTS_SALE,
+                'label': 'Venda de pecas',
+                'directions': 'IN',
+            },
+            {
+                'value': CashMovement.Source.LOANS,
+                'label': 'Emprestimos',
+                'directions': 'IN,OUT',
+            },
+        ]
+
+    def _normalize_source(self, source, direction=''):
+        source = self._source_aliases().get(source, source)
+        all_sources = {item['value'] for item in self._source_options()}
+        if direction:
+            valid_sources = self._allowed_sources_by_direction().get(direction, set())
+        else:
+            valid_sources = all_sources
+        return source if source in valid_sources else ''
+
+    def _source_filter_values(self, source):
+        if source == CashMovement.Source.PARTICULAR:
+            return [CashMovement.Source.PARTICULAR, CashMovement.Source.CUSTOMER]
+        if source == CashMovement.Source.INSURERS:
+            return [CashMovement.Source.INSURERS, CashMovement.Source.INSURER]
+        if source == CashMovement.Source.COMPANY:
+            return [CashMovement.Source.COMPANY, CashMovement.Source.OTHER]
+        return [source] if source else []
+
+    def _default_source_for_direction(self, direction):
+        if direction == CashMovement.Direction.IN:
+            return CashMovement.Source.PARTICULAR
+        return CashMovement.Source.COMPANY
+
+    def _category_display(self, category):
+        if not category:
+            return ''
+        parts = [category.get_direction_display()]
+        if category.direction == CashMovement.Direction.OUT and category.group:
+            parts.append(category.get_group_display())
+        parts.append(category.name)
+        return ' · '.join([part for part in parts if part])
+
+    def _origin_options(self, categories):
+        items = []
+        for category in categories:
+            items.append(
+                {
+                    'value': category.id,
+                    'label': self._category_display(category),
+                    'direction': category.direction,
+                }
+            )
+        return items
+
     def _get_filters(self, request):
         today = timezone.localdate()
         default_start, default_end = self._month_range(today)
@@ -287,22 +431,29 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         realized = (request.GET.get('realized') or '').strip().lower()
         if realized not in ('0', '1'):
             realized = ''
-        category_id = (request.GET.get('category') or '').strip()
         try:
-            category_id_int = int(category_id) if category_id else None
+            origin_category_id = int((request.GET.get('source') or '').strip() or 0) or None
         except ValueError:
-            category_id_int = None
+            origin_category_id = None
         return {
             'today': today,
             'start': start,
             'end': end,
             'direction': direction,
             'realized': realized,
-            'category_id': category_id_int,
+            'origin_category_id': origin_category_id,
         }
 
     def _build_context(self, request, f):
-        qs = CashMovement.objects.select_related('budget', 'category', 'budget__customer', 'budget__vehicle').all()
+        qs = CashMovement.objects.select_related(
+            'budget',
+            'customer',
+            'category',
+            'bank_account',
+            'supplier',
+            'budget__customer',
+            'budget__vehicle',
+        ).all()
         qs = qs.filter(due_date__gte=f['start'], due_date__lte=f['end'])
         if f['direction']:
             qs = qs.filter(direction=f['direction'])
@@ -310,8 +461,8 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             qs = qs.filter(is_realized=True)
         if f['realized'] == '0':
             qs = qs.filter(is_realized=False)
-        if f['category_id']:
-            qs = qs.filter(category_id=f['category_id'])
+        if f['origin_category_id']:
+            qs = qs.filter(category_id=f['origin_category_id'])
         qs = qs.order_by('due_date', 'id')
 
         movements = list(qs)
@@ -339,6 +490,10 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         )
 
         categories = list(CashCategory.objects.order_by('direction', 'group', 'name'))
+        origin_options = self._origin_options(categories)
+        bank_accounts = list(BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name'))
+        suppliers = list(Supplier.objects.filter(is_active=True).order_by('name'))
+        customers = list(Customer.objects.order_by('name'))
         edit_id_raw = (request.GET.get('edit') or '').strip()
         try:
             edit_id = int(edit_id_raw) if edit_id_raw else None
@@ -347,7 +502,7 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         edit_movement = None
         if edit_id:
             edit_movement = (
-                CashMovement.objects.select_related('budget', 'category', 'budget__customer', 'budget__vehicle')
+                CashMovement.objects.select_related('budget', 'customer', 'category', 'bank_account', 'supplier', 'budget__customer', 'budget__vehicle')
                 .filter(id=edit_id)
                 .first()
             )
@@ -364,6 +519,10 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         context = {
             'movements': movements,
             'categories': categories,
+            'origin_options': origin_options,
+            'bank_accounts': bank_accounts,
+            'suppliers': suppliers,
+            'customers': customers,
             'expense_groups': list(CashCategory.ExpenseGroup.choices),
             'filters': f,
             'edit_movement': edit_movement,
@@ -447,16 +606,66 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
             if direction not in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
                 direction = CashMovement.Direction.OUT
             source = (request.POST.get('source') or '').strip().upper()
-            if source not in (CashMovement.Source.CUSTOMER, CashMovement.Source.INSURER, CashMovement.Source.OTHER):
-                source = CashMovement.Source.OTHER
+            if not source:
+                source = self._default_source_for_direction(direction)
+            source = self._normalize_source(source, direction)
+            if not source:
+                messages.error(request, 'Selecione uma origem compatível com a direção do lançamento.')
+                return redirect(next_url or 'budgets:finance_dashboard')
             description = (request.POST.get('description') or '').strip()
+            launch_date = self._parse_date(request.POST.get('launch_date'), timezone.localdate())
             due_date = self._parse_date(request.POST.get('due_date'), timezone.localdate())
             is_realized = (request.POST.get('is_realized') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+            customer_id_raw = (request.POST.get('customer_id') or '').strip()
+            bank_account_id_raw = (request.POST.get('bank_account_id') or '').strip()
+            supplier_id_raw = (request.POST.get('supplier_id') or '').strip()
             category_id_raw = (request.POST.get('category_id') or '').strip()
+            try:
+                customer_id = int(customer_id_raw) if customer_id_raw else None
+            except ValueError:
+                customer_id = None
+            try:
+                bank_account_id = int(bank_account_id_raw) if bank_account_id_raw else None
+            except ValueError:
+                bank_account_id = None
+            try:
+                supplier_id = int(supplier_id_raw) if supplier_id_raw else None
+            except ValueError:
+                supplier_id = None
             try:
                 category_id = int(category_id_raw) if category_id_raw else None
             except ValueError:
                 category_id = None
+
+            customer = None
+            if customer_id:
+                customer = Customer.objects.filter(id=customer_id).first()
+                if customer is None:
+                    messages.error(request, 'Cliente inválido.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+            bank_account = None
+            if not bank_account_id:
+                messages.error(request, 'Selecione o banco/conta do lançamento.')
+                return redirect(next_url or 'budgets:finance_dashboard')
+            bank_account = BankAccount.objects.filter(id=bank_account_id, is_active=True).first()
+            if bank_account is None:
+                messages.error(request, 'Banco/conta inválido.')
+                return redirect(next_url or 'budgets:finance_dashboard')
+
+            supplier = None
+            if supplier_id:
+                supplier = Supplier.objects.filter(id=supplier_id).first()
+                if supplier is None:
+                    messages.error(request, 'Fornecedor inválido.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+
+            if direction == CashMovement.Direction.IN:
+                supplier = None
+                if customer is None:
+                    messages.error(request, 'Selecione o cliente para a entrada manual.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+            else:
+                customer = None
 
             if category_id:
                 category = CashCategory.objects.filter(id=category_id).first()
@@ -501,9 +710,13 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
                     CashMovement.objects.create(
                         direction=direction,
                         source=source,
+                        customer=customer,
+                        bank_account=bank_account,
+                        supplier=supplier,
                         category_id=category_id,
                         description=(description or 'Entrada manual').strip(),
                         amount=entry_amount,
+                        launch_date=launch_date,
                         due_date=due_date,
                         is_realized=is_realized,
                         realized_at=timezone.now() if is_realized else None,
@@ -511,9 +724,13 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
                     CashMovement.objects.create(
                         direction=direction,
                         source=source,
+                        customer=customer,
+                        bank_account=bank_account,
+                        supplier=supplier,
                         category_id=category_id,
                         description=f'{(description or "Entrada manual").strip()} - Saldo',
                         amount=balance_amount,
+                        launch_date=launch_date,
                         due_date=balance_due_date,
                         is_realized=False,
                         realized_at=None,
@@ -526,9 +743,13 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
                     CashMovement.objects.create(
                         direction=direction,
                         source=source,
+                        customer=customer,
+                        bank_account=bank_account,
+                        supplier=supplier,
                         category_id=category_id,
                         description=description,
                         amount=amount,
+                        launch_date=launch_date,
                         due_date=add_months(due_date, idx),
                         is_realized=is_realized if idx == 0 else False,
                         realized_at=timezone.now() if is_realized and idx == 0 else None,
@@ -544,9 +765,13 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
 
             movement.direction = direction
             movement.source = source
+            movement.customer = customer
+            movement.bank_account = bank_account
+            movement.supplier = supplier
             movement.category_id = category_id
             movement.description = description
             movement.amount = amount
+            movement.launch_date = launch_date
             movement.due_date = due_date
             movement.is_realized = is_realized
             movement.realized_at = timezone.now() if is_realized else None
@@ -554,9 +779,13 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
                 update_fields=[
                     'direction',
                     'source',
+                    'customer',
+                    'bank_account',
+                    'supplier',
                     'category',
                     'description',
                     'amount',
+                    'launch_date',
                     'due_date',
                     'is_realized',
                     'realized_at',
@@ -615,6 +844,11 @@ class FinanceInsightsView(FinanceDashboardView):
         range_key = (request.GET.get('range') or '').strip().lower()
         if range_key not in ('month', '3m', '12m'):
             range_key = 'month'
+        direction = (request.GET.get('direction') or '').strip().upper()
+        if direction not in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
+            direction = ''
+        source = (request.GET.get('source') or '').strip().upper()
+        source = self._normalize_source(source, direction)
         months_total = 1
         if range_key == '3m':
             months_total = 3
@@ -630,6 +864,11 @@ class FinanceInsightsView(FinanceDashboardView):
             .filter(due_date__gte=range_start, due_date__lte=range_end)
             .order_by('due_date', 'id')
         )
+        if direction:
+            movements = [m for m in movements if m.direction == direction]
+        if source:
+            allowed_sources = set(self._source_filter_values(source))
+            movements = [m for m in movements if m.source in allowed_sources]
 
         month_labels = [m.strftime('%b/%Y') for m in month_starts]
         expected_in_series = []
@@ -666,6 +905,24 @@ class FinanceInsightsView(FinanceDashboardView):
             label = movement.category.name if movement.category else 'Sem tipo'
             category_totals[label] = category_totals.get(label, Decimal('0')) + (movement.amount or Decimal('0'))
         top_categories = sorted(category_totals.items(), key=lambda item: item[1], reverse=True)[:8]
+
+        source_labels_map = {
+            CashMovement.Source.PARTICULAR: 'Particular',
+            CashMovement.Source.INSURERS: 'Seguradoras',
+            CashMovement.Source.COMPANY: 'Empresa',
+            CashMovement.Source.PARTS_SALE: 'Venda de pecas',
+            CashMovement.Source.LOANS: 'Emprestimos',
+        }
+        profile_totals = {label: Decimal('0') for label in source_labels_map.values()}
+        for movement in movements:
+            if movement.direction != CashMovement.Direction.IN:
+                continue
+            normalized_source = self._normalize_source((movement.source or '').upper())
+            label = source_labels_map.get(normalized_source)
+            if not label:
+                continue
+            profile_totals[label] += movement.amount or Decimal('0')
+        profile_comparison = [(label, value) for label, value in profile_totals.items() if value > 0]
 
         open_amount = sum([m.amount for m in movements if not m.is_realized], Decimal('0'))
         realized_amount = sum([m.amount for m in movements if m.is_realized], Decimal('0'))
@@ -723,6 +980,10 @@ class FinanceInsightsView(FinanceDashboardView):
             .filter(is_realized=False, due_date__isnull=False, due_date__lt=today)
             .order_by('due_date', 'id')
         )
+        if direction:
+            overdue_qs = overdue_qs.filter(direction=direction)
+        if source:
+            overdue_qs = overdue_qs.filter(source__in=self._source_filter_values(source))
         overdue_category_totals = {}
         for movement in overdue_qs.iterator():
             label = movement.category.name if movement.category else 'Sem tipo'
@@ -730,11 +991,49 @@ class FinanceInsightsView(FinanceDashboardView):
         overdue_top_categories = sorted(overdue_category_totals.items(), key=lambda item: item[1], reverse=True)[:8]
         overdue_items = list(overdue_qs[:10])
 
+        insurer_ranking_map = {}
+        budget_qs = (
+            Budget.objects.filter(status=Budget.Status.AUTHORIZED)
+            .exclude(source_xml='')
+            .only('source_xml', 'approved_at', 'created_at', 'total_amount')
+        )
+        for budget in budget_qs.iterator():
+            budget_date = None
+            if budget.approved_at:
+                budget_date = timezone.localtime(budget.approved_at).date() if timezone.is_aware(budget.approved_at) else budget.approved_at.date()
+            elif budget.created_at:
+                budget_date = timezone.localtime(budget.created_at).date() if timezone.is_aware(budget.created_at) else budget.created_at.date()
+            if not budget_date or budget_date < range_start or budget_date > range_end:
+                continue
+            insurer_name = parse_xml_insurer_name((budget.source_xml or '').encode('utf-8', errors='replace'))
+            if not insurer_name:
+                continue
+            data = insurer_ranking_map.setdefault(
+                insurer_name,
+                {
+                    'name': insurer_name,
+                    'budget_count': 0,
+                    'approved_total': Decimal('0'),
+                },
+            )
+            data['budget_count'] += 1
+            data['approved_total'] += budget.total_amount or Decimal('0')
+        insurer_ranking = sorted(
+            insurer_ranking_map.values(),
+            key=lambda item: (item['budget_count'], item['approved_total']),
+            reverse=True,
+        )[:8]
+
         context = {
             'today': today,
             'range_start': range_start,
             'range_end': range_end,
             'range_key': range_key,
+            'filters': {
+                'direction': direction,
+                'source': source,
+            },
+            'source_options': self._source_options(),
             'month_labels': month_labels,
             'expected_in_series': expected_in_series,
             'expected_out_series': expected_out_series,
@@ -742,6 +1041,8 @@ class FinanceInsightsView(FinanceDashboardView):
             'realized_out_series': realized_out_series,
             'category_labels': [name for name, _ in top_categories],
             'category_values': [float(value) for _, value in top_categories],
+            'profile_labels': [name for name, _ in profile_comparison],
+            'profile_values': [float(value) for _, value in profile_comparison],
             'weekly_labels': weekly_labels,
             'weekly_expected_in': weekly_expected_in,
             'weekly_expected_out': weekly_expected_out,
@@ -750,6 +1051,10 @@ class FinanceInsightsView(FinanceDashboardView):
             'overdue_items': overdue_items,
             'overdue_category_labels': [name for name, _ in overdue_top_categories],
             'overdue_category_values': [float(value) for _, value in overdue_top_categories],
+            'insurer_labels': [item['name'] for item in insurer_ranking],
+            'insurer_budget_counts': [item['budget_count'] for item in insurer_ranking],
+            'insurer_amount_values': [float(item['approved_total']) for item in insurer_ranking],
+            'insurer_ranking': insurer_ranking,
             'status_labels': ['Em aberto', 'Realizado'],
             'status_values': [float(open_amount), float(realized_amount)],
             'receivable_open': receivable_open,
@@ -1828,6 +2133,96 @@ class ServiceCatalogDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView
         return reverse('budgets:service_catalog_list')
 
 
+class BankAccountListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+    model = BankAccount
+    template_name = 'budgets/bank_account_list.html'
+    context_object_name = 'bank_accounts'
+    paginate_by = 25
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+
+class BankAccountCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+    model = BankAccount
+    form_class = BankAccountForm
+    template_name = 'budgets/bank_account_form.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_success_url(self):
+        return reverse('budgets:bank_account_list')
+
+
+class BankAccountUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+    model = BankAccount
+    form_class = BankAccountForm
+    template_name = 'budgets/bank_account_form.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_success_url(self):
+        return reverse('budgets:bank_account_list')
+
+
+class BankAccountDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+    model = BankAccount
+    template_name = 'budgets/bank_account_confirm_delete.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, *args, **kwargs):
+        try:
+            self.object = self.get_object()
+        except Http404:
+            messages.error(request, 'Conta bancária não encontrada.')
+            return redirect('budgets:bank_account_list')
+
+        try:
+            self.object.delete()
+        except ProtectedError:
+            messages.error(request, 'Esta conta bancária está vinculada a lançamentos e não pode ser excluída.')
+            return redirect('budgets:bank_account_list')
+
+        messages.success(request, 'Conta bancária removida.')
+        return redirect(self.get_success_url())
+
+    def get_success_url(self):
+        return reverse('budgets:bank_account_list')
+
+
+class SupplierListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+    model = Supplier
+    template_name = 'budgets/supplier_list.html'
+    context_object_name = 'suppliers'
+    paginate_by = 25
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+
+class SupplierCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+    model = Supplier
+    form_class = SupplierForm
+    template_name = 'budgets/supplier_form.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_success_url(self):
+        return reverse('budgets:supplier_list')
+
+
+class SupplierUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+    model = Supplier
+    form_class = SupplierForm
+    template_name = 'budgets/supplier_form.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_success_url(self):
+        return reverse('budgets:supplier_list')
+
+
+class SupplierDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+    model = Supplier
+    template_name = 'budgets/supplier_confirm_delete.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_success_url(self):
+        return reverse('budgets:supplier_list')
+
+
 class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
     model = Budget
     template_name = 'budgets/budget_detail.html'
@@ -1959,6 +2354,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         context['computed_total_amount'] = self._compute_total_amount()
         context['today'] = timezone.localdate()
+        context['bank_accounts'] = BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')
         can_access_finance = bool(
             getattr(self.request, 'user', None)
             and getattr(self.request.user, 'role', None)
@@ -2150,6 +2546,19 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         kind = (request.POST.get('kind') or '').strip().upper()
         total = budget.total_amount or Decimal('0')
         today = timezone.localdate()
+        bank_account_id_raw = (request.POST.get('bank_account_id') or '').strip()
+        try:
+            bank_account_id = int(bank_account_id_raw) if bank_account_id_raw else None
+        except ValueError:
+            bank_account_id = None
+        bank_account = None
+        if not bank_account_id:
+            messages.error(request, 'Selecione o banco/conta para os lançamentos deste orçamento.')
+            return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
+        bank_account = BankAccount.objects.filter(id=bank_account_id, is_active=True).first()
+        if bank_account is None:
+            messages.error(request, 'Banco/conta inválido.')
+            return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
 
         def parse_money(value):
             raw = (value or '').strip()
@@ -2185,10 +2594,13 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                     if entry_amount > 0:
                         CashMovement.objects.create(
                             budget=budget,
+                            customer=budget.customer,
+                            bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.CUSTOMER,
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Entrada',
                             amount=entry_amount,
+                            launch_date=today,
                             due_date=entry_due,
                             is_realized=is_received,
                             realized_at=timezone.now() if is_received else None,
@@ -2200,10 +2612,13 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         )
                         CashMovement.objects.create(
                             budget=budget,
+                            customer=budget.customer,
+                            bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.CUSTOMER,
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Saldo',
                             amount=remainder,
+                            launch_date=today,
                             due_date=due,
                             is_realized=False,
                         )
@@ -2231,10 +2646,13 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                     if franchise_amount > 0:
                         CashMovement.objects.create(
                             budget=budget,
+                            customer=budget.customer,
+                            bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.CUSTOMER,
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Franquia',
                             amount=franchise_amount,
+                            launch_date=today,
                             due_date=franchise_due,
                             is_realized=franchise_received,
                             realized_at=timezone.now() if franchise_received else None,
@@ -2242,10 +2660,13 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                     if insurer_amount > 0:
                         CashMovement.objects.create(
                             budget=budget,
+                            customer=budget.customer,
+                            bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.INSURER,
+                            source=CashMovement.Source.INSURERS,
                             description=f'Orçamento #{budget.display_number} - Seguradora',
                             amount=insurer_amount,
+                            launch_date=today,
                             due_date=insurer_due,
                             is_realized=False,
                         )
