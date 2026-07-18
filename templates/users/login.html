@@ -6,7 +6,21 @@
   <div class='mx-auto max-w-md rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
     <h1 class='text-2xl font-semibold text-[#D4AF37]'>Entrar</h1>
 
-    <form method='post' class='mt-6 space-y-4'>
+    <div id='recent-logins-section' class='mt-6 hidden'>
+      <div class='mb-3 flex items-center justify-between'>
+        <p class='text-sm font-medium text-[#D4AF37]'>Ultimos acessos neste computador</p>
+        <button
+          type='button'
+          id='clear-recent-logins'
+          class='text-xs text-[#A3A3A3] transition hover:text-[#F5F5F5]'
+        >
+          Limpar
+        </button>
+      </div>
+      <div id='recent-logins-list' class='grid gap-3 sm:grid-cols-2'></div>
+    </div>
+
+    <form method='post' class='mt-6 space-y-4' id='login-form'>
       {% csrf_token %}
 
       {% if form.non_field_errors %}
@@ -25,8 +39,10 @@
           value='{{ form.username.value|default_if_none:"" }}'
           placeholder='seu@email.com'
           autocomplete='email'
+          list='recent-logins-datalist'
           required
         />
+        <datalist id='recent-logins-datalist'></datalist>
         {% if form.username.errors %}
           <div class='mt-1 text-sm text-[#D4AF37]'>{{ form.username.errors }}</div>
         {% endif %}
@@ -58,4 +74,109 @@
       <a class='text-[#D4AF37] hover:underline' href='{% url "users:register" %}'>Cadastre-se</a>
     </p>
   </div>
+
+  <script>
+    (function () {
+      var storageKey = 'controle-oficina-recent-logins';
+      var maxItems = 4;
+      var section = document.getElementById('recent-logins-section');
+      var list = document.getElementById('recent-logins-list');
+      var clearButton = document.getElementById('clear-recent-logins');
+      var form = document.getElementById('login-form');
+      var emailInput = document.getElementById('{{ form.username.id_for_label }}');
+      var passwordInput = document.getElementById('{{ form.password.id_for_label }}');
+      var datalist = document.getElementById('recent-logins-datalist');
+
+      if (!form || !emailInput || !passwordInput || !section || !list || !clearButton || !datalist) {
+        return;
+      }
+
+      function getItems() {
+        try {
+          var raw = localStorage.getItem(storageKey);
+          var parsed = raw ? JSON.parse(raw) : [];
+          if (!Array.isArray(parsed)) return [];
+          return parsed.filter(function (item) {
+            return item && typeof item.email === 'string' && item.email.trim();
+          });
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function saveItems(items) {
+        localStorage.setItem(storageKey, JSON.stringify(items.slice(0, maxItems)));
+      }
+
+      function getLabel(email) {
+        var localPart = (email.split('@')[0] || '').replace(/[._-]+/g, ' ').trim();
+        if (!localPart) return 'Login recente';
+        return localPart.replace(/\b\w/g, function (char) {
+          return char.toUpperCase();
+        });
+      }
+
+      function selectLogin(email) {
+        emailInput.value = email;
+        passwordInput.focus();
+      }
+
+      function render() {
+        var items = getItems();
+        list.innerHTML = '';
+        datalist.innerHTML = '';
+
+        if (!items.length) {
+          section.classList.add('hidden');
+          return;
+        }
+
+        section.classList.remove('hidden');
+
+        items.forEach(function (item) {
+          var option = document.createElement('option');
+          option.value = item.email;
+          datalist.appendChild(option);
+
+          var button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'rounded-lg border border-[#262626] bg-[#121212] px-4 py-3 text-left transition hover:border-[#D4AF37] hover:bg-[#161616]';
+          button.addEventListener('click', function () {
+            selectLogin(item.email);
+          });
+
+          var title = document.createElement('div');
+          title.className = 'text-sm font-semibold text-[#F5F5F5]';
+          title.textContent = getLabel(item.email);
+
+          var subtitle = document.createElement('div');
+          subtitle.className = 'mt-1 text-xs text-[#A3A3A3]';
+          subtitle.textContent = item.email;
+
+          button.appendChild(title);
+          button.appendChild(subtitle);
+          list.appendChild(button);
+        });
+      }
+
+      clearButton.addEventListener('click', function () {
+        localStorage.removeItem(storageKey);
+        render();
+        emailInput.focus();
+      });
+
+      form.addEventListener('submit', function () {
+        var email = (emailInput.value || '').trim().toLowerCase();
+        if (!email) return;
+
+        var items = getItems().filter(function (item) {
+          return item.email !== email;
+        });
+        items.unshift({ email: email });
+        saveItems(items);
+      });
+
+      render();
+    })();
+  </script>
 {% endblock %}

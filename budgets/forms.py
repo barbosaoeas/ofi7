@@ -1,7 +1,7 @@
 from django import forms
 from decimal import Decimal, InvalidOperation
 
-from .models import BankAccount, Piece, ServiceCatalog, Supplier
+from .models import BankAccount, Piece, ServiceCatalog, Supplier, ThirdPartyService
 
 class CiliaXMLUploadForm(forms.Form):
     xml_file = forms.FileField(label='Arquivo XML (Cilia)')
@@ -18,16 +18,41 @@ class CiliaXMLUploadForm(forms.Form):
         return xml_file
 
 
+class FinanceXMLUploadForm(forms.Form):
+    xml_file = forms.FileField(label='Arquivo XML (Financeiro)')
+
+    def clean_xml_file(self):
+        xml_file = self.cleaned_data['xml_file']
+
+        if xml_file.size > 10 * 1024 * 1024:
+            raise forms.ValidationError('O arquivo deve ter no máximo 10MB.')
+
+        if not xml_file.name.lower().endswith('.xml'):
+            raise forms.ValidationError('Envie um arquivo .xml.')
+
+        return xml_file
+
+
 class ThirdPartyServiceForm(forms.Form):
     description = forms.CharField(label='Descrição', max_length=255)
     amount = forms.CharField(label='Valor (R$)', max_length=32)
+    supplier_id = forms.IntegerField(required=False)
+    scheduled_date = forms.DateField(required=False, input_formats=['%Y-%m-%d'])
+    status = forms.ChoiceField(required=False, choices=ThirdPartyService.Status.choices)
+    is_shop_service = forms.BooleanField(required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['status'].initial = ThirdPartyService.Status.SCHEDULED
 
     def clean_amount(self):
         raw = (self.cleaned_data.get('amount') or '').strip()
         raw = raw.replace('R$', '').strip()
         raw = raw.replace(' ', '')
-        raw = raw.replace('.', '')
-        raw = raw.replace(',', '.')
+        if ',' in raw and '.' in raw:
+            raw = raw.replace('.', '').replace(',', '.')
+        elif ',' in raw:
+            raw = raw.replace(',', '.')
         try:
             value = Decimal(raw)
         except (InvalidOperation, ValueError):
@@ -35,6 +60,24 @@ class ThirdPartyServiceForm(forms.Form):
         if value < 0:
             raise forms.ValidationError('O valor não pode ser negativo.')
         return value
+
+    def clean_supplier_id(self):
+        supplier_id = self.cleaned_data.get('supplier_id')
+        if not supplier_id:
+            return None
+        supplier = Supplier.objects.filter(pk=supplier_id, is_active=True).first()
+        if supplier is None:
+            raise forms.ValidationError('Fornecedor inválido.')
+        return supplier.id
+
+    def clean_status(self):
+        status = (self.cleaned_data.get('status') or '').strip()
+        valid = {choice[0] for choice in ThirdPartyService.Status.choices}
+        if not status:
+            return ThirdPartyService.Status.SCHEDULED
+        if status not in valid:
+            raise forms.ValidationError('Status inválido.')
+        return status
 
 
 class ServiceCatalogForm(forms.ModelForm):

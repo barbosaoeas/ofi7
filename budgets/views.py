@@ -1,17 +1,20 @@
+from django import forms
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef
+from django.db.models import Count, Exists, OuterRef
 from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.text import slugify
 from django.views import View
 from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, UpdateView
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
+import re
 import time
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -22,11 +25,102 @@ from core.views import RoleRequiredMixin
 from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
-from .forms import BankAccountForm, CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
+from .forms import BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
 from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
 
 
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
+WORK_ORDER_ACTIVITY_SEQUENCE = [
+    WorkOrderTask.Activity.DISMANTLING,
+    WorkOrderTask.Activity.BODYWORK,
+    WorkOrderTask.Activity.PREPARATION,
+    WorkOrderTask.Activity.PAINTING,
+    WorkOrderTask.Activity.ASSEMBLY,
+    WorkOrderTask.Activity.POLISHING,
+    WorkOrderTask.Activity.DELIVERY_PREP,
+]
+
+
+def get_activity_predecessors(activity):
+    try:
+        index = WORK_ORDER_ACTIVITY_SEQUENCE.index(activity)
+    except ValueError:
+        return []
+    return WORK_ORDER_ACTIVITY_SEQUENCE[:index]
+
+
+def get_task_dependency_key(task):
+    if task is None:
+        return ''
+
+    description = (getattr(task, 'description', '') or '').strip()
+    if not description:
+        return ''
+
+    code_match = re.search(r'\((?:[^)]*?)(\d{4,})(?:[^)]*?)\)', description)
+    if code_match:
+        return f'code:{code_match.group(1)}'
+
+    normalized = _normalize_lookup_key(description)
+    prefixes = (
+        'desmontagem-',
+        'funilaria-',
+        'preparacao-',
+        'preparacao-para-entrega-',
+        'prep-entrega-',
+        'pintura-',
+        'montagem-',
+        'polimento-',
+    )
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+            break
+    return normalized
+
+
+def get_task_sequence_blockers(task):
+    predecessors = get_activity_predecessors(task.activity)
+    if not predecessors:
+        return []
+
+    dependency_key = get_task_dependency_key(task)
+    predecessor_qs = WorkOrderTask.objects.filter(
+        work_order_id=task.work_order_id,
+        activity__in=predecessors,
+    )
+    if dependency_key:
+        matching_ids = [
+            candidate.id
+            for candidate in predecessor_qs.only('id', 'description')
+            if get_task_dependency_key(candidate) == dependency_key
+        ]
+        predecessor_qs = predecessor_qs.filter(id__in=matching_ids)
+
+    if not dependency_key:
+        predecessor_qs = WorkOrderTask.objects.filter(
+            work_order_id=task.work_order_id,
+            activity__in=predecessors,
+        )
+
+    pending_activities = list(
+        predecessor_qs
+        .exclude(status=WorkOrderTask.Status.DONE)
+        .values_list('activity', flat=True)
+        .distinct()
+    )
+    label_map = dict(WorkOrderTask.Activity.choices)
+    ordered_pending = [activity for activity in predecessors if activity in pending_activities]
+    return [label_map.get(activity, activity) for activity in ordered_pending]
+
+
+def get_task_sequence_block_message(task):
+    blockers = get_task_sequence_blockers(task)
+    if not blockers:
+        return ''
+    if len(blockers) == 1:
+        return f'Conclua primeiro {blockers[0]}.'
+    return 'Conclua primeiro: ' + ', '.join(blockers) + '.'
 
 
 def budget_has_pending_shop_parts(budget):
@@ -38,6 +132,838 @@ def budget_has_pending_shop_parts(budget):
         arrived=False,
         arrival_date__isnull=True,
     ).exists()
+
+
+def task_has_blocking_pending_shop_parts(task):
+    if task is None:
+        return False
+
+    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+    if not budget or not getattr(budget, 'id', None):
+        return False
+
+    pending_parts = list(
+        Piece.objects.filter(
+            budget_id=budget.id,
+            provider_type=Piece.ProviderType.SHOP,
+            arrived=False,
+            arrival_date__isnull=True,
+        ).only('name')
+    )
+    if not pending_parts:
+        return False
+
+    task_key = get_task_dependency_key(task)
+    if not task_key:
+        return True
+
+    for part in pending_parts:
+        part_key = _normalize_lookup_key(getattr(part, 'name', '') or '')
+        if not part_key:
+            continue
+        if task_key == part_key or part_key in task_key or task_key in part_key:
+            return True
+    return False
+
+
+def _normalize_text(value):
+    return (value or '').strip()
+
+
+def _normalize_lookup_key(value):
+    return slugify(_normalize_text(value))
+
+
+def _parse_xml_text(element, tag_name):
+    child = element.find(tag_name)
+    if child is None:
+        return ''
+    return ''.join(child.itertext()).strip()
+
+
+def _parse_xml_int(element, tag_name):
+    raw = _parse_xml_text(element, tag_name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _parse_xml_date(element, tag_name):
+    raw = _parse_xml_text(element, tag_name)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _parse_xml_bool(element, tag_name, default=False):
+    raw = _parse_xml_text(element, tag_name).lower()
+    if not raw:
+        return default
+    return raw in ('1', 'true', 'yes', 'sim')
+
+
+def _parse_xml_decimal(element, tag_name):
+    raw = _parse_xml_text(element, tag_name)
+    if not raw:
+        return None
+    raw = raw.replace('R$', '').strip().replace(' ', '')
+    if ',' in raw and '.' in raw:
+        raw = raw.replace('.', '').replace(',', '.')
+    elif ',' in raw:
+        raw = raw.replace(',', '.')
+    try:
+        return Decimal(raw).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    except Exception:
+        return None
+
+
+def recalculate_budget_total(budget):
+    base_total = Decimal('0')
+    xml = budget.source_xml or ''
+    if xml:
+        try:
+            _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
+            base_total = parsed_total_amount
+        except Exception:
+            base_total = budget.total_amount
+    else:
+        base_total = budget.total_amount
+
+    budget.total_amount = base_total + get_budget_extra_third_party_total(budget)
+    budget.save(update_fields=['total_amount'])
+
+
+def third_party_identity(description, amount):
+    normalized_description = (description or '').strip().lower()
+    normalized_amount = (amount or Decimal('0')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    return normalized_description, normalized_amount
+
+
+def normalize_service_description(description):
+    return (description or '').strip().lower()
+
+
+def is_office_managed_service(description):
+    desc = normalize_service_description(description)
+    office_keywords = (
+        'lavagem',
+        'lavacao',
+        'lavação',
+        'polimento',
+    )
+    return any(keyword in desc for keyword in office_keywords)
+
+
+def third_party_service_is_shop(service):
+    if service is None:
+        return False
+    return bool(getattr(service, 'is_shop_service', False) or is_office_managed_service(getattr(service, 'description', '')))
+
+
+def service_description_is_shop(description, explicit_shop=False):
+    return bool(explicit_shop or is_office_managed_service(description))
+
+
+def office_managed_service_activity(description, explicit_shop=False):
+    desc = normalize_service_description(description)
+    if 'polimento' in desc:
+        return WorkOrderTask.Activity.POLISHING
+    if 'lavagem' in desc or 'lavacao' in desc or 'lavação' in desc:
+        return WorkOrderTask.Activity.DELIVERY_PREP
+    if service_description_is_shop(description, explicit_shop):
+        if 'martelinho' in desc:
+            return WorkOrderTask.Activity.BODYWORK
+        return WorkOrderTask.Activity.BODYWORK
+    return None
+
+
+def map_third_party_status_to_task_status(status):
+    if status == ThirdPartyService.Status.DONE:
+        return WorkOrderTask.Status.DONE
+    if status == ThirdPartyService.Status.IN_PROGRESS:
+        return WorkOrderTask.Status.RUNNING
+    return WorkOrderTask.Status.SCHEDULED
+
+
+def get_budget_service_lines(budget):
+    xml = (getattr(budget, 'source_xml', None) or '').strip()
+    if not xml:
+        return []
+    try:
+        return extract_service_lines(xml.encode('utf-8', errors='replace'))
+    except Exception:
+        return []
+
+
+def get_budget_xml_manual_services_map(budget):
+    manual_services = {}
+    for line in get_budget_service_lines(budget):
+        manual_amount = line.get('manual_amount', Decimal('0')) or Decimal('0')
+        description = line.get('description') or ''
+        if manual_amount <= 0 or not description:
+            continue
+        manual_services[normalize_service_description(description)] = line
+    return manual_services
+
+
+def get_budget_extra_third_party_total(budget):
+    xml_manual_services = get_budget_xml_manual_services_map(budget)
+    total = Decimal('0')
+    for service in budget.third_party_services.all().only('description', 'amount'):
+        if normalize_service_description(service.description) in xml_manual_services:
+            continue
+        total += service.amount or Decimal('0')
+    return total
+
+
+def get_visible_third_party_services(budget):
+    xml_manual_services = get_budget_xml_manual_services_map(budget)
+    services = list(
+        budget.third_party_services.select_related('supplier').all()
+    )
+    visible = []
+    grouped = {}
+    for service in services:
+        description_key = normalize_service_description(service.description)
+        grouped.setdefault(description_key, []).append(service)
+
+    for description_key, items in grouped.items():
+        expected_line = xml_manual_services.get(description_key)
+        if expected_line is None:
+            visible.extend(items)
+            continue
+        expected_amount = (expected_line.get('total_amount') or Decimal('0')).quantize(
+            Decimal('0.01'),
+            rounding=ROUND_HALF_UP,
+        )
+        exact_matches = [
+            item for item in items
+            if (item.amount or Decimal('0')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) == expected_amount
+        ]
+        selected_pool = exact_matches or items
+        visible.append(
+            sorted(
+                selected_pool,
+                key=lambda item: (
+                    1 if item.status == ThirdPartyService.Status.DONE else 0,
+                    1 if item.supplier_id else 0,
+                    item.id,
+                ),
+            )[-1]
+        )
+
+    visible = sorted(
+        visible,
+        key=lambda item: (
+            item.status,
+            item.scheduled_date or date.max,
+            item.id,
+        ),
+    )
+    for item in visible:
+        item.effective_is_shop_service = third_party_service_is_shop(item)
+    return visible
+
+
+def get_external_visible_third_party_services(budget):
+    return [service for service in get_visible_third_party_services(budget) if not third_party_service_is_shop(service)]
+
+
+def sync_office_managed_service_tasks(work_order):
+    budget = getattr(work_order, 'budget', None)
+    if budget is None:
+        return
+
+    service_lines = get_budget_service_lines(budget)
+
+    current_order = work_order.tasks.order_by('-order').values_list('order', flat=True).first() or 0
+    third_party_by_description = {}
+    for service in budget.third_party_services.all():
+        description_key = normalize_service_description(service.description)
+        current = third_party_by_description.get(description_key)
+        if third_party_service_is_shop(service) and (current is None or service.id > current.id):
+            third_party_by_description[description_key] = service
+
+    for line in service_lines:
+        description = (line.get('description') or '').strip()
+        manual_amount = line.get('manual_amount', Decimal('0')) or Decimal('0')
+        linked_service = third_party_by_description.get(normalize_service_description(description))
+        explicit_shop = linked_service is not None and bool(getattr(linked_service, 'is_shop_service', False))
+        activity = office_managed_service_activity(description, explicit_shop=explicit_shop)
+        if not description or manual_amount <= 0 or activity is None:
+            continue
+
+        matching_task = work_order.tasks.filter(
+            activity=activity,
+            description__iexact=description,
+        ).first()
+        placeholder_task = None
+        if matching_task is None:
+            placeholder_task = work_order.tasks.filter(
+                activity=activity,
+                description='',
+            ).first()
+
+        linked_service = third_party_by_description.get(normalize_service_description(description))
+        task = matching_task or placeholder_task
+        update_fields = []
+        if task is None:
+            current_order += 10
+            task = WorkOrderTask.objects.create(
+                work_order=work_order,
+                activity=activity,
+                description=description,
+                planned_amount=manual_amount,
+                order=current_order,
+                scheduled_date=getattr(linked_service, 'scheduled_date', None) if linked_service is not None else None,
+                status=map_third_party_status_to_task_status(getattr(linked_service, 'status', None)) if linked_service is not None else WorkOrderTask.Status.SCHEDULED,
+                completed_at=getattr(linked_service, 'completed_at', None) if linked_service is not None else None,
+            )
+            continue
+
+        if task.description != description:
+            task.description = description
+            update_fields.append('description')
+        if task.planned_amount != manual_amount:
+            task.planned_amount = manual_amount
+            update_fields.append('planned_amount')
+        if linked_service is not None:
+            if task.scheduled_date != linked_service.scheduled_date:
+                task.scheduled_date = linked_service.scheduled_date
+                update_fields.append('scheduled_date')
+            mapped_status = map_third_party_status_to_task_status(linked_service.status)
+            if task.status == WorkOrderTask.Status.SCHEDULED and mapped_status != task.status:
+                task.status = mapped_status
+                update_fields.append('status')
+            if linked_service.status == ThirdPartyService.Status.DONE and task.completed_at != linked_service.completed_at:
+                task.completed_at = linked_service.completed_at
+                update_fields.append('completed_at')
+        if update_fields:
+            task.save(update_fields=sorted(set(update_fields)))
+
+    for service in budget.third_party_services.all():
+        if not third_party_service_is_shop(service):
+            continue
+        description = (service.description or '').strip()
+        if not description:
+            continue
+        description_key = normalize_service_description(description)
+        if description_key in {
+            normalize_service_description(line.get('description'))
+            for line in service_lines
+            if line.get('description')
+        }:
+            continue
+        activity = office_managed_service_activity(description, explicit_shop=True)
+        if activity is None:
+            continue
+        task = work_order.tasks.filter(activity=activity, description__iexact=description).first()
+        if task is None:
+            current_order += 10
+            WorkOrderTask.objects.create(
+                work_order=work_order,
+                activity=activity,
+                description=description,
+                planned_amount=service.amount or Decimal('0'),
+                order=current_order,
+                scheduled_date=service.scheduled_date,
+                status=map_third_party_status_to_task_status(service.status),
+                completed_at=service.completed_at,
+            )
+
+
+def sync_xml_third_party_services(budget):
+    xml = (getattr(budget, 'source_xml', None) or '').strip()
+    if not xml:
+        return 0
+
+    try:
+        lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
+    except Exception:
+        return 0
+
+    third_party_lines = [line for line in lines if line.get('is_third_party')]
+    if not third_party_lines:
+        return 0
+
+    existing_keys = {
+        third_party_identity(service.description, service.amount)
+        for service in ThirdPartyService.objects.filter(budget_id=budget.id).only('description', 'amount')
+    }
+
+    created = 0
+    for line in third_party_lines:
+        description = (line.get('description') or '').strip()
+        amount = line.get('total_amount', Decimal('0')) or Decimal('0')
+        if not description or amount <= 0:
+            continue
+        identity = third_party_identity(description, amount)
+        if identity in existing_keys:
+            continue
+        ThirdPartyService.objects.create(
+            budget=budget,
+            description=description,
+            amount=amount,
+            status=ThirdPartyService.Status.SCHEDULED,
+            is_shop_service=is_office_managed_service(description),
+        )
+        existing_keys.add(identity)
+        created += 1
+
+    if created:
+        recalculate_budget_total(budget)
+    return created
+
+
+def pending_budget_finance_session_key(budget_id):
+    return f'pending_budget_finance_{budget_id}'
+
+
+def serialize_pending_budget_data(cleaned_data):
+    payload = {}
+    for field in (
+        'status',
+        'refusal_reason_code',
+        'refusal_reason',
+        'entry_date',
+        'repair_start_date',
+        'expected_delivery_date',
+        'allow_repair_without_parts',
+    ):
+        value = cleaned_data.get(field)
+        if isinstance(value, date):
+            payload[field] = value.isoformat()
+        elif isinstance(value, bool):
+            payload[field] = value
+        else:
+            payload[field] = value or ''
+    return payload
+
+
+def deserialize_pending_budget_data(payload):
+    data = dict(payload or {})
+    for field in ('entry_date', 'repair_start_date', 'expected_delivery_date'):
+        raw = (data.get(field) or '').strip()
+        if not raw:
+            data[field] = None
+            continue
+        try:
+            data[field] = date.fromisoformat(raw)
+        except ValueError:
+            data[field] = None
+    data['allow_repair_without_parts'] = bool(data.get('allow_repair_without_parts'))
+    data['status'] = data.get('status') or ''
+    data['refusal_reason_code'] = data.get('refusal_reason_code') or ''
+    data['refusal_reason'] = data.get('refusal_reason') or ''
+    return data
+
+
+def ensure_work_order_for_budget(budget):
+    if budget.status != Budget.Status.AUTHORIZED or WorkOrder.objects.filter(budget=budget).exists():
+        return
+
+    xml = budget.source_xml or ''
+    vehicle_image_url = ''
+    if getattr(budget.vehicle, 'image_file', None):
+        try:
+            if budget.vehicle.image_file:
+                vehicle_image_url = budget.vehicle.image_file.url
+        except Exception:
+            vehicle_image_url = ''
+    if not vehicle_image_url:
+        vehicle_image_url = budget.vehicle.image_url or ''
+
+    work_order = WorkOrder.objects.create(
+        budget=budget,
+        vehicle_image_url=vehicle_image_url,
+        created_at=budget.created_at,
+    )
+    if xml:
+        try:
+            lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
+        except Exception:
+            lines = []
+    else:
+        lines = []
+
+    services = list(ServiceCatalog.objects.all().only('id', 'name'))
+    services = [s for s in services if (s.name or '').strip()]
+    services.sort(key=lambda s: len((s.name or '').strip()), reverse=True)
+
+    def match_service(description):
+        d = (description or '').strip().lower()
+        if not d:
+            return None
+        for s in services:
+            n = (s.name or '').strip().lower()
+            if n and n in d:
+                return s
+        return None
+
+    order = 0
+    activity_specs = [
+        (WorkOrderTask.Activity.DISMANTLING, 'desmontagem_hours', 'desmontagem_amount'),
+        (WorkOrderTask.Activity.BODYWORK, 'funilaria_hours', 'funilaria_amount'),
+        (WorkOrderTask.Activity.PREPARATION, 'preparacao_hours', 'preparacao_amount'),
+        (WorkOrderTask.Activity.PAINTING, 'pintura_hours', 'pintura_amount'),
+        (WorkOrderTask.Activity.ASSEMBLY, 'montagem_hours', 'montagem_amount'),
+    ]
+
+    for activity, hours_key, amount_key in activity_specs:
+        for s in [x for x in lines if not x.get('is_third_party')]:
+            hours = s.get(hours_key, Decimal('0'))
+            amount = s.get(amount_key, Decimal('0'))
+            if hours and hours > 0:
+                order += 10
+                code = s.get('code') or ''
+                desc = s.get('description') or ''
+                task_desc = desc
+                if code:
+                    task_desc = f'{desc} (Cód: {code})'
+                matched_service = match_service(task_desc)
+                WorkOrderTask.objects.create(
+                    work_order=work_order,
+                    activity=activity,
+                    service=matched_service,
+                    description=task_desc,
+                    planned_hours=hours,
+                    planned_amount=amount,
+                    order=order,
+                )
+
+    order += 10
+    WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.POLISHING, order=order)
+    order += 10
+    WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.DELIVERY_PREP, order=order)
+    sync_office_managed_service_tasks(work_order)
+
+
+def budget_delivery_kind(budget):
+    movement_sources = set(
+        CashMovement.objects.filter(budget=budget).values_list('source', flat=True)
+    )
+    if movement_sources.intersection({CashMovement.Source.INSURERS, CashMovement.Source.INSURER}):
+        return 'SEGURADORA'
+    return 'PARTICULAR'
+
+
+def budget_delivery_allows_future_insurer_receivables(open_in_movements, reference_date=None):
+    if not open_in_movements:
+        return False
+
+    today = reference_date or timezone.localdate()
+    insurer_sources = {CashMovement.Source.INSURERS, CashMovement.Source.INSURER}
+    return all(
+        movement.source in insurer_sources
+        and movement.due_date is not None
+        and movement.due_date >= today
+        for movement in open_in_movements
+    )
+
+
+def budget_delivery_status(budget):
+    work_order = None
+    try:
+        work_order = budget.work_order
+    except WorkOrder.DoesNotExist:
+        work_order = None
+
+    task_total = 0
+    task_done = 0
+    if work_order is not None:
+        task_total = work_order.tasks.count()
+        task_done = work_order.tasks.filter(status=WorkOrderTask.Status.DONE).count()
+
+    visible_third_party_services = get_external_visible_third_party_services(budget)
+    third_total = len(visible_third_party_services)
+    third_done = len([service for service in visible_third_party_services if service.status == ThirdPartyService.Status.DONE])
+
+    open_in_movements = list(
+        CashMovement.objects.filter(
+            budget=budget,
+            direction=CashMovement.Direction.IN,
+            is_realized=False,
+        ).order_by('due_date', 'created_at', 'id')
+    )
+    open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
+    allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
+    realized_amount = sum(
+        [
+            movement.amount
+            for movement in CashMovement.objects.filter(
+                budget=budget,
+                direction=CashMovement.Direction.IN,
+                is_realized=True,
+            ).only('amount')
+        ],
+        Decimal('0'),
+    )
+
+    blockers = []
+    if budget.status != Budget.Status.AUTHORIZED:
+        blockers.append('O orçamento precisa estar Autorizado.')
+    if budget.is_delivered:
+        blockers.append('O veículo já foi entregue.')
+    if work_order is None:
+        blockers.append('A OS ainda não foi criada.')
+    if task_total == 0:
+        blockers.append('Não há tarefas cadastradas na OS.')
+    elif task_done < task_total:
+        blockers.append('Existem tarefas internas pendentes.')
+    if third_done < third_total:
+        blockers.append('Existem serviços de terceiros pendentes.')
+    if not CashMovement.objects.filter(budget=budget, direction=CashMovement.Direction.IN).exists():
+        blockers.append('O financeiro do orçamento ainda não foi registrado.')
+    elif open_amount > Decimal('0') and not allows_future_insurer_receivables:
+        blockers.append('Existem pendências financeiras em aberto.')
+
+    return {
+        'kind': budget_delivery_kind(budget),
+        'work_order': work_order,
+        'task_total': task_total,
+        'task_done': task_done,
+        'task_pending': max(task_total - task_done, 0),
+        'third_total': third_total,
+        'third_done': third_done,
+        'third_pending': max(third_total - third_done, 0),
+        'finance_open_movements': open_in_movements,
+        'finance_open_amount': open_amount,
+        'finance_realized_amount': realized_amount,
+        'allows_future_insurer_receivables': allows_future_insurer_receivables,
+        'finance_note': (
+            'Recebimento da seguradora previsto para depois da entrega.'
+            if open_amount > Decimal('0') and allows_future_insurer_receivables
+            else ''
+        ),
+        'can_deliver': len(blockers) == 0,
+        'blockers': blockers,
+    }
+
+
+def get_third_party_expense_category():
+    category, _ = CashCategory.objects.get_or_create(
+        name='Serviços terceirizados OS',
+        defaults={
+            'direction': CashMovement.Direction.OUT,
+            'group': CashCategory.ExpenseGroup.OPERATIONAL,
+            'is_active': True,
+        },
+    )
+    changed = False
+    if category.direction != CashMovement.Direction.OUT:
+        category.direction = CashMovement.Direction.OUT
+        changed = True
+    if category.group != CashCategory.ExpenseGroup.OPERATIONAL:
+        category.group = CashCategory.ExpenseGroup.OPERATIONAL
+        changed = True
+    if not category.is_active:
+        category.is_active = True
+        changed = True
+    if changed:
+        category.save(update_fields=['direction', 'group', 'is_active'])
+    return category
+
+
+def sync_third_party_expense(service):
+    if service is None:
+        return None
+
+    movement = service.expense_movement
+    should_have_expense = (
+        not third_party_service_is_shop(service)
+        and service.status == ThirdPartyService.Status.DONE
+        and (service.amount or Decimal('0')) > 0
+    )
+
+    if not should_have_expense:
+        if movement is not None and not movement.is_realized:
+            movement.delete()
+        if service.expense_movement_id is not None:
+            service.expense_movement = None
+            service.save(update_fields=['expense_movement'])
+        return None
+
+    category = get_third_party_expense_category()
+    due_date = service.scheduled_date or timezone.localdate()
+    description = f'Orçamento #{service.budget.display_number} - Terceiro: {service.description}'
+
+    if movement is None:
+        movement = CashMovement.objects.create(
+            budget=service.budget,
+            supplier=service.supplier,
+            category=category,
+            direction=CashMovement.Direction.OUT,
+            source=CashMovement.Source.COMPANY,
+            description=description,
+            amount=service.amount,
+            launch_date=timezone.localdate(),
+            due_date=due_date,
+            is_realized=False,
+        )
+        service.expense_movement = movement
+        service.save(update_fields=['expense_movement'])
+        return movement
+
+    movement.supplier = service.supplier
+    movement.category = category
+    movement.description = description
+    movement.amount = service.amount
+    movement.due_date = due_date
+    movement.direction = CashMovement.Direction.OUT
+    movement.source = CashMovement.Source.COMPANY
+    movement.save(
+        update_fields=[
+            'supplier',
+            'category',
+            'description',
+            'amount',
+            'due_date',
+            'direction',
+            'source',
+        ]
+    )
+    return movement
+
+
+def after_third_party_service_saved(service):
+    sync_third_party_expense(service)
+    recalculate_budget_total(service.budget)
+    try:
+        work_order = service.budget.work_order
+    except WorkOrder.DoesNotExist:
+        work_order = None
+    if work_order is not None:
+        sync_office_managed_service_tasks(work_order)
+
+
+def sync_shop_service_from_task(task):
+    if task is None or getattr(task, 'work_order_id', None) is None:
+        return None
+
+    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+    if budget is None:
+        return None
+
+    description = (getattr(task, 'description', '') or '').strip()
+    if not description:
+        return None
+
+    service = (
+        budget.third_party_services
+        .filter(description__iexact=description)
+        .order_by('-id')
+        .first()
+    )
+    if service is None:
+        return None
+
+    if not third_party_service_is_shop(service):
+        return None
+
+    update_fields = []
+    if service.scheduled_date != task.scheduled_date:
+        service.scheduled_date = task.scheduled_date
+        update_fields.append('scheduled_date')
+
+    mapped_status = service.status
+    if task.status == WorkOrderTask.Status.DONE:
+        mapped_status = ThirdPartyService.Status.DONE
+    elif task.status == WorkOrderTask.Status.RUNNING:
+        mapped_status = ThirdPartyService.Status.IN_PROGRESS
+    elif task.status in (WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED):
+        mapped_status = ThirdPartyService.Status.SCHEDULED
+
+    if service.status != mapped_status:
+        service.status = mapped_status
+        update_fields.append('status')
+
+    completed_at = task.completed_at if task.status == WorkOrderTask.Status.DONE else None
+    if service.completed_at != completed_at:
+        service.completed_at = completed_at
+        update_fields.append('completed_at')
+
+    if not getattr(service, 'is_shop_service', False):
+        service.is_shop_service = True
+        update_fields.append('is_shop_service')
+
+    if update_fields:
+        service.save(update_fields=sorted(set(update_fields)))
+    return service
+
+
+def annotate_service_lines_completion(budget, service_lines):
+    try:
+        work_order = budget.work_order
+    except WorkOrder.DoesNotExist:
+        return service_lines
+
+    tasks = list(work_order.tasks.only('activity', 'description', 'status'))
+    activity_specs = [
+        ('desmontagem_hours', WorkOrderTask.Activity.DISMANTLING, 'Desmontagem'),
+        ('funilaria_hours', WorkOrderTask.Activity.BODYWORK, 'Funilaria'),
+        ('preparacao_hours', WorkOrderTask.Activity.PREPARATION, 'Preparação'),
+        ('pintura_hours', WorkOrderTask.Activity.PAINTING, 'Pintura'),
+        ('montagem_hours', WorkOrderTask.Activity.ASSEMBLY, 'Montagem'),
+    ]
+
+    for line in service_lines:
+        description = (line.get('description') or '').strip().lower()
+        code = (line.get('code') or '').strip().lower()
+        completion = []
+
+        for hours_key, activity, label in activity_specs:
+            hours = line.get(hours_key, Decimal('0')) or Decimal('0')
+            if not hours or hours <= 0:
+                continue
+
+            matched_task = None
+            for task in tasks:
+                if task.activity != activity:
+                    continue
+                task_description = (task.description or '').strip().lower()
+                if code and code in task_description and description and description in task_description:
+                    matched_task = task
+                    break
+                if description and description in task_description:
+                    matched_task = task
+                    break
+
+            completion.append(
+                {
+                    'label': label,
+                    'done': bool(matched_task and matched_task.status == WorkOrderTask.Status.DONE),
+                }
+            )
+
+        line['completion_items'] = completion
+        if not completion:
+            manual_activity = office_managed_service_activity(line.get('description'))
+            if manual_activity is not None:
+                manual_task = None
+                description = (line.get('description') or '').strip().lower()
+                for task in tasks:
+                    if task.activity != manual_activity:
+                        continue
+                    if description and description in (task.description or '').strip().lower():
+                        manual_task = task
+                        break
+                completion = [
+                    {
+                        'label': dict(WorkOrderTask.Activity.choices).get(manual_activity, 'Tarefa'),
+                        'done': bool(manual_task and manual_task.status == WorkOrderTask.Status.DONE),
+                    }
+                ]
+                line['completion_items'] = completion
+        line['is_completed'] = bool(completion) and all(item['done'] for item in completion)
+        line['completion_label'] = 'Concluído' if line['is_completed'] else 'Pendente'
+
+    return service_lines
 
 
 def parse_xml_created_at(xml_bytes):
@@ -240,14 +1166,35 @@ class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     paginate_by = 25
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
+    def _delivery_filter(self):
+        delivery_filter = (self.request.GET.get('delivery') or '').strip().lower()
+        if delivery_filter not in ('approved', 'delivered'):
+            delivery_filter = 'approved'
+        return delivery_filter
+
     def get_queryset(self):
-        return (
+        queryset = (
             super()
             .get_queryset()
             .select_related('customer', 'vehicle')
             .filter(status=Budget.Status.AUTHORIZED)
-            .order_by('-approved_at', '-created_at')
         )
+        if self._delivery_filter() == 'delivered':
+            queryset = queryset.filter(delivered_at__isnull=False).order_by('-delivered_at', '-approved_at', '-created_at')
+        else:
+            queryset = queryset.filter(delivered_at__isnull=True).order_by('-approved_at', '-created_at')
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        authorized_budgets = Budget.objects.filter(status=Budget.Status.AUTHORIZED)
+        context['delivery_filter'] = self._delivery_filter()
+        context['approved_count'] = authorized_budgets.filter(delivered_at__isnull=True).count()
+        context['delivered_count'] = authorized_budgets.filter(delivered_at__isnull=False).count()
+        q = self.request.GET.copy()
+        q.pop('page', None)
+        context['current_query_without_page'] = q.urlencode()
+        return context
 
 
 class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -833,6 +1780,263 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect(next_url or 'budgets:finance_dashboard')
 
 
+class FinanceXMLTemplateDownloadView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get(self, request):
+        bank_accounts = list(BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')[:5])
+        categories = list(CashCategory.objects.filter(is_active=True).order_by('direction', 'group', 'name')[:8])
+        customers = list(Customer.objects.order_by('name')[:5])
+        suppliers = list(Supplier.objects.filter(is_active=True).order_by('name')[:5])
+
+        root = ElementTree.Element('financeiro')
+        metadata = ElementTree.SubElement(root, 'metadata')
+        ElementTree.SubElement(metadata, 'gerado_em').text = timezone.now().isoformat()
+        ElementTree.SubElement(metadata, 'observacao').text = (
+            'Use um item por lancamento. Preencha ids ou nomes de referencia existentes na base.'
+        )
+
+        referencias = ElementTree.SubElement(root, 'referencias')
+        bancos_el = ElementTree.SubElement(referencias, 'contas_bancarias')
+        for bank in bank_accounts:
+            item = ElementTree.SubElement(bancos_el, 'conta')
+            ElementTree.SubElement(item, 'id').text = str(bank.id)
+            ElementTree.SubElement(item, 'banco').text = bank.bank_name
+            ElementTree.SubElement(item, 'conta_nome').text = bank.account_name
+
+        categorias_el = ElementTree.SubElement(referencias, 'categorias')
+        for category in categories:
+            item = ElementTree.SubElement(categorias_el, 'categoria')
+            ElementTree.SubElement(item, 'id').text = str(category.id)
+            ElementTree.SubElement(item, 'nome').text = category.name
+            ElementTree.SubElement(item, 'direcao').text = category.direction
+
+        clientes_el = ElementTree.SubElement(referencias, 'clientes')
+        for customer in customers:
+            item = ElementTree.SubElement(clientes_el, 'cliente')
+            ElementTree.SubElement(item, 'id').text = str(customer.id)
+            ElementTree.SubElement(item, 'nome').text = customer.name
+
+        fornecedores_el = ElementTree.SubElement(referencias, 'fornecedores')
+        for supplier in suppliers:
+            item = ElementTree.SubElement(fornecedores_el, 'fornecedor')
+            ElementTree.SubElement(item, 'id').text = str(supplier.id)
+            ElementTree.SubElement(item, 'nome').text = supplier.name
+
+        movimentos = ElementTree.SubElement(root, 'movimentos')
+        movimento = ElementTree.SubElement(movimentos, 'movimento')
+        ElementTree.SubElement(movimento, 'descricao').text = 'Exemplo de lancamento'
+        ElementTree.SubElement(movimento, 'valor').text = '1500.00'
+        ElementTree.SubElement(movimento, 'direcao').text = 'IN'
+        ElementTree.SubElement(movimento, 'origem').text = 'PARTICULAR'
+        ElementTree.SubElement(movimento, 'data_lancamento').text = timezone.localdate().isoformat()
+        ElementTree.SubElement(movimento, 'data_vencimento').text = timezone.localdate().isoformat()
+        ElementTree.SubElement(movimento, 'realizado').text = 'false'
+        ElementTree.SubElement(movimento, 'conta_bancaria_id').text = str(bank_accounts[0].id) if bank_accounts else ''
+        ElementTree.SubElement(movimento, 'categoria_id').text = str(categories[0].id) if categories else ''
+        ElementTree.SubElement(movimento, 'cliente_id').text = str(customers[0].id) if customers else ''
+        ElementTree.SubElement(movimento, 'fornecedor_id').text = ''
+        ElementTree.SubElement(movimento, 'orcamento_id').text = ''
+
+        response = HttpResponse(
+            ElementTree.tostring(root, encoding='utf-8', xml_declaration=True),
+            content_type='application/xml; charset=utf-8',
+        )
+        response['Content-Disposition'] = 'attachment; filename="modelo-financeiro.xml"'
+        return response
+
+
+class FinanceXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
+    template_name = 'budgets/finance_import_xml.html'
+    form_class = FinanceXMLUploadForm
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def _source_aliases(self):
+        return {
+            CashMovement.Source.CUSTOMER: CashMovement.Source.PARTICULAR,
+            CashMovement.Source.INSURER: CashMovement.Source.INSURERS,
+            CashMovement.Source.OTHER: CashMovement.Source.COMPANY,
+        }
+
+    def _allowed_sources_by_direction(self):
+        return {
+            CashMovement.Direction.IN: {
+                CashMovement.Source.PARTICULAR,
+                CashMovement.Source.INSURERS,
+                CashMovement.Source.COMPANY,
+                CashMovement.Source.PARTS_SALE,
+                CashMovement.Source.LOANS,
+            },
+            CashMovement.Direction.OUT: {
+                CashMovement.Source.COMPANY,
+                CashMovement.Source.LOANS,
+            },
+        }
+
+    def _normalize_source(self, source, direction=''):
+        source = self._source_aliases().get(source, source)
+        if direction:
+            valid_sources = self._allowed_sources_by_direction().get(direction, set())
+        else:
+            valid_sources = {
+                CashMovement.Source.PARTICULAR,
+                CashMovement.Source.INSURERS,
+                CashMovement.Source.COMPANY,
+                CashMovement.Source.PARTS_SALE,
+                CashMovement.Source.LOANS,
+            }
+        return source if source in valid_sources else ''
+
+    def _default_source_for_direction(self, direction):
+        if direction == CashMovement.Direction.IN:
+            return CashMovement.Source.PARTICULAR
+        return CashMovement.Source.COMPANY
+
+    def _lookup_maps(self):
+        return {
+            'bank_by_id': {obj.id: obj for obj in BankAccount.objects.filter(is_active=True)},
+            'bank_by_name': {
+                _normalize_lookup_key(f'{obj.bank_name} {obj.account_name}'): obj
+                for obj in BankAccount.objects.filter(is_active=True)
+            },
+            'category_by_id': {obj.id: obj for obj in CashCategory.objects.filter(is_active=True)},
+            'category_by_name': {_normalize_lookup_key(obj.name): obj for obj in CashCategory.objects.filter(is_active=True)},
+            'customer_by_id': {obj.id: obj for obj in Customer.objects.all()},
+            'customer_by_name': {_normalize_lookup_key(obj.name): obj for obj in Customer.objects.all()},
+            'supplier_by_id': {obj.id: obj for obj in Supplier.objects.filter(is_active=True)},
+            'supplier_by_name': {_normalize_lookup_key(obj.name): obj for obj in Supplier.objects.filter(is_active=True)},
+            'budget_by_id': {obj.id: obj for obj in Budget.objects.all()},
+        }
+
+    def _resolve_related(self, element, maps, index):
+        bank = None
+        bank_id = _parse_xml_int(element, 'conta_bancaria_id')
+        if bank_id is not None:
+            bank = maps['bank_by_id'].get(bank_id)
+        if bank is None:
+            bank_name = _parse_xml_text(element, 'conta_bancaria_nome')
+            if bank_name:
+                bank = maps['bank_by_name'].get(_normalize_lookup_key(bank_name))
+        if bank is None:
+            raise forms.ValidationError(f'Movimento {index}: conta bancária não encontrada.')
+
+        category = None
+        category_id = _parse_xml_int(element, 'categoria_id')
+        if category_id is not None:
+            category = maps['category_by_id'].get(category_id)
+        if category is None:
+            category_name = _parse_xml_text(element, 'categoria_nome')
+            if category_name:
+                category = maps['category_by_name'].get(_normalize_lookup_key(category_name))
+
+        customer = None
+        customer_id = _parse_xml_int(element, 'cliente_id')
+        if customer_id is not None:
+            customer = maps['customer_by_id'].get(customer_id)
+        if customer is None:
+            customer_name = _parse_xml_text(element, 'cliente_nome')
+            if customer_name:
+                customer = maps['customer_by_name'].get(_normalize_lookup_key(customer_name))
+
+        supplier = None
+        supplier_id = _parse_xml_int(element, 'fornecedor_id')
+        if supplier_id is not None:
+            supplier = maps['supplier_by_id'].get(supplier_id)
+        if supplier is None:
+            supplier_name = _parse_xml_text(element, 'fornecedor_nome')
+            if supplier_name:
+                supplier = maps['supplier_by_name'].get(_normalize_lookup_key(supplier_name))
+
+        budget = None
+        budget_id = _parse_xml_int(element, 'orcamento_id')
+        if budget_id is not None:
+            budget = maps['budget_by_id'].get(budget_id)
+
+        return bank, category, customer, supplier, budget
+
+    def form_valid(self, form):
+        xml_bytes = form.cleaned_data['xml_file'].read()
+        try:
+            root = ElementTree.fromstring(xml_bytes)
+        except ElementTree.ParseError:
+            form.add_error('xml_file', 'Não foi possível ler o XML financeiro.')
+            return self.form_invalid(form)
+
+        if str(root.tag).split('}')[-1].lower() != 'financeiro':
+            form.add_error('xml_file', 'XML fora do padrão do financeiro.')
+            return self.form_invalid(form)
+
+        movement_nodes = root.findall('./movimentos/movimento')
+        if not movement_nodes:
+            form.add_error('xml_file', 'Nenhum movimento encontrado para importar.')
+            return self.form_invalid(form)
+
+        maps = self._lookup_maps()
+        rows = []
+        try:
+            for index, node in enumerate(movement_nodes, start=1):
+                description = _normalize_text(_parse_xml_text(node, 'descricao'))
+                if not description:
+                    raise forms.ValidationError(f'Movimento {index}: descrição é obrigatória.')
+
+                amount = _parse_xml_decimal(node, 'valor')
+                if amount is None or amount <= 0:
+                    raise forms.ValidationError(f'Movimento {index}: valor inválido.')
+
+                direction = _normalize_text(_parse_xml_text(node, 'direcao')).upper()
+                if direction not in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
+                    raise forms.ValidationError(f'Movimento {index}: direção deve ser IN ou OUT.')
+
+                source = _normalize_text(_parse_xml_text(node, 'origem')).upper() or self._default_source_for_direction(direction)
+                source = self._normalize_source(source, direction)
+                if not source:
+                    raise forms.ValidationError(f'Movimento {index}: origem inválida para a direção informada.')
+
+                launch_date = _parse_xml_date(node, 'data_lancamento') or timezone.localdate()
+                due_date = _parse_xml_date(node, 'data_vencimento') or launch_date
+                is_realized = _parse_xml_bool(node, 'realizado', default=False)
+
+                bank, category, customer, supplier, budget = self._resolve_related(node, maps, index)
+
+                if category and (category.direction or '').upper() != direction:
+                    raise forms.ValidationError(f'Movimento {index}: categoria incompatível com a direção.')
+
+                if direction == CashMovement.Direction.IN:
+                    supplier = None
+                    if customer is None:
+                        raise forms.ValidationError(f'Movimento {index}: cliente é obrigatório para entrada.')
+                else:
+                    customer = None
+
+                rows.append(
+                    {
+                        'description': description,
+                        'amount': amount,
+                        'direction': direction,
+                        'source': source,
+                        'launch_date': launch_date,
+                        'due_date': due_date,
+                        'is_realized': is_realized,
+                        'realized_at': timezone.now() if is_realized else None,
+                        'bank_account': bank,
+                        'category': category,
+                        'customer': customer,
+                        'supplier': supplier,
+                        'budget': budget,
+                    }
+                )
+        except forms.ValidationError as exc:
+            form.add_error('xml_file', exc.message)
+            return self.form_invalid(form)
+
+        with transaction.atomic():
+            for row in rows:
+                CashMovement.objects.create(**row)
+
+        messages.success(request=self.request, message=f'{len(rows)} lançamento(s) importado(s) no financeiro.')
+        return redirect('budgets:finance_dashboard')
+
+
 class FinanceInsightsView(FinanceDashboardView):
     template_name = 'budgets/finance_insights.html'
 
@@ -1278,7 +2482,8 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         is_workday = selected.weekday() < 6
         tasks_by_activity = {}
         now = timezone.now()
-        for task in context.get('tasks', []):
+        task_items = list(context.get('tasks', []))
+        for task in task_items:
             task.is_patio = False
             try:
                 planned_seconds = int((task.planned_hours or 0) * Decimal('3600'))
@@ -1290,6 +2495,13 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 extra = int((now - task.last_started_at).total_seconds())
             task.display_elapsed_seconds = int(task.elapsed_seconds or 0) + max(extra, 0)
             task.is_overdue = bool(task.planned_seconds and task.display_elapsed_seconds > task.planned_seconds)
+            blockers = get_task_sequence_blockers(task)
+            task.sequence_blockers = blockers
+            task.sequence_block_message = (
+                f'Conclua primeiro {blockers[0]}.'
+                if len(blockers) == 1
+                else ('Conclua primeiro: ' + ', '.join(blockers) + '.') if blockers else ''
+            )
             tasks_by_activity.setdefault(task.activity, []).append(task)
 
         busy_work_order_ids = set(
@@ -1308,8 +2520,19 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         patio_work_orders = (
             WorkOrder.objects.select_related('budget', 'budget__vehicle', 'budget__customer')
             .filter(budget__status=Budget.Status.AUTHORIZED)
+            .filter(budget__delivered_at__isnull=True)
             .exclude(id__in=list(busy_work_order_ids))
             .annotate(
+                has_pending_tasks=Exists(
+                    WorkOrderTask.objects.filter(
+                        work_order_id=OuterRef('id'),
+                    ).exclude(status=WorkOrderTask.Status.DONE)
+                ),
+                has_any_tasks=Exists(
+                    WorkOrderTask.objects.filter(
+                        work_order_id=OuterRef('id'),
+                    )
+                ),
                 has_late_parts=Exists(
                     Piece.objects.filter(
                         budget_id=OuterRef('budget_id'),
@@ -1319,6 +2542,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                     )
                 )
             )
+            .filter(Q(has_pending_tasks=True) | Q(has_any_tasks=False))
             .order_by('-created_at')
         )
         patio_cards = []
@@ -1415,19 +2639,13 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.error(request, 'Selecione um colaborador antes de iniciar.')
             return redirect('budgets:kanban_today')
 
-        budget = getattr(getattr(task, 'work_order', None), 'budget', None)
-        if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)):
-            has_pending_shop_parts = budget_has_pending_shop_parts(budget)
-            if has_pending_shop_parts:
-                messages.warning(
-                    request,
-                    'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
-                    'ou até liberar "seguir sem as peças".',
-                )
-                next_url = (request.POST.get('next') or '').strip()
-                if next_url:
-                    return redirect(next_url)
-                return redirect('budgets:kanban_today')
+        sequence_block_message = get_task_sequence_block_message(task)
+        if sequence_block_message:
+            messages.error(request, sequence_block_message)
+            next_url = (request.POST.get('next') or '').strip()
+            if next_url:
+                return redirect(next_url)
+            return redirect('budgets:kanban_today')
 
         has_running = WorkOrderTask.objects.filter(
             collaborator_id=task.collaborator_id,
@@ -1460,6 +2678,7 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
 
         if update_fields:
             task.save(update_fields=update_fields)
+            sync_shop_service_from_task(task)
         messages.success(request, 'Tarefa iniciada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
@@ -1502,6 +2721,7 @@ class WorkOrderTaskPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
         task.actual_hours = hours
 
         task.save(update_fields=['elapsed_seconds', 'last_started_at', 'status', 'actual_hours'])
+        sync_shop_service_from_task(task)
         messages.success(request, 'Tarefa pausada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
@@ -1550,6 +2770,7 @@ class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
         task.actual_hours = hours
 
         task.save(update_fields=['elapsed_seconds', 'last_started_at', 'completed_at', 'status', 'actual_hours'])
+        sync_shop_service_from_task(task)
         if task.collaborator_id and not CommissionLine.objects.filter(task=task, collaborator_id=task.collaborator_id).exists():
             percent = Decimal('0')
             base_amount = task.planned_amount or Decimal('0')
@@ -1870,8 +3091,13 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        sync_xml_third_party_services(self.object.budget)
+        sync_office_managed_service_tasks(self.object)
         tasks_open = self.object.tasks.exclude(status=WorkOrderTask.Status.DONE).select_related('collaborator')
         tasks_done = self.object.tasks.filter(status=WorkOrderTask.Status.DONE).select_related('collaborator')
+        visible_third_party = get_visible_third_party_services(self.object.budget)
+        third_party_open = [service for service in visible_third_party if service.status != ThirdPartyService.Status.DONE]
+        third_party_done = [service for service in visible_third_party if service.status == ThirdPartyService.Status.DONE]
 
         selected_collaborator_id = (self.request.GET.get('collaborator_id') or '').strip()
         selected_collaborator = None
@@ -1896,6 +3122,13 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             function=Collaborator.Function.OPERATIONAL
         ).only('id', 'name')
         context['task_status_choices'] = WorkOrderTask.Status.choices
+        context['third_party_open'] = third_party_open
+        context['third_party_done'] = third_party_done
+        context['third_party_open_count'] = len(third_party_open)
+        context['third_party_done_count'] = len(third_party_done)
+        context['suppliers_active'] = Supplier.objects.filter(is_active=True).only('id', 'name')
+        context['third_party_status_choices'] = ThirdPartyService.Status.choices
+        context['today'] = timezone.localdate()
         return context
 
 
@@ -1990,19 +3223,16 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
                 messages.error(request, 'Status inválido.')
             else:
                 if status == WorkOrderTask.Status.RUNNING:
-                    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
-                    if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)) and budget_has_pending_shop_parts(budget):
+                    sequence_block_message = get_task_sequence_block_message(task)
+                    if sequence_block_message:
                         had_error = True
-                        messages.error(
-                            request,
-                            'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
-                            'ou até liberar "seguir sem as peças".',
-                        )
+                        messages.error(request, sequence_block_message)
                 task.status = status
                 update_fields.append('status')
 
         if update_fields and not had_error:
             task.save(update_fields=sorted(set(update_fields)))
+            sync_shop_service_from_task(task)
             messages.success(request, 'Agendamento salvo.')
 
         return redirect('budgets:workorder_detail', pk=task.work_order_id)
@@ -2239,29 +3469,65 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        work_order = None
+        try:
+            work_order = self.object.work_order
+        except WorkOrder.DoesNotExist:
+            work_order = None
+        if work_order is not None:
+            sync_xml_third_party_services(self.object)
+            sync_office_managed_service_tasks(work_order)
         context['pieces_parts'] = self.object.pieces.all()
         context['photos'] = self.object.photos.all()
         context['third_party_form'] = ThirdPartyServiceForm()
         context['today'] = timezone.localdate()
-        try:
-            context['work_order'] = self.object.work_order
-        except WorkOrder.DoesNotExist:
-            context['work_order'] = None
+        context['work_order'] = work_order
+        context['delivery_status'] = budget_delivery_status(self.object)
+        user_role = getattr(getattr(self.request, 'user', None), 'role', None)
+        context['can_manage_delivery'] = user_role in (
+            CustomUser.Role.MANAGER,
+            CustomUser.Role.FINANCE,
+        )
+        context['can_access_finance'] = user_role in (
+            CustomUser.Role.MANAGER,
+            CustomUser.Role.FINANCE,
+        )
+        finance_open_movements = context['delivery_status'].get('finance_open_movements') or []
+        context['delivery_finance_url'] = ''
+        if finance_open_movements and context['can_access_finance']:
+            context['delivery_finance_url'] = (
+                reverse('budgets:finance_dashboard') + f'?edit={finance_open_movements[0].id}'
+            )
 
+        visible_third_party = get_visible_third_party_services(self.object)
         manual_third_party = [
             {'description': s.description, 'total_amount': s.amount}
-            for s in self.object.third_party_services.all()
+            for s in visible_third_party
         ]
         manual_third_party_total = sum([s['total_amount'] for s in manual_third_party], Decimal('0'))
+        manual_keys = {
+            third_party_identity(s['description'], s['total_amount'])
+            for s in manual_third_party
+        }
 
         xml = self.object.source_xml or ''
         if xml:
             try:
                 service_lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
-                third_party_xml = [s for s in service_lines if s.get('is_third_party')]
-                context['service_lines'] = [s for s in service_lines if not s.get('is_third_party')]
-                third_party_xml_total = sum([s.get('total_amount', Decimal('0')) for s in third_party_xml], Decimal('0'))
-                context['third_party_services'] = manual_third_party + third_party_xml
+                third_party_xml = [s for s in service_lines if s.get('is_third_party') and not is_office_managed_service(s.get('description'))]
+                context['service_lines'] = annotate_service_lines_completion(
+                    self.object,
+                    [
+                        s for s in service_lines
+                        if not s.get('is_third_party') or is_office_managed_service(s.get('description'))
+                    ],
+                )
+                missing_third_party_xml = [
+                    s for s in third_party_xml
+                    if third_party_identity(s.get('description'), s.get('total_amount', Decimal('0'))) not in manual_keys
+                ]
+                third_party_xml_total = sum([s.get('total_amount', Decimal('0')) for s in missing_third_party_xml], Decimal('0'))
+                context['third_party_services'] = manual_third_party + missing_third_party_xml
                 context['third_party_services_total'] = manual_third_party_total + third_party_xml_total
             except Exception:
                 context['service_lines'] = []
@@ -2272,6 +3538,31 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             context['third_party_services'] = manual_third_party
             context['third_party_services_total'] = manual_third_party_total
         return context
+
+
+class BudgetDeliverView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, pk):
+        budget = Budget.objects.select_related('customer', 'vehicle').filter(pk=pk).first()
+        if budget is None:
+            raise Http404('Orçamento não encontrado.')
+
+        if budget.is_delivered:
+            messages.info(request, 'Este veículo já foi entregue.')
+            return redirect('budgets:budget_detail', pk=budget.pk)
+
+        status = budget_delivery_status(budget)
+        if not status['can_deliver']:
+            blocker_text = ' '.join(status['blockers'])
+            messages.error(request, f'Não foi possível entregar o veículo. {blocker_text}')
+            return redirect('budgets:budget_detail', pk=budget.pk)
+
+        budget.delivered_at = timezone.now()
+        budget.delivered_by = request.user
+        budget.save(update_fields=['delivered_at', 'delivered_by'])
+        messages.success(request, 'Veículo entregue com sucesso.')
+        return redirect('budgets:budget_detail', pk=budget.pk)
 
 
 class BudgetPhotoCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -2344,17 +3635,15 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             except Exception:
                 base_total = self.object.total_amount
 
-        third_party_total = sum(
-            [s.amount for s in self.object.third_party_services.all().only('amount')],
-            Decimal('0'),
-        )
-        return base_total + third_party_total
+        return base_total + get_budget_extra_third_party_total(self.object)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['computed_total_amount'] = self._compute_total_amount()
         context['today'] = timezone.localdate()
         context['bank_accounts'] = BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')
+        pending_finance = self.request.session.get(pending_budget_finance_session_key(self.object.pk))
+        context['pending_budget_finance'] = pending_finance
         can_access_finance = bool(
             getattr(self.request, 'user', None)
             and getattr(self.request.user, 'role', None)
@@ -2362,7 +3651,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         )
         needs_finance = bool(
             can_access_finance
-            and self.object.status == Budget.Status.AUTHORIZED
+            and (self.object.status == Budget.Status.AUTHORIZED or pending_finance)
             and not CashMovement.objects.filter(budget=self.object).exists()
         )
         context['needs_finance'] = needs_finance
@@ -2370,15 +3659,34 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         show_finance_modal = bool(
             can_access_finance
             and show_finance_modal
-            and self.object.status == Budget.Status.AUTHORIZED
+            and (self.object.status == Budget.Status.AUTHORIZED or pending_finance)
             and not CashMovement.objects.filter(budget=self.object).exists()
         )
         context['show_finance_modal'] = show_finance_modal
-        context['finance_default_due_date'] = self.object.expected_delivery_date or self.object.entry_date or timezone.localdate()
+        pending_data = deserialize_pending_budget_data(pending_finance) if pending_finance else {}
+        context['finance_default_due_date'] = (
+            pending_data.get('expected_delivery_date')
+            or pending_data.get('entry_date')
+            or self.object.expected_delivery_date
+            or self.object.entry_date
+            or timezone.localdate()
+        )
         return context
+
+    def get(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if request.GET.get('discard_finance') == '1':
+            request.session.pop(pending_budget_finance_session_key(self.object.pk), None)
+            return redirect('budgets:budget_update', pk=self.object.pk)
+        return super().get(request, *args, **kwargs)
 
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
+        pending_payload = self.request.session.get(pending_budget_finance_session_key(self.object.pk))
+        if self.request.method == 'GET' and pending_payload:
+            pending_data = deserialize_pending_budget_data(pending_payload)
+            for field, value in pending_data.items():
+                form.initial[field] = value
         return form
 
     def form_valid(self, form):
@@ -2413,6 +3721,13 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             if form.errors:
                 return self.form_invalid(form)
 
+            if not CashMovement.objects.filter(budget=self.object).exists():
+                self.request.session[pending_budget_finance_session_key(self.object.pk)] = serialize_pending_budget_data(
+                    form.cleaned_data
+                )
+                messages.info(self.request, 'Confirme o financeiro para concluir a aprovação do orçamento.')
+                return redirect(f"{reverse('budgets:budget_update', kwargs={'pk': self.object.pk})}?finance=1")
+
         transitioned_to_authorized = (
             getattr(self, '_old_status', None) != Budget.Status.AUTHORIZED and status == Budget.Status.AUTHORIZED
         )
@@ -2437,81 +3752,14 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
                 'Atenção: orçamento aprovado com peças da oficina pendentes. O reparo fica bloqueado até as peças chegarem '
                 'ou até liberar "seguir sem as peças".',
             )
-        if self.object.status == Budget.Status.AUTHORIZED and not WorkOrder.objects.filter(budget=self.object).exists():
-            xml = self.object.source_xml or ''
-            vehicle_image_url = ''
-            if getattr(self.object.vehicle, 'image_file', None):
-                try:
-                    if self.object.vehicle.image_file:
-                        vehicle_image_url = self.object.vehicle.image_file.url
-                except Exception:
-                    vehicle_image_url = ''
-            if not vehicle_image_url:
-                vehicle_image_url = self.object.vehicle.image_url or ''
-            work_order = WorkOrder.objects.create(
-                budget=self.object,
-                vehicle_image_url=vehicle_image_url,
-                created_at=self.object.created_at,
-            )
-            if xml:
-                try:
-                    lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
-                except Exception:
-                    lines = []
-            else:
-                lines = []
+        if self.object.status == Budget.Status.AUTHORIZED:
+            ensure_work_order_for_budget(self.object)
 
-            services = list(ServiceCatalog.objects.all().only('id', 'name'))
-            services = [s for s in services if (s.name or '').strip()]
-            services.sort(key=lambda s: len((s.name or '').strip()), reverse=True)
-
-            def match_service(description):
-                d = (description or '').strip().lower()
-                if not d:
-                    return None
-                for s in services:
-                    n = (s.name or '').strip().lower()
-                    if n and n in d:
-                        return s
-                return None
-
-            order = 0
-            activity_specs = [
-                (WorkOrderTask.Activity.DISMANTLING, 'desmontagem_hours', 'desmontagem_amount'),
-                (WorkOrderTask.Activity.BODYWORK, 'funilaria_hours', 'funilaria_amount'),
-                (WorkOrderTask.Activity.PREPARATION, 'preparacao_hours', 'preparacao_amount'),
-                (WorkOrderTask.Activity.PAINTING, 'pintura_hours', 'pintura_amount'),
-                (WorkOrderTask.Activity.ASSEMBLY, 'montagem_hours', 'montagem_amount'),
-            ]
-
-            for activity, hours_key, amount_key in activity_specs:
-                for s in [x for x in lines if not x.get('is_third_party')]:
-                    hours = s.get(hours_key, Decimal('0'))
-                    amount = s.get(amount_key, Decimal('0'))
-                    if hours and hours > 0:
-                        order += 10
-                        code = s.get('code') or ''
-                        desc = s.get('description') or ''
-                        task_desc = desc
-                        if code:
-                            task_desc = f'{desc} (Cód: {code})'
-                        matched_service = match_service(task_desc)
-                        WorkOrderTask.objects.create(
-                            work_order=work_order,
-                            activity=activity,
-                            service=matched_service,
-                            description=task_desc,
-                            planned_hours=hours,
-                            planned_amount=amount,
-                            order=order,
-                        )
-
-            order += 10
-            WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.POLISHING, order=order)
-            order += 10
-            WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.DELIVERY_PREP, order=order)
-
-        if transitioned_to_authorized and not CashMovement.objects.filter(budget=self.object).exists():
+        finance_missing = (
+            self.object.status == Budget.Status.AUTHORIZED
+            and not CashMovement.objects.filter(budget=self.object).exists()
+        )
+        if finance_missing:
             user = getattr(self.request, 'user', None)
             if user and getattr(user, 'role', None) in (
                 CustomUser.Role.MANAGER,
@@ -2535,7 +3783,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if budget is None:
             raise Http404('Orçamento não encontrado.')
 
-        if budget.status != Budget.Status.AUTHORIZED:
+        pending_payload = request.session.get(pending_budget_finance_session_key(budget.pk))
+        pending_data = deserialize_pending_budget_data(pending_payload) if pending_payload else None
+
+        if budget.status != Budget.Status.AUTHORIZED and not pending_data:
             messages.error(request, 'O orçamento precisa estar Autorizado para registrar o financeiro.')
             return redirect('budgets:budget_update', pk=budget.pk)
 
@@ -2580,6 +3831,25 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
 
         try:
             with transaction.atomic():
+                if pending_data:
+                    old_status = budget.status
+                    budget.status = pending_data.get('status') or budget.status
+                    budget.refusal_reason_code = pending_data.get('refusal_reason_code') or ''
+                    budget.refusal_reason = pending_data.get('refusal_reason') or ''
+                    budget.entry_date = pending_data.get('entry_date')
+                    budget.repair_start_date = pending_data.get('repair_start_date')
+                    budget.expected_delivery_date = pending_data.get('expected_delivery_date')
+                    budget.allow_repair_without_parts = bool(pending_data.get('allow_repair_without_parts'))
+                    if budget.status == Budget.Status.AUTHORIZED:
+                        if old_status != Budget.Status.AUTHORIZED or not budget.approved_at:
+                            budget.approved_at = timezone.now()
+                    else:
+                        budget.approved_at = None
+                    budget.save()
+                    if budget.status != Budget.Status.AUTHORIZED:
+                        raise ValueError('O orçamento precisa estar Autorizado para registrar o financeiro.')
+                    ensure_work_order_for_budget(budget)
+
                 if kind == 'PARTICULAR':
                     entry_amount = parse_money(request.POST.get('entry_amount'))
                     entry_due = parse_date(request.POST.get('entry_due_date'), today)
@@ -2676,6 +3946,7 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.error(request, str(exc) or 'Não foi possível registrar o financeiro.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
 
+        request.session.pop(pending_budget_finance_session_key(budget.pk), None)
         messages.success(request, 'Financeiro registrado.')
         return redirect('budgets:budget_detail', pk=budget.pk)
 
@@ -2684,6 +3955,25 @@ class BudgetDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
     model = Budget
     template_name = 'budgets/budget_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, *args, **kwargs):
+        try:
+            self.object = self.get_object()
+        except Http404:
+            messages.error(request, 'Orçamento não encontrado.')
+            return redirect('budgets:budget_list')
+
+        try:
+            self.object.delete()
+        except ProtectedError:
+            messages.error(
+                request,
+                'Este orçamento possui vínculos e não pode ser excluído. Remova antes os registros financeiros ou complementos relacionados.',
+            )
+            return redirect('budgets:budget_detail', pk=self.object.pk)
+
+        messages.success(request, 'Orçamento removido.')
+        return redirect(self.get_success_url())
 
     def get_success_url(self):
         return reverse('budgets:budget_list')
@@ -2713,36 +4003,102 @@ class ThirdPartyServiceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if budget is None:
             raise Http404('Orçamento não encontrado.')
 
+        next_url = (request.POST.get('next') or '').strip()
+        if not next_url.startswith('/'):
+            next_url = ''
+
         form = ThirdPartyServiceForm(request.POST)
         if not form.is_valid():
             messages.error(request, 'Não foi possível salvar o serviço terceiro.')
+            if next_url:
+                return redirect(next_url)
             return redirect('budgets:budget_detail', pk=budget.pk)
 
-        ThirdPartyService.objects.create(
+        status = form.cleaned_data['status']
+        completed_at = timezone.now() if status == ThirdPartyService.Status.DONE else None
+
+        service = ThirdPartyService.objects.create(
             budget=budget,
+            supplier_id=form.cleaned_data.get('supplier_id'),
             description=form.cleaned_data['description'],
             amount=form.cleaned_data['amount'],
+            scheduled_date=form.cleaned_data.get('scheduled_date'),
+            status=status,
+            completed_at=completed_at,
+            is_shop_service=bool(form.cleaned_data.get('is_shop_service')),
         )
 
-        base_total = Decimal('0')
-        xml = budget.source_xml or ''
-        if xml:
-            try:
-                _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
-                base_total = parsed_total_amount
-            except Exception:
-                base_total = budget.total_amount
-        else:
-            base_total = budget.total_amount
-
-        third_party_total = sum(
-            [s.amount for s in ThirdPartyService.objects.filter(budget_id=budget.id).only('amount')],
-            Decimal('0'),
-        )
-        budget.total_amount = base_total + third_party_total
-        budget.save(update_fields=['total_amount'])
+        after_third_party_service_saved(service)
         messages.success(request, 'Serviço terceiro salvo.')
+        if next_url:
+            return redirect(next_url)
         return redirect('budgets:budget_detail', pk=budget.pk)
+
+
+class ThirdPartyServiceUpdateView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        service = ThirdPartyService.objects.select_related('budget').filter(pk=pk).first()
+        if service is None:
+            raise Http404('Serviço terceiro não encontrado.')
+
+        next_url = (request.POST.get('next') or '').strip()
+        if not next_url.startswith('/'):
+            next_url = ''
+
+        form = ThirdPartyServiceForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, 'Não foi possível atualizar o serviço terceiro.')
+            if next_url:
+                return redirect(next_url)
+            return redirect('budgets:budget_detail', pk=service.budget_id)
+
+        service.supplier_id = form.cleaned_data.get('supplier_id')
+        service.description = form.cleaned_data['description']
+        service.amount = form.cleaned_data['amount']
+        service.scheduled_date = form.cleaned_data.get('scheduled_date')
+        service.status = form.cleaned_data['status']
+        service.is_shop_service = bool(form.cleaned_data.get('is_shop_service'))
+        service.completed_at = timezone.now() if service.status == ThirdPartyService.Status.DONE else None
+        service.save(
+            update_fields=[
+                'supplier',
+                'description',
+                'amount',
+                'scheduled_date',
+                'status',
+                'is_shop_service',
+                'completed_at',
+            ]
+        )
+        after_third_party_service_saved(service)
+        messages.success(request, 'Serviço terceiro atualizado.')
+        if next_url:
+            return redirect(next_url)
+        return redirect('budgets:budget_detail', pk=service.budget_id)
+
+
+class ThirdPartyServiceFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        service = ThirdPartyService.objects.select_related('budget').filter(pk=pk).first()
+        if service is None:
+            raise Http404('Serviço terceiro não encontrado.')
+
+        next_url = (request.POST.get('next') or '').strip()
+        if not next_url.startswith('/'):
+            next_url = ''
+
+        service.status = ThirdPartyService.Status.DONE
+        service.completed_at = timezone.now()
+        service.save(update_fields=['status', 'completed_at'])
+        after_third_party_service_saved(service)
+        messages.success(request, 'Serviço terceiro finalizado.')
+        if next_url:
+            return redirect(next_url)
+        return redirect('budgets:budget_detail', pk=service.budget_id)
 
 
 class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
@@ -2903,11 +4259,7 @@ class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
                         )
                         total += p.cost_price
 
-                    third_party_total = sum(
-                        [s.amount for s in budget.third_party_services.all().only('amount')],
-                        Decimal('0'),
-                    )
-                    budget.total_amount = (parsed_total_amount if parsed_total_amount > 0 else total) + third_party_total
+                    budget.total_amount = (parsed_total_amount if parsed_total_amount > 0 else total) + get_budget_extra_third_party_total(budget)
                     budget.shop_parts_total = breakdown.get('shop_parts_total', Decimal('0'))
                     budget.services_total = breakdown.get('services_total', Decimal('0'))
                     budget.labor_total = breakdown.get('labor_total', Decimal('0'))

@@ -190,6 +190,77 @@
       <div class='mt-1 text-xl font-semibold text-[#D4AF37]'>R$ {{ budget.total_amount|floatformat:2 }}</div>
     </div>
 
+    <div class='mt-6 rounded-lg border border-[#262626] bg-[#121212] p-4'>
+      <div class='flex flex-wrap items-center justify-between gap-3'>
+        <div>
+          <div class='text-sm text-[#A3A3A3]'>Entrega do veículo</div>
+          <div class='mt-1 text-base font-semibold {% if delivery_status.can_deliver %}text-[#D4AF37]{% else %}text-[#F5F5F5]{% endif %}'>
+            {% if budget.is_delivered %}
+              Veículo entregue
+            {% elif delivery_status.can_deliver %}
+              Pronto para entrega
+            {% else %}
+              Entrega bloqueada
+            {% endif %}
+          </div>
+        </div>
+        <div class='text-sm text-[#A3A3A3]'>
+          {{ delivery_status.task_done }}/{{ delivery_status.task_total }} tarefas · {{ delivery_status.third_done }}/{{ delivery_status.third_total }} terceiros
+        </div>
+      </div>
+      <div class='mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
+        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
+          <div class='text-[#A3A3A3]'>Tipo financeiro</div>
+          <div class='mt-1 font-medium text-[#F5F5F5]'>{{ delivery_status.kind }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
+          <div class='text-[#A3A3A3]'>Recebido</div>
+          <div class='mt-1 font-medium text-[#F5F5F5]'>R$ {{ delivery_status.finance_realized_amount|floatformat:2 }}</div>
+        </div>
+        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
+          <div class='text-[#A3A3A3]'>Em aberto</div>
+          <div class='mt-1 font-medium text-[#F5F5F5]'>R$ {{ delivery_status.finance_open_amount|floatformat:2 }}</div>
+        </div>
+      </div>
+      {% if budget.delivered_at %}
+        <div class='mt-3 text-sm text-[#A3A3A3]'>
+          Entregue em {{ budget.delivered_at|date:'d/m/Y H:i' }}{% if budget.delivered_by %} por {{ budget.delivered_by.email }}{% endif %}.
+        </div>
+      {% elif can_manage_delivery %}
+        <div class='mt-4'>
+          <form method='post' action='{% url "budgets:budget_deliver" budget.pk %}'>
+            {% csrf_token %}
+            <button
+              type='submit'
+              class='inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition {% if delivery_status.can_deliver %}bg-[#D4AF37] text-[#111111] hover:brightness-110{% else %}cursor-not-allowed border border-[#3a3a3a] bg-[#1a1a1a] text-[#6b7280]{% endif %}'
+              {% if not delivery_status.can_deliver %}disabled{% endif %}
+              {% if delivery_status.can_deliver %}onclick='return confirm("Confirmar entrega do veículo?")'{% endif %}
+            >
+              Entregar veículo
+            </button>
+          </form>
+        </div>
+      {% endif %}
+      {% if not budget.delivered_at and delivery_status.blockers %}
+        <div class='mt-3 flex flex-wrap gap-2'>
+          {% for blocker in delivery_status.blockers %}
+            {% if blocker == 'Existem pendências financeiras em aberto.' and delivery_finance_url %}
+              <a href='{{ delivery_finance_url }}' class='rounded-full border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-1 text-xs text-[#FECACA] underline decoration-[#FECACA]/70 underline-offset-2 hover:brightness-110'>
+                {{ blocker }}
+              </a>
+            {% else %}
+              <span class='rounded-full border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-1 text-xs text-[#FECACA]'>{{ blocker }}</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% if delivery_status.finance_note %}
+        <div class='mt-3 rounded-md border border-[#1d4ed8] bg-[#0b1733] px-3 py-2 text-xs text-[#bfdbfe]'>
+          {{ delivery_status.finance_note }}
+        </div>
+      {% endif %}
+    </div>
+
     <div class='mt-6 overflow-hidden rounded-lg border border-[#262626]'>
       <div class='bg-[#141414] px-4 py-3 text-sm font-semibold text-[#D4AF37]'>Composição (Cilia)</div>
       <div class='grid grid-cols-1 gap-4 px-4 py-4 text-sm md:grid-cols-6'>
@@ -393,7 +464,29 @@
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.total_amount and s.total_amount > 0 %}R$ {{ s.total_amount|floatformat:2 }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>
+                {% if s.total_amount and s.total_amount > 0 %}
+                  <div class='flex flex-wrap items-center gap-2'>
+                    <span>R$ {{ s.total_amount|floatformat:2 }}</span>
+                    {% if s.completion_items %}
+                      <span class='rounded-full border px-2 py-0.5 text-xs {% if s.is_completed %}border-[#14532D] bg-[#052E16] text-[#BBF7D0]{% else %}border-[#7F1D1D] bg-[#2A0D0D] text-[#FECACA]{% endif %}'>
+                        {{ s.completion_label }}
+                      </span>
+                    {% endif %}
+                  </div>
+                  {% if s.completion_items %}
+                    <div class='mt-2 flex flex-wrap gap-1'>
+                      {% for item in s.completion_items %}
+                        <span class='rounded-full border px-2 py-0.5 text-[11px] {% if item.done %}border-[#14532D] bg-[#052E16] text-[#BBF7D0]{% else %}border-[#404040] bg-[#262626] text-[#D4AF37]{% endif %}'>
+                          {{ item.label }}: {% if item.done %}Concluído{% else %}Pendente{% endif %}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
             </tr>
           {% empty %}
             <tr>

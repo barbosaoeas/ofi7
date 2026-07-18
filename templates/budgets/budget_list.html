@@ -5,11 +5,32 @@
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Orçamentos Aprovados</h1>
-      <p class='mt-1 text-sm text-[#A3A3A3]'>Somente os orçamentos ja aprovados</p>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Orçamentos</h1>
+      <p class='mt-1 text-sm text-[#A3A3A3]'>
+        {% if delivery_filter == 'delivered' %}
+          Somente os orçamentos já entregues
+        {% else %}
+          Somente os orçamentos aprovados ainda não entregues
+        {% endif %}
+      </p>
     </div>
     <a href='{% url "budgets:import_xml" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
       Importar XML (Cilia)
+    </a>
+  </div>
+
+  <div class='mt-6 flex flex-wrap gap-3'>
+    <a
+      href='{% url "budgets:budget_list" %}?delivery=approved'
+      class='{% if delivery_filter == "approved" %}rounded-full bg-[#D4AF37] px-4 py-2 text-sm font-semibold text-[#0D0D0D]{% else %}rounded-full border border-[#404040] bg-[#262626] px-4 py-2 text-sm text-[#F5F5F5] hover:border-[#D4AF37]{% endif %}'
+    >
+      Aprovados ({{ approved_count }})
+    </a>
+    <a
+      href='{% url "budgets:budget_list" %}?delivery=delivered'
+      class='{% if delivery_filter == "delivered" %}rounded-full bg-[#D4AF37] px-4 py-2 text-sm font-semibold text-[#0D0D0D]{% else %}rounded-full border border-[#404040] bg-[#262626] px-4 py-2 text-sm text-[#F5F5F5] hover:border-[#D4AF37]{% endif %}'
+    >
+      Entregues ({{ delivered_count }})
     </a>
   </div>
 
@@ -31,7 +52,13 @@
         {% for budget in budgets %}
           <tr class='hover:bg-[#121212]'>
             <td class='px-4 py-3'>#{{ budget.display_number }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{{ budget.get_status_display }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>
+              {% if budget.delivered_at %}
+                <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2 py-0.5 text-xs text-[#86efac]'>Entregue</span>
+              {% else %}
+                <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#F5F5F5]'>{{ budget.get_status_display }}</span>
+              {% endif %}
+            </td>
             <td class='px-4 py-3'>{{ budget.customer.name }}</td>
             <td class='px-4 py-3 text-[#A3A3A3]'>{{ budget.vehicle.plate }}</td>
             <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ budget.total_amount|floatformat:2 }}</td>
@@ -45,7 +72,13 @@
           </tr>
         {% empty %}
           <tr>
-            <td class='px-4 py-6 text-[#A3A3A3]' colspan='8'>Nenhum orçamento aprovado.</td>
+            <td class='px-4 py-6 text-[#A3A3A3]' colspan='8'>
+              {% if delivery_filter == 'delivered' %}
+                Nenhum orçamento entregue.
+              {% else %}
+                Nenhum orçamento aprovado pendente de entrega.
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>
@@ -57,10 +90,10 @@
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?{% if current_query_without_page %}{{ current_query_without_page }}&{% endif %}page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?{% if current_query_without_page %}{{ current_query_without_page }}&{% endif %}page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>

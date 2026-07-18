@@ -38,6 +38,14 @@ class Budget(models.Model):
     repair_start_date = models.DateField(null=True, blank=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
     allow_repair_without_parts = models.BooleanField(default=False)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    delivered_by = models.ForeignKey(
+        'users.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='delivered_budgets',
+    )
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     shop_parts_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     services_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -65,6 +73,10 @@ class Budget(models.Model):
         if self.cilia_number:
             return f'Orçamento #{self.cilia_number}'
         return f'Orçamento #{self.pk}'
+
+    @property
+    def is_delivered(self):
+        return bool(self.delivered_at)
 
 
 class Piece(models.Model):
@@ -102,13 +114,30 @@ class Piece(models.Model):
 
 
 class ThirdPartyService(models.Model):
+    class Status(models.TextChoices):
+        SCHEDULED = 'SCHEDULED', 'Agendado'
+        IN_PROGRESS = 'IN_PROGRESS', 'Em andamento'
+        DONE = 'DONE', 'Concluido'
+
     budget = models.ForeignKey(Budget, on_delete=models.CASCADE, related_name='third_party_services')
+    supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='third_party_services')
+    expense_movement = models.ForeignKey(
+        'CashMovement',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='third_party_services',
+    )
     description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    scheduled_date = models.DateField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
+    is_shop_service = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ('-created_at',)
+        ordering = ('status', 'scheduled_date', 'id')
 
     def __str__(self):
         return self.description

@@ -28,6 +28,12 @@
             12 meses
           </a>
         </div>
+        <a href='{% url "budgets:finance_import_xml" %}' class='rounded-xl border border-[#14532d] bg-[#052e16] px-4 py-3 text-sm font-semibold text-[#86efac] hover:brightness-110'>
+          Importar XML financeiro
+        </a>
+        <a href='{% url "budgets:finance_export_xml_template" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+          Exportar modelo XML
+        </a>
         <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
           Voltar para lançamentos
         </a>

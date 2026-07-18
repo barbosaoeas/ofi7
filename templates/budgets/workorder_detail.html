@@ -221,6 +221,170 @@
     </div>
   </div>
 
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex items-center justify-between'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Serviços de Terceiros</h2>
+      <div class='text-sm text-[#A3A3A3]'>
+        {{ third_party_open_count }} abertos · {{ third_party_done_count }} concluídos
+      </div>
+    </div>
+
+    <form class='mt-4 grid grid-cols-1 gap-3 md:grid-cols-12' method='post' action='{% url "budgets:third_party_create" work_order.budget.pk %}'>
+      {% csrf_token %}
+      <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+      <div class='md:col-span-4'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_description'>Descrição</label>
+        <input id='id_os_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Ex.: alinhamento externo' required />
+      </div>
+      <div class='md:col-span-3'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_supplier'>Fornecedor</label>
+        <select id='id_os_third_party_supplier' name='supplier_id' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+          <option value=''>-</option>
+          {% for supplier in suppliers_active %}
+            <option value='{{ supplier.id }}'>{{ supplier.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class='md:col-span-2'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_date'>Data</label>
+        <input id='id_os_third_party_date' name='scheduled_date' type='date' value='{{ today|date:"Y-m-d" }}' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+      </div>
+      <div class='md:col-span-2'>
+        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_amount'>Valor (R$)</label>
+        <input id='id_os_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='0,00' required />
+      </div>
+      <div class='md:col-span-1 flex items-end'>
+        <label class='flex items-center gap-2 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+          <input type='checkbox' name='is_shop_service' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+          Oficina
+        </label>
+      </div>
+      <div class='md:col-span-12 md:flex md:justify-end'>
+        <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
+          Adicionar
+        </button>
+      </div>
+    </form>
+
+    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+      <table class='w-full text-left text-sm'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
+          <tr>
+            <th class='px-4 py-3 font-semibold'>Descrição</th>
+            <th class='px-4 py-3 font-semibold'>Fornecedor</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-40'>Data</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Valor (R$)</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-28'>Oficina</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-44'>Status</th>
+            <th class='px-4 py-3 font-semibold text-right'>Ações</th>
+          </tr>
+        </thead>
+        <tbody class='divide-y divide-[#262626]'>
+          {% for s in third_party_open %}
+            <tr class='hover:bg-[#121212]'>
+              <td class='px-4 py-3'>
+                <input
+                  form='third-party-{{ s.id }}'
+                  name='description'
+                  type='text'
+                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  value='{{ s.description }}'
+                />
+              </td>
+              <td class='px-4 py-3'>
+                <select form='third-party-{{ s.id }}' name='supplier_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                  <option value=''>-</option>
+                  {% for supplier in suppliers_active %}
+                    <option value='{{ supplier.id }}' {% if s.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class='px-4 py-3'>
+                <input
+                  form='third-party-{{ s.id }}'
+                  name='scheduled_date'
+                  type='date'
+                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  value='{% if s.scheduled_date %}{{ s.scheduled_date|date:"Y-m-d" }}{% endif %}'
+                />
+              </td>
+              <td class='px-4 py-3'>
+                <input
+                  form='third-party-{{ s.id }}'
+                  name='amount'
+                  type='text'
+                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  value='{{ s.amount|unlocalize }}'
+                />
+              </td>
+              <td class='px-4 py-3 text-center'>
+                <input
+                  form='third-party-{{ s.id }}'
+                  name='is_shop_service'
+                  type='checkbox'
+                  class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]'
+                  {% if s.effective_is_shop_service %}checked{% endif %}
+                />
+              </td>
+              <td class='px-4 py-3'>
+                <select form='third-party-{{ s.id }}' name='status' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                  {% for value, label in third_party_status_choices %}
+                    <option value='{{ value }}' {% if s.status == value %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class='px-4 py-3'>
+                <div class='flex flex-wrap justify-end gap-2'>
+                  <form id='third-party-{{ s.id }}' method='post' action='{% url "budgets:third_party_update" s.id %}'>
+                    {% csrf_token %}
+                    <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+                    <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
+                      Salvar
+                    </button>
+                  </form>
+                  <form method='post' action='{% url "budgets:third_party_finish" s.id %}'>
+                    {% csrf_token %}
+                    <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+                    <button type='submit' class='rounded-md border border-[#14532d] bg-[#052e16] px-3 py-2 text-sm text-[#86efac] hover:brightness-110'>
+                      Finalizar
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='7'>Nenhum serviço de terceiro em aberto.</td>
+            </tr>
+          {% endfor %}
+
+          {% if third_party_done_count and third_party_done_count > 0 %}
+            <tr class='bg-[#141414]'>
+              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='7'>Concluídos ({{ third_party_done_count }})</td>
+            </tr>
+            {% for s in third_party_done %}
+              <tr class='hover:bg-[#121212] opacity-70'>
+                <td class='px-4 py-3'>{{ s.description }}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.supplier %}{{ s.supplier.name }}{% else %}-{% endif %}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>
+                  {% if s.scheduled_date %}{{ s.scheduled_date|date:'d/m/Y' }}{% else %}-{% endif %}
+                </td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ s.amount|floatformat:2 }}</td>
+                <td class='px-4 py-3 text-center text-[#A3A3A3]'>{% if s.effective_is_shop_service %}Sim{% else %}Não{% endif %}</td>
+                <td class='px-4 py-3'>
+                  <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2.5 py-1 text-xs text-[#86efac]'>Concluído</span>
+                </td>
+                <td class='px-4 py-3 text-right text-[#A3A3A3]'>
+                  {% if s.completed_at %}{{ s.completed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <script>
     (function () {
       function parseNumber(value) {

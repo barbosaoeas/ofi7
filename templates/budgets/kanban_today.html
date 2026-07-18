@@ -57,6 +57,11 @@
                   {% if t.description %}{{ t.description }}{% else %}-{% endif %}
                 {% endif %}
               </div>
+              {% if not t.is_patio and t.sequence_block_message %}
+                <div class='mt-1 rounded-md border border-[#7f1d1d] bg-[#3b0a0a] px-2 py-1 text-[10px] text-[#fecaca]'>
+                  {{ t.sequence_block_message }}
+                </div>
+              {% endif %}
               {% if t.is_patio and t.patio_has_late_parts %}
                 <div class='mt-1 text-[10px] font-semibold text-[#FECACA]'>Peças atrasadas</div>
               {% endif %}
@@ -99,7 +104,7 @@
                     <form method='post' action='{% url "budgets:kanban_task_start" t.id %}'>
                       {% csrf_token %}
                       <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-                      <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-2 py-1 text-[11px] text-[#F5F5F5] hover:border-[#D4AF37] {% if selected_date > today or not t.collaborator_id or t.status == "DONE" or t.status == "RUNNING" %}opacity-50 pointer-events-none{% endif %}'>
+                      <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-2 py-1 text-[11px] text-[#F5F5F5] hover:border-[#D4AF37] {% if selected_date > today or not t.collaborator_id or t.status == "DONE" or t.status == "RUNNING" or t.sequence_blockers %}opacity-50 pointer-events-none{% endif %}'>
                         Iniciar
                       </button>
                     </form>
