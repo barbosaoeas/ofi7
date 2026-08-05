@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db import OperationalError, transaction
+from django.db import transaction
 from django.db.models import Count, Exists, OuterRef
 from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
@@ -15,7 +15,6 @@ from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import re
-import time
 from uuid import uuid4
 from xml.etree import ElementTree
 from django.db.models import Q
@@ -25,8 +24,9 @@ from core.views import RoleRequiredMixin
 from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
-from .forms import BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
+from .forms import AdministrativeClosureForm, BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, XMLImportJob
+from .services.cilia_import_service import CiliaImportDuplicateError, CiliaImportError, CiliaImportValidationError, import_cilia_xml_bytes
 
 
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
@@ -667,12 +667,15 @@ def budget_delivery_allows_future_insurer_receivables(open_in_movements, referen
     )
 
 
-def budget_delivery_status(budget):
-    work_order = None
+def get_budget_work_order(budget):
     try:
-        work_order = budget.work_order
+        return budget.work_order
     except WorkOrder.DoesNotExist:
-        work_order = None
+        return None
+
+
+def budget_delivery_status(budget):
+    work_order = get_budget_work_order(budget)
 
     task_total = 0
     task_done = 0
@@ -742,6 +745,67 @@ def budget_delivery_status(budget):
             else ''
         ),
         'can_deliver': len(blockers) == 0,
+        'blockers': blockers,
+    }
+
+
+def budget_administrative_closure_status(budget, user=None):
+    work_order = get_budget_work_order(budget)
+    user_is_manager = bool(
+        user and (
+            getattr(user, 'is_superuser', False)
+            or getattr(user, 'role', None) == CustomUser.Role.MANAGER
+        )
+    )
+    has_started_tasks = False
+    if work_order is not None:
+        has_started_tasks = work_order.tasks.filter(
+            status__in=(
+                WorkOrderTask.Status.RUNNING,
+                WorkOrderTask.Status.PAUSED,
+                WorkOrderTask.Status.DONE,
+            )
+        ).exists()
+    open_in_movements = list(
+        CashMovement.objects.filter(
+            budget=budget,
+            direction=CashMovement.Direction.IN,
+            is_realized=False,
+        ).order_by('due_date', 'created_at', 'id')
+    )
+    open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
+    allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
+
+    blockers = []
+    if not user_is_manager:
+        blockers.append('A finalização administrativa é exclusiva para gerente.')
+    if budget.status != Budget.Status.AUTHORIZED:
+        blockers.append('O orçamento precisa estar Autorizado.')
+    if budget.is_delivered:
+        blockers.append('O veículo já foi entregue.')
+    if getattr(budget, 'administrative_closure', False):
+        blockers.append('Este orçamento já foi marcado para finalização administrativa.')
+    if work_order is None:
+        blockers.append('A OS ainda não foi criada.')
+    elif has_started_tasks:
+        blockers.append('A OS já foi iniciada no operacional.')
+    if not CashMovement.objects.filter(budget=budget, direction=CashMovement.Direction.IN).exists():
+        blockers.append('O financeiro do orçamento ainda não foi registrado.')
+    elif open_amount > Decimal('0') and not allows_future_insurer_receivables:
+        blockers.append('Existem pendências financeiras em aberto.')
+
+    return {
+        'work_order': work_order,
+        'user_is_manager': user_is_manager,
+        'has_started_tasks': has_started_tasks,
+        'finance_registered': CashMovement.objects.filter(
+            budget=budget,
+            direction=CashMovement.Direction.IN,
+        ).exists(),
+        'finance_open_amount': open_amount,
+        'allows_future_insurer_receivables': allows_future_insurer_receivables,
+        'can_administratively_close': len(blockers) == 0,
+        'suggested_delivery_date': budget.expected_delivery_date or timezone.localdate(),
         'blockers': blockers,
     }
 
@@ -3132,6 +3196,16 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
         return context
 
 
+def get_operational_collaborator(collaborator_id):
+    collaborator_id = (collaborator_id or '').strip()
+    if not collaborator_id:
+        return None
+    return Collaborator.objects.filter(
+        pk=collaborator_id,
+        function=Collaborator.Function.OPERATIONAL,
+    ).first()
+
+
 class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
@@ -3151,10 +3225,7 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
         had_error = False
 
         if collaborator_id:
-            collaborator = Collaborator.objects.filter(
-                pk=collaborator_id,
-                function=Collaborator.Function.OPERATIONAL,
-            ).first()
+            collaborator = get_operational_collaborator(collaborator_id)
             if collaborator is None:
                 had_error = True
                 messages.error(request, 'Colaborador inválido.')
@@ -3236,6 +3307,74 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.success(request, 'Agendamento salvo.')
 
         return redirect('budgets:workorder_detail', pk=task.work_order_id)
+
+
+class WorkOrderTaskBulkAssignView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, pk):
+        work_order = WorkOrder.objects.filter(pk=pk).first()
+        if work_order is None:
+            raise Http404('OS não encontrada.')
+
+        next_url = (request.POST.get('next') or '').strip()
+        redirect_url = next_url or reverse('budgets:workorder_detail', kwargs={'pk': work_order.pk})
+
+        collaborator = get_operational_collaborator(request.POST.get('bulk_collaborator_id'))
+        if collaborator is None:
+            messages.error(request, 'Selecione um colaborador operacional válido para a atribuição em lote.')
+            return redirect(redirect_url)
+
+        raw_task_ids = (request.POST.get('task_ids') or '').strip()
+        selected_task_ids = []
+        for raw_task_id in raw_task_ids.split(','):
+            raw_task_id = raw_task_id.strip()
+            if raw_task_id.isdigit():
+                selected_task_ids.append(int(raw_task_id))
+        selected_task_ids = list(dict.fromkeys(selected_task_ids))
+
+        if not selected_task_ids:
+            messages.error(request, 'Selecione ao menos uma tarefa para atribuição em lote.')
+            return redirect(redirect_url)
+
+        tasks = list(
+            WorkOrderTask.objects.filter(
+                work_order_id=work_order.pk,
+                pk__in=selected_task_ids,
+            ).exclude(status=WorkOrderTask.Status.DONE)
+        )
+        if not tasks:
+            messages.error(request, 'Nenhuma tarefa elegível foi encontrada para esta atribuição em lote.')
+            return redirect(redirect_url)
+
+        updated_count = 0
+        for task in tasks:
+            if task.collaborator_id == collaborator.id:
+                continue
+            task.collaborator = collaborator
+            task.save(update_fields=['collaborator'])
+            sync_shop_service_from_task(task)
+            updated_count += 1
+
+        ignored_count = len(selected_task_ids) - len(tasks)
+        if updated_count:
+            messages.success(
+                request,
+                f'{updated_count} tarefa(s) atualizada(s) para {collaborator.name}.',
+            )
+        else:
+            messages.info(
+                request,
+                f'As {len(tasks)} tarefa(s) elegíveis já estavam atribuídas para {collaborator.name}.',
+            )
+
+        if ignored_count > 0:
+            messages.info(
+                request,
+                f'{ignored_count} tarefa(s) foram ignoradas por não pertencerem a esta OS ou já estarem concluídas.',
+            )
+
+        return redirect(redirect_url)
 
 
 class PieceCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
@@ -3469,11 +3608,7 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        work_order = None
-        try:
-            work_order = self.object.work_order
-        except WorkOrder.DoesNotExist:
-            work_order = None
+        work_order = get_budget_work_order(self.object)
         if work_order is not None:
             sync_xml_third_party_services(self.object)
             sync_office_managed_service_tasks(work_order)
@@ -3492,6 +3627,17 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             CustomUser.Role.MANAGER,
             CustomUser.Role.FINANCE,
         )
+        context['administrative_closure_status'] = budget_administrative_closure_status(
+            self.object,
+            self.request.user,
+        )
+        context['administrative_closure_form'] = AdministrativeClosureForm(
+            initial={
+                'delivery_date': context['administrative_closure_status']['suggested_delivery_date'],
+                'confirm_no_commission': True,
+            }
+        )
+        context['administrative_closure_open'] = (self.request.GET.get('admin_close') or '').strip() == '1'
         finance_open_movements = context['delivery_status'].get('finance_open_movements') or []
         context['delivery_finance_url'] = ''
         if finance_open_movements and context['can_access_finance']:
@@ -3562,6 +3708,67 @@ class BudgetDeliverView(LoginRequiredMixin, RoleRequiredMixin, View):
         budget.delivered_by = request.user
         budget.save(update_fields=['delivered_at', 'delivered_by'])
         messages.success(request, 'Veículo entregue com sucesso.')
+        return redirect('budgets:budget_detail', pk=budget.pk)
+
+
+class BudgetAdministrativeCloseView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER,)
+
+    def post(self, request, pk):
+        budget = Budget.objects.select_related('customer', 'vehicle').filter(pk=pk).first()
+        if budget is None:
+            raise Http404('Orçamento não encontrado.')
+
+        if budget.is_delivered:
+            messages.info(request, 'Este veículo já foi entregue.')
+            return redirect('budgets:budget_detail', pk=budget.pk)
+
+        closure_status = budget_administrative_closure_status(budget, request.user)
+        if not closure_status['can_administratively_close']:
+            blocker_text = ' '.join(closure_status['blockers'])
+            messages.error(request, f'Não foi possível finalizar administrativamente. {blocker_text}')
+            return redirect(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}) + '?admin_close=1')
+
+        form = AdministrativeClosureForm(request.POST)
+        if not form.is_valid():
+            error_text = ' '.join(
+                [
+                    error
+                    for errors in form.errors.values()
+                    for error in errors
+                ]
+            )
+            messages.error(request, f'Não foi possível finalizar administrativamente. {error_text}')
+            return redirect(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}) + '?admin_close=1')
+
+        delivery_date = form.cleaned_data['delivery_date']
+        delivery_datetime = timezone.make_aware(
+            datetime.combine(delivery_date, dt_time(12, 0))
+        )
+        work_order = closure_status['work_order']
+
+        with transaction.atomic():
+            budget.delivered_at = delivery_datetime
+            budget.delivered_by = request.user
+            budget.administrative_closure = True
+            budget.administrative_closed_at = timezone.now()
+            budget.administrative_closed_by = request.user
+            budget.administrative_closure_reason = form.cleaned_data['reason']
+            budget.save(
+                update_fields=[
+                    'delivered_at',
+                    'delivered_by',
+                    'administrative_closure',
+                    'administrative_closed_at',
+                    'administrative_closed_by',
+                    'administrative_closure_reason',
+                ]
+            )
+            if work_order is not None and work_order.status != WorkOrder.Status.CLOSED:
+                work_order.status = WorkOrder.Status.CLOSED
+                work_order.save(update_fields=['status'])
+
+        messages.success(request, 'Finalização administrativa registrada com sucesso. Comissão não foi gerada.')
         return redirect('budgets:budget_detail', pk=budget.pk)
 
 
@@ -4106,203 +4313,203 @@ class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
     form_class = CiliaXMLUploadForm
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
-    def _xml_debug_summary(self, xml_bytes):
-        try:
-            root = ElementTree.fromstring(xml_bytes)
-        except ElementTree.ParseError:
-            return 'XML inválido'
-
-        cpf_values = []
-        for el in root.iter():
-            tag = str(el.tag).split('}')[-1].lower() if el.tag else ''
-            if tag != 'cpf':
-                continue
-            raw = ''.join(el.itertext()).strip()
-            raw = raw or el.attrib.get('value', '')
-            cpf_values.append(raw.strip())
-
-        plate_values = []
-        for el in root.iter():
-            tag = str(el.tag).split('}')[-1].lower() if el.tag else ''
-            if tag != 'placa':
-                continue
-            raw = ''.join(el.itertext()).strip()
-            raw = raw or el.attrib.get('value', '')
-            plate_values.append(raw.strip())
-
-        cpf_status = 'não encontrado'
-        if cpf_values:
-            cpf_status = 'encontrado vazio'
-            for v in cpf_values:
-                digits = ''.join([c for c in v if c.isdigit()])
-                if digits:
-                    cpf_status = f'encontrado ({len(digits)} dígitos)'
-                    break
-
-        plate_status = 'não encontrado'
-        if plate_values:
-            plate_status = 'encontrado vazio'
-            for v in plate_values:
-                normalized = ''.join([c for c in v.upper() if c.isalnum()])
-                if normalized:
-                    plate_status = f'encontrado ({len(normalized)} chars)'
-                    break
-
-        return f'Debug: cpf={cpf_status}; placa={plate_status}'
-
     def form_valid(self, form):
         xml_file = form.cleaned_data['xml_file']
         xml_bytes = xml_file.read()
-        xml_created_at = parse_xml_created_at(xml_bytes)
+        import_job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.MANUAL,
+            file_name=xml_file.name,
+            status=XMLImportJob.Status.PENDING,
+        )
 
         try:
-            (
-                parsed_customer,
-                parsed_vehicle,
-                parsed_pieces,
-                parsed_total_amount,
-                breakdown,
-                cilia_number,
-                cilia_version,
-            ) = parse_cilia_xml(xml_bytes)
-        except ElementTree.ParseError:
-            form.add_error('xml_file', 'Não foi possível ler o XML. Verifique o arquivo.')
+            result = import_cilia_xml_bytes(
+                xml_bytes=xml_bytes,
+                job=import_job,
+            )
+        except CiliaImportDuplicateError as exc:
+            form.add_error('xml_file', str(exc))
             return self.form_invalid(form)
-        except Exception:
-            form.add_error('xml_file', 'Erro ao processar o XML. Tente novamente.')
+        except CiliaImportValidationError as exc:
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        except CiliaImportError as exc:
+            form.add_error(None, str(exc))
             return self.form_invalid(form)
 
-        if cilia_number and Budget.objects.filter(cilia_number=cilia_number).exists():
-            form.add_error('xml_file', f'Este XML já foi importado (Orçamento #{cilia_number}).')
-            return self.form_invalid(form)
-
-        if not parsed_vehicle.plate:
-            tags = []
-            try:
-                tags = extract_tag_names(xml_bytes)
-            except Exception:
-                tags = []
-            details = 'XML sem placa do veículo.'
-            details = f'{details} {self._xml_debug_summary(xml_bytes)}'
-            if tags:
-                details = f'{details} Tags detectadas: {", ".join(tags)}'
-            form.add_error(None, details)
-            return self.form_invalid(form)
-
-        budget = None
-        for attempt in range(6):
-            try:
-                with transaction.atomic():
-                    customer = None
-                    vehicle = Vehicle.objects.filter(plate=parsed_vehicle.plate).select_related('customer').first()
-
-                    if parsed_customer.document_cpf_cnpj:
-                        customer, _ = Customer.objects.get_or_create(
-                            document_cpf_cnpj=parsed_customer.document_cpf_cnpj,
-                            defaults={
-                                'name': parsed_customer.name,
-                                'phone': parsed_customer.phone,
-                                'email': parsed_customer.email,
-                            },
-                        )
-                    else:
-                        if vehicle is not None:
-                            customer = vehicle.customer
-                        else:
-                            customer = Customer.objects.create(
-                                name=parsed_customer.name,
-                                document_cpf_cnpj=f'TEMP-{uuid4().hex[:12]}',
-                                phone=parsed_customer.phone,
-                                email=parsed_customer.email,
-                            )
-
-                    if vehicle is None:
-                        vehicle = Vehicle.objects.create(
-                            customer=customer,
-                            plate=parsed_vehicle.plate,
-                            brand=parsed_vehicle.brand,
-                            model=parsed_vehicle.model,
-                            color=parsed_vehicle.color,
-                            year=parsed_vehicle.year,
-                            image_url=parsed_vehicle.image_url,
-                        )
-                    else:
-                        if parsed_customer.document_cpf_cnpj and vehicle.customer_id != customer.id:
-                            vehicle.customer = customer
-                            vehicle.save(update_fields=['customer'])
-
-                    if cilia_number:
-                        budget = Budget.objects.filter(cilia_number=cilia_number).select_for_update().first()
-                        if budget:
-                            budget.customer = customer
-                            budget.vehicle = vehicle
-                            budget.cilia_version = cilia_version
-                            budget.pieces.all().delete()
-                        else:
-                            budget = Budget.objects.create(
-                                customer=customer,
-                                vehicle=vehicle,
-                                cilia_number=cilia_number,
-                                cilia_version=cilia_version,
-                            )
-                    else:
-                        budget = Budget.objects.create(customer=customer, vehicle=vehicle)
-                    budget.source_xml = xml_bytes.decode('utf-8', errors='replace')
-
-                    total = Decimal('0')
-                    for p in parsed_pieces:
-                        Piece.objects.create(
-                            budget=budget,
-                            name=p.name,
-                            cost_price=p.cost_price,
-                            provider_type=p.provider_type,
-                        )
-                        total += p.cost_price
-
-                    budget.total_amount = (parsed_total_amount if parsed_total_amount > 0 else total) + get_budget_extra_third_party_total(budget)
-                    budget.shop_parts_total = breakdown.get('shop_parts_total', Decimal('0'))
-                    budget.services_total = breakdown.get('services_total', Decimal('0'))
-                    budget.labor_total = breakdown.get('labor_total', Decimal('0'))
-                    budget.discount_total = breakdown.get('discount_total', Decimal('0'))
-                    budget.markup_total = breakdown.get('markup_total', Decimal('0'))
-                    budget.save(
-                        update_fields=[
-                            'customer',
-                            'vehicle',
-                            'cilia_number',
-                            'cilia_version',
-                            'total_amount',
-                            'shop_parts_total',
-                            'services_total',
-                            'labor_total',
-                            'discount_total',
-                            'markup_total',
-                            'source_xml',
-                        ]
-                    )
-                    if xml_created_at is not None:
-                        budget.created_at = xml_created_at
-                        budget.save(update_fields=['created_at'])
-                break
-            except OperationalError as exc:
-                if 'locked' not in str(exc).lower():
-                    raise
-                if attempt >= 5:
-                    form.add_error(None, 'Banco de dados ocupado (SQLite). Tente novamente em alguns segundos.')
-                    return self.form_invalid(form)
-                time.sleep(0.2 * (attempt + 1))
-
-        if not parsed_customer.document_cpf_cnpj:
+        if not result.parsed_customer_document:
             messages.warning(
                 self.request,
                 'XML sem CPF/CNPJ do cliente. Cadastro temporário criado (edite o cliente e informe o documento).',
             )
-        if budget is None:
-            form.add_error(None, 'Não foi possível concluir a importação. Tente novamente.')
-            return self.form_invalid(form)
 
-        messages.success(self.request, f'Orçamento importado com sucesso (ID: {budget.pk}).')
+        messages.success(self.request, f'Orçamento importado com sucesso (ID: {result.budget.pk}).')
         return super().form_valid(form)
 
     def get_success_url(self):
         return reverse('budgets:budget_list')
+
+
+class XMLImportJobListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+    model = XMLImportJob
+    template_name = 'budgets/import_job_list.html'
+    context_object_name = 'jobs'
+    paginate_by = 25
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def _status_filter(self):
+        status = (self.request.GET.get('status') or '').strip().upper()
+        valid_statuses = {choice[0] for choice in XMLImportJob.Status.choices}
+        if status in valid_statuses:
+            return status
+        return ''
+
+    def _provider_filter(self):
+        provider = (self.request.GET.get('provider') or '').strip().upper()
+        valid_providers = {choice[0] for choice in XMLImportJob.Provider.choices}
+        if provider in valid_providers:
+            return provider
+        return ''
+
+    def _search_term(self):
+        return (self.request.GET.get('search') or '').strip()
+
+    def get_queryset(self):
+        queryset = (
+            super()
+            .get_queryset()
+            .select_related('budget', 'budget__customer', 'budget__vehicle')
+        )
+
+        status = self._status_filter()
+        if status:
+            queryset = queryset.filter(status=status)
+
+        provider = self._provider_filter()
+        if provider:
+            queryset = queryset.filter(provider=provider)
+
+        search = self._search_term()
+        if search:
+            search_query = (
+                Q(file_name__icontains=search)
+                | Q(error_message__icontains=search)
+                | Q(budget__customer__name__icontains=search)
+                | Q(budget__vehicle__plate__icontains=search)
+            )
+            if search.isdigit():
+                search_query |= Q(cilia_number=int(search))
+            queryset = queryset.filter(search_query)
+
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        all_jobs = XMLImportJob.objects.all()
+        context['status_filter'] = self._status_filter()
+        context['provider_filter'] = self._provider_filter()
+        context['search_filter'] = self._search_term()
+        context['status_choices'] = XMLImportJob.Status.choices
+        context['provider_choices'] = XMLImportJob.Provider.choices
+        context['job_counts'] = {
+            'total': all_jobs.count(),
+            'pending': all_jobs.filter(status=XMLImportJob.Status.PENDING).count(),
+            'processing': all_jobs.filter(status=XMLImportJob.Status.PROCESSING).count(),
+            'imported': all_jobs.filter(status=XMLImportJob.Status.IMPORTED).count(),
+            'duplicate': all_jobs.filter(status=XMLImportJob.Status.DUPLICATE).count(),
+            'error': all_jobs.filter(status=XMLImportJob.Status.ERROR).count(),
+        }
+        query = self.request.GET.copy()
+        query.pop('page', None)
+        context['current_query_without_page'] = query.urlencode()
+        return context
+
+
+class XMLImportJobDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
+    model = XMLImportJob
+    template_name = 'budgets/import_job_detail.html'
+    context_object_name = 'job'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related('budget', 'budget__customer', 'budget__vehicle')
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        job = context['job']
+        context['can_reprocess'] = bool(
+            job.raw_xml and job.status in (XMLImportJob.Status.ERROR, XMLImportJob.Status.DUPLICATE)
+        )
+        context['can_delete_duplicate'] = job.status == XMLImportJob.Status.DUPLICATE
+        return context
+
+
+class XMLImportJobReprocessView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        job = (
+            XMLImportJob.objects
+            .select_related('budget', 'budget__customer', 'budget__vehicle')
+            .filter(pk=pk)
+            .first()
+        )
+        if job is None:
+            raise Http404('Importação não encontrada.')
+
+        if not (job.raw_xml or '').strip():
+            messages.error(request, 'Este job não possui o XML bruto salvo para reprocessamento.')
+            return redirect('budgets:import_job_detail', pk=job.pk)
+
+        try:
+            result = import_cilia_xml_bytes(
+                xml_bytes=job.raw_xml.encode('utf-8', errors='replace'),
+                job=job,
+            )
+        except CiliaImportDuplicateError as exc:
+            messages.error(request, f'Importação continua duplicada. {exc}')
+            return redirect('budgets:import_job_detail', pk=job.pk)
+        except CiliaImportValidationError as exc:
+            messages.error(request, f'Não foi possível reprocessar o XML. {exc}')
+            return redirect('budgets:import_job_detail', pk=job.pk)
+        except CiliaImportError as exc:
+            messages.error(request, f'Não foi possível reprocessar o XML. {exc}')
+            return redirect('budgets:import_job_detail', pk=job.pk)
+
+        if not result.parsed_customer_document:
+            messages.warning(
+                request,
+                'XML sem CPF/CNPJ do cliente. Cadastro temporário criado (edite o cliente e informe o documento).',
+            )
+
+        messages.success(
+            request,
+            f'Importação reprocessada com sucesso para o orçamento #{result.budget.display_number}.',
+        )
+        return redirect('budgets:import_job_detail', pk=job.pk)
+
+
+class XMLImportJobDeleteDuplicateView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def post(self, request, pk):
+        job = XMLImportJob.objects.filter(pk=pk).first()
+        if job is None:
+            raise Http404('Importação não encontrada.')
+
+        if job.status != XMLImportJob.Status.DUPLICATE:
+            messages.error(request, 'Somente registros duplicados podem ser excluídos por esta ação.')
+            return redirect('budgets:import_job_detail', pk=job.pk)
+
+        file_name = job.file_name
+        job.delete()
+        messages.success(request, f'Registro duplicado "{file_name}" excluído da listagem.')
+
+        next_url = (request.POST.get('next') or '').strip()
+        if next_url:
+            return redirect(next_url)
+        return redirect('budgets:import_job_list')

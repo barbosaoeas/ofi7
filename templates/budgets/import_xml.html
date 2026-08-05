@@ -6,9 +6,14 @@
   <div class='mx-auto max-w-2xl rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <h1 class='text-2xl font-semibold text-[#D4AF37]'>Importar XML (Cilia)</h1>
-      <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
-        Voltar
-      </a>
+      <div class='flex flex-wrap gap-3'>
+        <a href='{% url "budgets:import_job_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Monitorar importações
+        </a>
+        <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+          Voltar
+        </a>
+      </div>
     </div>
 
     <form method='post' enctype='multipart/form-data' class='mt-6 space-y-4'>

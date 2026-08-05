@@ -83,10 +83,45 @@
       {{ tasks_open_count }} abertas · {{ tasks_done_count }} concluídas{% if selected_collaborator %} · {{ selected_collaborator.name }}{% endif %}
     </div>
 
+    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-[#262626] bg-[#121212] p-4 no-print'>
+      <form method='post' action='{% url "budgets:workorder_task_bulk_assign" work_order.pk %}' class='flex flex-wrap items-end gap-3'>
+        {% csrf_token %}
+        <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+        <input type='hidden' name='task_ids' value='' data-bulk-task-ids='1' />
+        <div class='min-w-[150px]'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Selecionadas</div>
+          <div class='mt-1 text-sm text-[#F5F5F5]'><span data-bulk-selected-count='1'>0</span> tarefa(s)</div>
+        </div>
+        <div class='min-w-[240px]'>
+          <label class='block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_bulk_collaborator_id'>Atribuir para</label>
+          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' required>
+            <option value=''>Selecione</option>
+            {% for c in collaborators_operational %}
+              <option value='{{ c.id }}'>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class='flex flex-wrap gap-2'>
+          <button type='button' data-bulk-select-all='1' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+            Selecionar todas
+          </button>
+          <button type='button' data-bulk-clear='1' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+            Limpar
+          </button>
+          <button type='submit' data-bulk-submit='1' disabled class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-50'>
+            Aplicar nos marcados
+          </button>
+        </div>
+      </form>
+    </div>
+
     <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
       <table class='w-full text-left text-sm'>
         <thead class='bg-[#141414] text-[#D4AF37]'>
           <tr>
+            <th class='px-4 py-3 font-semibold bulk-select-col no-print'>
+              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+            </th>
             <th class='px-4 py-3 font-semibold'>Atividade</th>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Colaborador</th>
@@ -101,6 +136,15 @@
         <tbody class='divide-y divide-[#262626]'>
           {% for t in tasks_open %}
             <tr class='hover:bg-[#121212]' data-task-row='1'>
+              <td class='px-4 py-3 bulk-select-col no-print'>
+                <input
+                  type='checkbox'
+                  value='{{ t.id }}'
+                  data-bulk-task-checkbox='1'
+                  class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-40'
+                  {% if t.collaborator_id %}disabled{% endif %}
+                />
+              </td>
               <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
               <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
               <td class='px-4 py-3'>
@@ -166,16 +210,17 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='9'>Nenhuma tarefa cadastrada.</td>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='10'>Nenhuma tarefa cadastrada.</td>
             </tr>
           {% endfor %}
 
           {% if tasks_done_count and tasks_done_count > 0 %}
             <tr class='bg-[#141414]'>
-              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='9'>Concluídas ({{ tasks_done_count }})</td>
+              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='10'>Concluídas ({{ tasks_done_count }})</td>
             </tr>
             {% for t in tasks_done %}
               <tr class='hover:bg-[#121212] opacity-70'>
+                <td class='px-4 py-3 bulk-select-col no-print'></td>
                 <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
                 <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
                 <td class='px-4 py-3'>
@@ -470,6 +515,73 @@
             sessionStorage.setItem('os_focus_next_row', String(nextIndex));
           });
         });
+
+        var bulkPanel = document.querySelector("[data-bulk-panel='1']");
+        var bulkColumns = document.querySelectorAll('.bulk-select-col');
+        var bulkCheckboxes = document.querySelectorAll("[data-bulk-task-checkbox='1']");
+        var bulkCheckAll = document.querySelector("[data-bulk-check-all='1']");
+        var bulkSelectedCount = document.querySelector("[data-bulk-selected-count='1']");
+        var bulkTaskIdsInput = document.querySelector("[data-bulk-task-ids='1']");
+        var bulkSubmit = document.querySelector("[data-bulk-submit='1']");
+        var bulkSelectAll = document.querySelector("[data-bulk-select-all='1']");
+        var bulkClear = document.querySelector("[data-bulk-clear='1']");
+
+        function updateBulkState() {
+          var selected = [];
+          var enabledCheckboxes = [];
+          bulkCheckboxes.forEach(function (checkbox) {
+            if (!checkbox.disabled) enabledCheckboxes.push(checkbox);
+            if (checkbox.checked) selected.push(checkbox.value);
+          });
+          if (bulkSelectedCount) bulkSelectedCount.textContent = String(selected.length);
+          if (bulkTaskIdsInput) bulkTaskIdsInput.value = selected.join(',');
+          if (bulkSubmit) bulkSubmit.disabled = selected.length === 0;
+          if (bulkCheckAll) {
+            bulkCheckAll.checked = enabledCheckboxes.length > 0 && selected.length === enabledCheckboxes.length;
+            bulkCheckAll.disabled = enabledCheckboxes.length === 0;
+          }
+        }
+
+        bulkCheckboxes.forEach(function (checkbox) {
+          checkbox.addEventListener('change', updateBulkState);
+        });
+
+        if (bulkCheckAll) {
+          bulkCheckAll.addEventListener('change', function () {
+            bulkCheckboxes.forEach(function (checkbox) {
+              if (checkbox.disabled) return;
+              checkbox.checked = bulkCheckAll.checked;
+            });
+            updateBulkState();
+          });
+        }
+
+        if (bulkSelectAll) {
+          bulkSelectAll.addEventListener('click', function () {
+            bulkCheckboxes.forEach(function (checkbox) {
+              if (checkbox.disabled) return;
+              checkbox.checked = true;
+            });
+            updateBulkState();
+          });
+        }
+
+        if (bulkClear) {
+          bulkClear.addEventListener('click', function () {
+            bulkCheckboxes.forEach(function (checkbox) {
+              if (checkbox.disabled) return;
+              checkbox.checked = false;
+            });
+            if (bulkCheckAll) bulkCheckAll.checked = false;
+            updateBulkState();
+          });
+        }
+
+        bulkColumns.forEach(function (element) {
+          element.classList.remove('hidden');
+        });
+        if (bulkPanel) bulkPanel.classList.remove('hidden');
+        updateBulkState();
 
         var raw = sessionStorage.getItem('os_focus_next_row');
         if (!raw) return;

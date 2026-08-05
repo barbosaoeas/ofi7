@@ -226,19 +226,36 @@
         <div class='mt-3 text-sm text-[#A3A3A3]'>
           Entregue em {{ budget.delivered_at|date:'d/m/Y H:i' }}{% if budget.delivered_by %} por {{ budget.delivered_by.email }}{% endif %}.
         </div>
+        {% if budget.administrative_closure %}
+          <div class='mt-3 rounded-md border border-[#854d0e] bg-[#2b1d0e] px-3 py-2 text-xs text-[#fde68a]'>
+            Finalização administrativa registrada{% if budget.administrative_closed_at %} em {{ budget.administrative_closed_at|date:'d/m/Y H:i' }}{% endif %}{% if budget.administrative_closed_by %} por {{ budget.administrative_closed_by.email }}{% endif %}.
+            {% if budget.administrative_closure_reason %} Motivo: {{ budget.administrative_closure_reason }}{% endif %}
+          </div>
+        {% endif %}
       {% elif can_manage_delivery %}
         <div class='mt-4'>
-          <form method='post' action='{% url "budgets:budget_deliver" budget.pk %}'>
-            {% csrf_token %}
-            <button
-              type='submit'
-              class='inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition {% if delivery_status.can_deliver %}bg-[#D4AF37] text-[#111111] hover:brightness-110{% else %}cursor-not-allowed border border-[#3a3a3a] bg-[#1a1a1a] text-[#6b7280]{% endif %}'
-              {% if not delivery_status.can_deliver %}disabled{% endif %}
-              {% if delivery_status.can_deliver %}onclick='return confirm("Confirmar entrega do veículo?")'{% endif %}
-            >
-              Entregar veículo
-            </button>
-          </form>
+          <div class='flex flex-wrap gap-3'>
+            <form method='post' action='{% url "budgets:budget_deliver" budget.pk %}'>
+              {% csrf_token %}
+              <button
+                type='submit'
+                class='inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition {% if delivery_status.can_deliver %}bg-[#D4AF37] text-[#111111] hover:brightness-110{% else %}cursor-not-allowed border border-[#3a3a3a] bg-[#1a1a1a] text-[#6b7280]{% endif %}'
+                {% if not delivery_status.can_deliver %}disabled{% endif %}
+                {% if delivery_status.can_deliver %}onclick='return confirm("Confirmar entrega do veículo?")'{% endif %}
+              >
+                Entregar veículo
+              </button>
+            </form>
+            {% if administrative_closure_status.can_administratively_close %}
+              <button
+                type='button'
+                data-admin-close-open='1'
+                class='inline-flex items-center rounded-md border border-[#854d0e] bg-[#2b1d0e] px-4 py-2 text-sm font-medium text-[#fde68a] transition hover:border-[#D4AF37] hover:bg-[#33220d]'
+              >
+                Finalização administrativa
+              </button>
+            {% endif %}
+          </div>
         </div>
       {% endif %}
       {% if not budget.delivered_at and delivery_status.blockers %}
@@ -540,4 +557,143 @@
       </table>
     </div>
   </div>
+
+  {% if administrative_closure_status.can_administratively_close %}
+    <div id='admin-close-modal' class='fixed inset-0 z-50 {% if administrative_closure_open %}flex{% else %}hidden{% endif %} items-center justify-center bg-black/70 px-4 py-6'>
+      <div class='w-full max-w-2xl rounded-xl border border-[#854d0e] bg-[#111111] shadow-2xl'>
+        <div class='flex items-start justify-between gap-4 border-b border-[#2d2d2d] px-6 py-4'>
+          <div>
+            <h3 class='text-lg font-semibold text-[#fde68a]'>Finalização administrativa</h3>
+            <p class='mt-1 text-sm text-[#a3a3a3]'>Use apenas para orçamentos ativos ainda não iniciados no operacional.</p>
+          </div>
+          <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-[#404040] bg-[#1a1a1a] px-3 py-2 text-xs text-[#f5f5f5] hover:border-[#D4AF37]'>
+            Fechar
+          </button>
+        </div>
+        <form method='post' action='{% url "budgets:budget_administrative_close" budget.pk %}' class='space-y-5 px-6 py-5'>
+          {% csrf_token %}
+          <div class='rounded-lg border border-[#854d0e] bg-[#2b1d0e] px-4 py-3 text-sm text-[#fde68a]'>
+            Este fluxo é exclusivo para implantação e não gera comissão.
+          </div>
+          <div class='grid grid-cols-1 gap-4 md:grid-cols-2'>
+            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+              <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Data de entrega sugerida</div>
+              <div class='mt-2'>
+                <input
+                  name='delivery_date'
+                  type='date'
+                  value='{{ administrative_closure_form.delivery_date.value|default:administrative_closure_status.suggested_delivery_date|date:"Y-m-d" }}'
+                  class='w-full rounded-md border border-[#404040] bg-[#0d0d0d] px-3 py-2 text-sm text-[#f5f5f5]'
+                  required
+                />
+              </div>
+            </div>
+            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+              <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Financeiro</div>
+              <div class='mt-2 text-sm text-[#f5f5f5]'>
+                {% if administrative_closure_status.finance_registered %}
+                  Lançamentos financeiros já localizados para este orçamento.
+                {% else %}
+                  Ainda será necessário lançar o financeiro antes da conclusão definitiva.
+                {% endif %}
+              </div>
+              {% if administrative_closure_status.finance_open_amount > 0 %}
+                <div class='mt-2 text-xs text-[#fde68a]'>
+                  Em aberto: R$ {{ administrative_closure_status.finance_open_amount|floatformat:2 }}
+                </div>
+              {% endif %}
+              {% if administrative_closure_status.allows_future_insurer_receivables %}
+                <div class='mt-2 text-xs text-[#93c5fd]'>
+                  Recebimento futuro de seguradora permitido para esta finalização.
+                </div>
+              {% endif %}
+            </div>
+          </div>
+          <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+            <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Motivo da finalização administrativa</div>
+            <textarea
+              name='reason'
+              rows='4'
+              placeholder='Ex.: veículo já entregue antes da implantação do Kanban.'
+              class='mt-2 w-full rounded-md border border-[#404040] bg-[#0d0d0d] px-3 py-2 text-sm text-[#f5f5f5]'
+              required
+            >{{ administrative_closure_form.reason.value|default:'' }}</textarea>
+            <label class='mt-3 flex items-center gap-2 text-sm text-[#f5f5f5]'>
+              <input
+                type='checkbox'
+                name='confirm_no_commission'
+                value='1'
+                class='h-4 w-4 rounded border border-[#404040] bg-[#0d0d0d]'
+                {% if administrative_closure_form.confirm_no_commission.value %}checked{% endif %}
+              />
+              Confirmo que esta finalização administrativa não deve gerar comissão.
+            </label>
+          </div>
+          <div class='grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
+            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+              <div class='text-[#a3a3a3]'>Permissão</div>
+              <div class='mt-1 font-medium text-[#f5f5f5]'>Gerente</div>
+            </div>
+            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+              <div class='text-[#a3a3a3]'>Fluxo</div>
+              <div class='mt-1 font-medium text-[#f5f5f5]'>Implantação / exceção</div>
+            </div>
+            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
+              <div class='text-[#a3a3a3]'>Comissão</div>
+              <div class='mt-1 font-medium text-[#f5f5f5]'>Não gera</div>
+            </div>
+          </div>
+          <div class='flex flex-wrap justify-end gap-3 border-t border-[#2d2d2d] pt-4'>
+            <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-[#404040] bg-[#1a1a1a] px-4 py-2 text-sm text-[#f5f5f5] hover:border-[#D4AF37]'>
+              Cancelar
+            </button>
+            <button type='submit' class='rounded-md border border-[#854d0e] bg-[#2b1d0e] px-4 py-2 text-sm font-medium text-[#fde68a] hover:border-[#D4AF37] hover:bg-[#33220d]'>
+              Confirmar finalização administrativa
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var openButton = document.querySelector('[data-admin-close-open="1"]');
+        var modal = document.getElementById('admin-close-modal');
+        if (!openButton || !modal) {
+          return;
+        }
+
+        function closeModal() {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+        }
+
+        function openModal() {
+          modal.classList.remove('hidden');
+          modal.classList.add('flex');
+        }
+
+        openButton.addEventListener('click', openModal);
+
+        Array.prototype.forEach.call(
+          modal.querySelectorAll('[data-admin-close-dismiss="1"]'),
+          function (button) {
+            button.addEventListener('click', closeModal);
+          }
+        );
+
+        modal.addEventListener('click', function (event) {
+          if (event.target === modal) {
+            closeModal();
+          }
+        });
+
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape') {
+            closeModal();
+          }
+        });
+      })();
+    </script>
+  {% endif %}
 {% endblock %}

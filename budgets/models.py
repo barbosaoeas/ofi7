@@ -46,6 +46,16 @@ class Budget(models.Model):
         blank=True,
         related_name='delivered_budgets',
     )
+    administrative_closure = models.BooleanField(default=False)
+    administrative_closed_at = models.DateTimeField(null=True, blank=True)
+    administrative_closed_by = models.ForeignKey(
+        'users.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='administratively_closed_budgets',
+    )
+    administrative_closure_reason = models.TextField(blank=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     shop_parts_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     services_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -77,6 +87,44 @@ class Budget(models.Model):
     @property
     def is_delivered(self):
         return bool(self.delivered_at)
+
+
+class XMLImportJob(models.Model):
+    class Provider(models.TextChoices):
+        MANUAL = 'MANUAL', 'Manual'
+        DROPBOX = 'DROPBOX', 'Dropbox'
+
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pendente'
+        PROCESSING = 'PROCESSING', 'Processando'
+        IMPORTED = 'IMPORTED', 'Importado'
+        DUPLICATE = 'DUPLICATE', 'Duplicado'
+        ERROR = 'ERROR', 'Erro'
+
+    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.MANUAL)
+    external_file_id = models.CharField(max_length=255, blank=True)
+    file_name = models.CharField(max_length=255)
+    file_hash = models.CharField(max_length=64, blank=True)
+    cilia_number = models.PositiveIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    error_message = models.TextField(blank=True)
+    raw_xml = models.TextField(blank=True)
+    budget = models.ForeignKey(
+        Budget,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='xml_import_jobs',
+    )
+    detected_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-detected_at', '-id')
+
+    def __str__(self):
+        return f'{self.get_provider_display()} - {self.file_name}'
 
 
 class Piece(models.Model):

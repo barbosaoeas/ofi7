@@ -10,10 +10,40 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 '''
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def load_env_file(file_path):
+    path = Path(file_path)
+    if not path.exists() or not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[7:].strip()
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+load_env_file(BASE_DIR / '.env')
+extra_env_file = os.getenv('OFICINA_ENV_FILE', '').strip()
+if extra_env_file:
+    load_env_file(extra_env_file)
 
 
 # Quick-start development settings - unsuitable for production
@@ -124,6 +154,20 @@ AUTH_USER_MODEL = 'users.CustomUser'
 LOGIN_URL = 'users:login'
 LOGIN_REDIRECT_URL = 'core:dashboard'
 LOGOUT_REDIRECT_URL = 'core:public_index'
+
+
+def env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+DROPBOX_CILIA_ENABLED = env_bool('DROPBOX_CILIA_ENABLED', default=False)
+DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '').strip()
+DROPBOX_CILIA_INPUT_PATH = os.getenv('DROPBOX_CILIA_INPUT_PATH', '/xml-cilia/entrada').strip() or '/xml-cilia/entrada'
+DROPBOX_CILIA_PROCESSED_PATH = os.getenv('DROPBOX_CILIA_PROCESSED_PATH', '/xml-cilia/processados').strip() or '/xml-cilia/processados'
+DROPBOX_CILIA_ERROR_PATH = os.getenv('DROPBOX_CILIA_ERROR_PATH', '/xml-cilia/erro').strip() or '/xml-cilia/erro'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

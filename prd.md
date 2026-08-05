@@ -32,17 +32,33 @@ Precisão Financeira : Automatizar o cálculo de comissões por tarefa concluíd
 
 3. Requisitos Funcionais (RF)
 
-Status de Implementação (07/06/2026)
+Status de Implementação (25/07/2026)
 
-- [x] RF01 - Autenticação Customizada e Nível de Acesso
-- [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; bloqueio por peças da oficina + opção “seguir sem peças” OK; ajustes finos podem surgir)
+- [x] RF01 - Autenticação Customizada e Nível de Acesso (login por e-mail ativo; cards de acessos recentes com seleção rápida e foco direto na senha)
+- [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; aprovação com modal financeiro; controle de entrega, finalização administrativa e filtro entre aprovados e entregues; ajustes finos ainda podem surgir)
 - [x] RF03 - Importação de XML Cilia
-- [x] RF04 - Gestão de Peças (CRUD + compra/prev. chegada/chegada/atraso + relatório/ impressão)
-- [~] RF05 - Cadastro de Atividades e Comissões (Cadastro de Serviços + comissão por serviço e relatório; correlação automática por nome + seleção manual na OS)
-- [~] RF06 - Ordem de Serviço (O.S.) e Escalonamento Operacional (OS com agendamento por tarefa/colaborador/data/status; falta agendamento sequencial por hora e regras avançadas)
-- [~] RF07 - Kanban Produtivo Dinâmico (por data; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh)
-- [ ] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais)
-- [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard e demais relatórios pendentes)
+- [x] RF04 - Gestão de Peças (CRUD + compra/prev. chegada/chegada/atraso + relatório/impressão)
+- [~] RF05 - Cadastro de Atividades e Comissões (cadastro de serviços + comissão por serviço e relatório; correlação automática por nome + seleção manual na OS)
+- [~] RF06 - Ordem de Serviço (O.S.) e Escalonamento Operacional (OS com agendamento por tarefa/colaborador/data/status; seção de terceiros integrada à OS; checkbox Oficina e sincronização com tarefas internas; fechamento administrativo para implantação já disponível; falta agendamento sequencial por hora e algumas regras avançadas)
+- [~] RF07 - Kanban Produtivo Dinâmico (por data; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh; bloqueio por predecessora da mesma peça/item)
+- [~] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais) (modal de aprovação financeira implementado; entrega com validação financeira implementada; falta o modal final de quitação/previsão no ato da entrega)
+- [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard financeiro com filtros e links de pendência; demais relatórios e consolidações ainda pendentes)
+
+Incrementos recentes já entregues
+
+- Login com cards de acessos recentes no navegador, seleção automática do último usuário, avatar por iniciais e fluxo focado apenas na senha.
+- Mensagens globais padronizadas de sucesso, erro, aviso e informação centralizadas no template base.
+- Serviços de terceiros integrados à OS com fornecedor, status, checkbox Oficina e geração automática de despesa apenas para terceiros reais.
+- Serviços internos como lavagem e polimento sincronizados com as tarefas da OS, preservando programação e status.
+- Bloqueio operacional por predecessora no Kanban e na OS, respeitando a sequência Desmontagem > Funilaria > Preparação > Pintura > Montagem > Polimento > Prep Entrega.
+- Regras de predecessora refinadas por peça/item da própria OS, evitando bloquear toda a etapa por causa de outro item ainda pendente.
+- Botão Entregar veículo habilitado com validação operacional e financeira.
+- Entrega permitida com valores em aberto apenas para seguradoras com vencimento futuro; particular continua exigindo quitação.
+- Orçamentos entregues ocultos da listagem principal, com filtro dedicado entre Aprovados e Entregues.
+- Aviso de pendência financeira na entrega com link direto para o lançamento correspondente no financeiro.
+- Finalização administrativa disponível no detalhe do orçamento para gerente, apenas em orçamentos autorizados, com OS não iniciada e sem geração de comissão.
+- A finalização administrativa registra data/usuário da entrega, motivo da ação, auditoria do fechamento e encerra a OS para apoiar a implantação de veículos já entregues.
+- A finalização administrativa reutiliza a mesma coerência financeira da entrega: exige financeiro já registrado, exceto recebíveis futuros de seguradora compatíveis com a data de entrega.
 
 RF01 - Autenticação Customizada e Nível de Acesso
 
@@ -52,6 +68,8 @@ Cadastro público inicial de usuários com direcionamento para a tela de login.
 
 Níveis de acesso baseados em grupos/funções nativas do Django: Gerente, Financeiro, Orçamentista, Operacional.
 
+A tela de login deve exibir cards de acessos recentes salvos no navegador, permitindo selecionar rapidamente o usuário e informar apenas a senha.
+
 RF02 - Agenda e Gestão de Orçamentos
 
 Agendamento com status: Aguardando Resposta , Autorizada , Não Aprovada .
@@ -60,7 +78,15 @@ Caso Não Aprovada , exigir obrigatoriamente a justificativa (Ex: Valor Alto, Pr
 
 Caso Autorizada , exigir: Data de Entrada do Veículo e Data de Início do Reparo.
 
-Se houver peças mapeadas que dependem de fornecedor externo, o início do reparo fica condicionado/bloqueado no sistema até a marcação de chegada das peças.
+Ao aprovar um orçamento sem lançamento financeiro existente, o sistema deve abrir um modal para configurar entrada, saldo, franquia e previsão de recebimento antes de concluir a autorização.
+
+O orçamento deve permitir marcação de entrega do veículo, registrando usuário e data de entrega e retirando o item da listagem padrão de aprovados.
+
+A listagem principal de orçamentos deve priorizar os aprovados ainda não entregues e oferecer filtro separado para consultar os já entregues.
+
+Para apoiar implantação de veículos já entregues, o detalhe do orçamento deve permitir finalização administrativa exclusiva para gerente, disponível apenas quando o orçamento estiver autorizado, com OS existente e ainda não iniciada.
+
+A finalização administrativa deve registrar data de entrega, motivo, usuário responsável e marcar o orçamento como entregue sem passar pelo Kanban e sem gerar comissão.
 
 RF03 - Importação de XML Cilia
 
@@ -98,6 +124,14 @@ Agendamento sequencial de execução (Data/Hora de início prevista para cada et
 
 Geração automática de cards no Kanban assim que a data programada for atingida ou a etapa anterior for finalizada.
 
+A tela da OS deve conter uma seção de serviços de terceiros com fornecedor, data programada, status e ação de finalização.
+
+Serviços marcados com o checkbox Oficina devem ser tratados como atividades internas, subindo para as tarefas da OS e não gerando despesa automática de terceiros.
+
+Serviços efetivamente terceirizados devem gerar despesa no financeiro ao serem concluídos.
+
+Deve existir um fluxo excepcional de finalização administrativa para implantação, capaz de encerrar a OS sem execução operacional quando o veículo já tiver sido entregue anteriormente.
+
 RF07 - Kanban Produtivo Dinâmico
 
 Colunas fixas da esquerda para a direita: Patio , Desmontagem , Funilaria , Preparação , Pintura , Montagem , Polimento , Prep Entrega .
@@ -110,6 +144,10 @@ Regra de Bloqueio : O sistema deve impedir que o funcionário clique em "Iniciar
 
 Ao clicar em finalizar a tarefa, o sistema calcula e provisiona a comissão do respectivo colaborador automaticamente.
 
+O bloqueio de início deve respeitar a predecessora da mesma peça/item da OS, sem travar toda a etapa por pendências de outro item.
+
+O Pátio deve exibir apenas OS ainda ativas, removendo ordens já entregues ou integralmente concluídas.
+
 RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais)
 
 Ato de Aprovação do Orçamento : Disparar Modal de Entrada Financeira.
@@ -119,6 +157,10 @@ Se Particular : Perguntar se haverá entrada em dinheiro/cartão. Registrar entr
 Se Seguradora : Perguntar se há Franquia a receber do cliente. Em caso positivo, registrar valor e data. O saldo restante (pago pela seguradora) é provisionado como entrada futura com base na data estimada de faturamento/recebimento da companhia.
 
 Controle de Fluxo de Caixa Básico : Lançamento manual de Entradas e Saídas categorizadas por Tipo de Despesa ( Operacional , Custo Fixo , Custo Variável ).
+
+Na entrega do veículo, o sistema deve bloquear pendências financeiras de particular e permitir recebíveis futuros de seguradora apenas quando houver vencimento posterior à entrega.
+
+Na finalização administrativa, o sistema deve reaproveitar essa mesma regra financeira antes de concluir a entrega e o encerramento da OS.
 
 RF09 - Dashboard e Relatórios
 
@@ -517,6 +559,12 @@ Risco : O colaborador esquecer uma tarefa rodando eternamente no "Play" ao ir em
 Mitigação : Implementar uma rotina simples na view do dashboard do gestor para forçar o "Pause" ou encerramento manual de tarefas ativas por parte da gerência.
 
 12. Lista de Tarefas (Backlog Separado em Sprints)
+
+Atualização do backlog em 25/07/2026
+
+- Entregue: mensagens globais no base, fluxo de terceiros/oficina na OS, sincronização de lavagem/polimento, bloqueios por predecessora, botão de entrega, filtro de entregues, melhoria da tela de login com cards de acesso recente e finalização administrativa com auditoria.
+- Em andamento: acabamento do fluxo de entrega com modal financeiro final e consolidação ponta a ponta das regras novas.
+- Observação: o backlog detalhado abaixo foi mantido como histórico do planejamento original do produto.
 
 Sprint 1: Fundação, Autenticação Customizada e Design System Base
 

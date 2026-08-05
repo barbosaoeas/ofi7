@@ -1,7 +1,11 @@
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal
+from io import StringIO
+from unittest.mock import Mock, patch
 
+from django.core.management import call_command
 from django.test import TestCase
+from django.test.utils import override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
@@ -9,10 +13,12 @@ from django.utils import timezone
 from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, XMLImportJob
 from .cilia_parser import extract_service_lines
 from .forms import ThirdPartyServiceForm
-from .views import budget_delivery_status, capped_work_delta_seconds, get_visible_third_party_services, parse_xml_created_at
+from .services.cilia_import_service import CiliaImportDuplicateError, import_cilia_xml_bytes
+from .services.dropbox_service import DropboxEntry, DropboxService
+from .views import budget_administrative_closure_status, budget_delivery_status, capped_work_delta_seconds, get_visible_third_party_services, parse_xml_created_at
 
 
 class SmokePermissionsTests(TestCase):
@@ -39,6 +45,7 @@ class SmokePermissionsTests(TestCase):
             reverse('core:system_settings'),
             reverse('budgets:budget_list'),
             reverse('budgets:budget_open_list'),
+            reverse('budgets:import_job_list'),
             reverse('budgets:finance_dashboard'),
             reverse('budgets:finance_insights'),
             reverse('budgets:workorder_list'),
@@ -62,6 +69,7 @@ class SmokePermissionsTests(TestCase):
         allowed = [
             'budgets:budget_list',
             'budgets:budget_open_list',
+            'budgets:import_job_list',
             'budgets:kanban_today',
             'budgets:vehicle_entry_kanban',
             'budgets:commission_open_list',
@@ -95,6 +103,7 @@ class SmokePermissionsTests(TestCase):
         blocked = [
             'budgets:budget_list',
             'budgets:budget_open_list',
+            'budgets:import_job_list',
             'budgets:finance_dashboard',
             'budgets:finance_insights',
             'budgets:workorder_list',
@@ -122,6 +131,7 @@ class SmokePermissionsTests(TestCase):
             'core:dashboard',
             'budgets:budget_list',
             'budgets:budget_open_list',
+            'budgets:import_job_list',
             'budgets:finance_dashboard',
             'budgets:finance_insights',
             'budgets:workorder_list',
@@ -253,6 +263,466 @@ class CiliaParserTests(TestCase):
         self.assertEqual(lines[0]['pintura_hours'], Decimal('3.50'))
         self.assertEqual(lines[0]['preparacao_hours'], Decimal('3.50'))
         self.assertFalse(lines[0]['is_third_party'])
+
+
+class CiliaImportServiceTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='import-manager@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+
+    def _build_cilia_xml(self, number='123456', plate='ABC1D23', document='12345678901'):
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<orcamento>
+  <numero_orcamento>{number}</numero_orcamento>
+  <versao_orcamento>1</versao_orcamento>
+  <data_orcamento>2026-07-24 10:30:00</data_orcamento>
+  <cliente>
+    <nome>Cliente Importado</nome>
+    <cpf>{document}</cpf>
+    <telefone>99999999</telefone>
+    <email>cliente@importado.com</email>
+  </cliente>
+  <veiculo>
+    <placa>{plate}</placa>
+    <marca>Fiat</marca>
+    <modelo>Argo</modelo>
+    <cor>Branco</cor>
+    <ano>2024</ano>
+  </veiculo>
+  <itens_orcamento>
+    <item>
+      <tipo_item>Peca</tipo_item>
+      <tipo_peca>Genuina</tipo_peca>
+      <nome>PORTA DIANTEIRA</nome>
+      <troca>true</troca>
+      <preco>500.00</preco>
+      <quantidade>1</quantidade>
+    </item>
+  </itens_orcamento>
+</orcamento>
+""".encode('utf-8')
+
+    def test_import_cilia_service_creates_budget_and_marks_job_imported(self):
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.MANUAL,
+            file_name='orcamento-123456.xml',
+        )
+
+        result = import_cilia_xml_bytes(
+            xml_bytes=self._build_cilia_xml(),
+            job=job,
+        )
+
+        job.refresh_from_db()
+        self.assertEqual(result.budget.cilia_number, 123456)
+        self.assertEqual(result.budget.total_amount, Decimal('500.00'))
+        self.assertEqual(result.budget.vehicle.plate, 'ABC1D23')
+        self.assertEqual(result.budget.customer.document_cpf_cnpj, '12345678901')
+        self.assertEqual(Piece.objects.filter(budget=result.budget).count(), 1)
+        self.assertEqual(job.status, XMLImportJob.Status.IMPORTED)
+        self.assertEqual(job.budget_id, result.budget.id)
+        self.assertEqual(job.cilia_number, 123456)
+        self.assertTrue(bool(job.file_hash))
+        self.assertIsNotNone(job.processed_at)
+
+    def test_import_cilia_service_marks_duplicate_job(self):
+        customer = Customer.objects.create(name='Cliente Dup', document_cpf_cnpj='55555555555')
+        vehicle = Vehicle.objects.create(customer=customer, plate='XYZ1A23', brand='Fiat', model='Mobi')
+        Budget.objects.create(
+            customer=customer,
+            vehicle=vehicle,
+            cilia_number=123456,
+        )
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.MANUAL,
+            file_name='orcamento-duplicado.xml',
+        )
+
+        with self.assertRaises(CiliaImportDuplicateError):
+            import_cilia_xml_bytes(
+                xml_bytes=self._build_cilia_xml(number='123456', plate='XYZ1A23', document='55555555555'),
+                job=job,
+            )
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, XMLImportJob.Status.DUPLICATE)
+        self.assertEqual(job.cilia_number, 123456)
+        self.assertIn('já foi importado', job.error_message)
+
+    def test_manual_import_view_records_manual_job(self):
+        self.client.login(email=self.manager.email, password=self.password)
+
+        response = self.client.post(
+            reverse('budgets:import_xml'),
+            {
+                'xml_file': SimpleUploadedFile(
+                    'orcamento-manual.xml',
+                    self._build_cilia_xml(number='654321', plate='QWE1R23', document='98765432100'),
+                    content_type='application/xml',
+                )
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        job = XMLImportJob.objects.get(file_name='orcamento-manual.xml')
+        self.assertEqual(job.provider, XMLImportJob.Provider.MANUAL)
+        self.assertEqual(job.status, XMLImportJob.Status.IMPORTED)
+        self.assertEqual(job.cilia_number, 654321)
+        self.assertIsNotNone(job.budget)
+        self.assertTrue(Budget.objects.filter(cilia_number=654321).exists())
+
+
+@override_settings(
+    DROPBOX_CILIA_ENABLED=True,
+    DROPBOX_ACCESS_TOKEN='test-token',
+    DROPBOX_CILIA_INPUT_PATH='/xml-cilia/entrada',
+    DROPBOX_CILIA_PROCESSED_PATH='/xml-cilia/processados',
+    DROPBOX_CILIA_ERROR_PATH='/xml-cilia/erro',
+)
+class DropboxServiceTests(TestCase):
+    def test_list_input_xml_files_filters_only_xml(self):
+        first_response = Mock()
+        first_response.ok = True
+        first_response.json.return_value = {
+            'entries': [
+                {
+                    '.tag': 'file',
+                    'id': 'id:xml-1',
+                    'name': 'orcamento-1.xml',
+                    'path_display': '/xml-cilia/entrada/orcamento-1.xml',
+                    'path_lower': '/xml-cilia/entrada/orcamento-1.xml',
+                    'size': 120,
+                },
+                {
+                    '.tag': 'file',
+                    'id': 'id:txt-1',
+                    'name': 'anotacao.txt',
+                    'path_display': '/xml-cilia/entrada/anotacao.txt',
+                    'path_lower': '/xml-cilia/entrada/anotacao.txt',
+                    'size': 40,
+                },
+            ],
+            'cursor': 'cursor-1',
+            'has_more': True,
+        }
+        second_response = Mock()
+        second_response.ok = True
+        second_response.json.return_value = {
+            'entries': [
+                {
+                    '.tag': 'file',
+                    'id': 'id:xml-2',
+                    'name': 'orcamento-2.XML',
+                    'path_display': '/xml-cilia/entrada/orcamento-2.XML',
+                    'path_lower': '/xml-cilia/entrada/orcamento-2.xml',
+                    'size': 220,
+                }
+            ],
+            'cursor': 'cursor-2',
+            'has_more': False,
+        }
+        session = Mock()
+        session.post.side_effect = [first_response, second_response]
+
+        service = DropboxService(session=session)
+        files = service.list_input_xml_files()
+
+        self.assertEqual([entry.name for entry in files], ['orcamento-1.xml', 'orcamento-2.XML'])
+        self.assertEqual(files[0].id, 'id:xml-1')
+        self.assertEqual(files[1].path_display, '/xml-cilia/entrada/orcamento-2.XML')
+
+
+class FakeDropboxService:
+    def __init__(self, entries, downloads):
+        self.entries = entries
+        self.downloads = downloads
+        self.processed_path = '/xml-cilia/processados'
+        self.error_path = '/xml-cilia/erro'
+        self.moves = []
+
+    def list_input_xml_files(self):
+        return self.entries
+
+    def download_file(self, path):
+        return self.downloads[path]
+
+    def move_file(self, from_path, to_path):
+        self.moves.append((from_path, to_path))
+        return {'metadata': {'path_display': to_path}}
+
+    def build_destination_path(self, base_path, file_name):
+        return f'{base_path}/{file_name}'
+
+
+class DropboxSyncCommandTests(TestCase):
+    def _build_cilia_xml(self, number='777001', plate='SYN1C23', document='12312312312'):
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<orcamento>
+  <numero_orcamento>{number}</numero_orcamento>
+  <versao_orcamento>1</versao_orcamento>
+  <cliente>
+    <nome>Cliente Sync</nome>
+    <cpf>{document}</cpf>
+  </cliente>
+  <veiculo>
+    <placa>{plate}</placa>
+    <marca>VW</marca>
+    <modelo>Polo</modelo>
+  </veiculo>
+  <itens_orcamento>
+    <item>
+      <tipo_item>Peca</tipo_item>
+      <tipo_peca>Genuina</tipo_peca>
+      <nome>PARA-CHOQUE</nome>
+      <troca>true</troca>
+      <preco>350.00</preco>
+      <quantidade>1</quantidade>
+    </item>
+  </itens_orcamento>
+</orcamento>
+""".encode('utf-8')
+
+    def test_sync_cilia_dropbox_imports_and_moves_to_processed(self):
+        entry = DropboxEntry(
+            id='id:dropbox-1',
+            name='orcamento-sync.xml',
+            path_display='/xml-cilia/entrada/orcamento-sync.xml',
+            path_lower='/xml-cilia/entrada/orcamento-sync.xml',
+            size=100,
+        )
+        fake_service = FakeDropboxService(
+            [entry],
+            {entry.path_display: self._build_cilia_xml(number='777001', plate='SYN1C23', document='12312312312')},
+        )
+
+        output = StringIO()
+        with patch('budgets.management.commands.sync_cilia_dropbox.DropboxService', return_value=fake_service):
+            call_command('sync_cilia_dropbox', stdout=output)
+
+        job = XMLImportJob.objects.get(external_file_id='id:dropbox-1')
+        self.assertEqual(job.provider, XMLImportJob.Provider.DROPBOX)
+        self.assertEqual(job.status, XMLImportJob.Status.IMPORTED)
+        self.assertEqual(job.cilia_number, 777001)
+        self.assertTrue(Budget.objects.filter(cilia_number=777001).exists())
+        self.assertEqual(
+            fake_service.moves,
+            [('/xml-cilia/entrada/orcamento-sync.xml', '/xml-cilia/processados/orcamento-sync.xml')],
+        )
+
+    def test_sync_cilia_dropbox_moves_duplicate_to_error(self):
+        customer = Customer.objects.create(name='Cliente Duplicado', document_cpf_cnpj='99999999999')
+        vehicle = Vehicle.objects.create(customer=customer, plate='DUP1C23', brand='VW', model='Polo')
+        Budget.objects.create(customer=customer, vehicle=vehicle, cilia_number=888001)
+
+        entry = DropboxEntry(
+            id='id:dropbox-dup',
+            name='orcamento-duplicado.xml',
+            path_display='/xml-cilia/entrada/orcamento-duplicado.xml',
+            path_lower='/xml-cilia/entrada/orcamento-duplicado.xml',
+            size=100,
+        )
+        fake_service = FakeDropboxService(
+            [entry],
+            {entry.path_display: self._build_cilia_xml(number='888001', plate='DUP1C23', document='99999999999')},
+        )
+
+        output = StringIO()
+        with patch('budgets.management.commands.sync_cilia_dropbox.DropboxService', return_value=fake_service):
+            call_command('sync_cilia_dropbox', stdout=output)
+
+        job = XMLImportJob.objects.get(external_file_id='id:dropbox-dup')
+        self.assertEqual(job.status, XMLImportJob.Status.DUPLICATE)
+        self.assertEqual(job.cilia_number, 888001)
+        self.assertIn('já foi importado', job.error_message)
+        self.assertEqual(
+            fake_service.moves,
+            [('/xml-cilia/entrada/orcamento-duplicado.xml', '/xml-cilia/erro/orcamento-duplicado.xml')],
+        )
+
+
+class XMLImportJobViewsTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='manager-import-job@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.estimator = CustomUser.objects.create_user(
+            email='estimator-import-job@test.com',
+            password=self.password,
+            role=CustomUser.Role.ESTIMATOR,
+        )
+        self.operational = CustomUser.objects.create_user(
+            email='operational-import-job@test.com',
+            password=self.password,
+            role=CustomUser.Role.OPERATIONAL,
+        )
+        self.customer = Customer.objects.create(name='Cliente Import Job', document_cpf_cnpj='45454545454')
+        self.vehicle = Vehicle.objects.create(customer=self.customer, plate='IMP1J23', brand='Ford', model='Ka')
+        self.budget = Budget.objects.create(customer=self.customer, vehicle=self.vehicle, cilia_number=990001)
+
+    def _build_cilia_xml(self, number='990123', plate='IMP9J23', document='12121212121'):
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<orcamento>
+  <numero_orcamento>{number}</numero_orcamento>
+  <versao_orcamento>1</versao_orcamento>
+  <cliente>
+    <nome>Cliente Reprocessado</nome>
+    <cpf>{document}</cpf>
+    <telefone>88888888</telefone>
+    <email>cliente@reprocessado.com</email>
+  </cliente>
+  <veiculo>
+    <placa>{plate}</placa>
+    <marca>Chevrolet</marca>
+    <modelo>Onix</modelo>
+  </veiculo>
+  <itens_orcamento>
+    <item>
+      <tipo_item>Peca</tipo_item>
+      <tipo_peca>Genuina</tipo_peca>
+      <nome>CAPO</nome>
+      <troca>true</troca>
+      <preco>650.00</preco>
+      <quantidade>1</quantidade>
+    </item>
+  </itens_orcamento>
+</orcamento>
+""".encode('utf-8')
+
+    def test_import_job_list_filters_by_status(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='erro.xml',
+            status=XMLImportJob.Status.ERROR,
+            error_message='Falha no XML',
+        )
+        XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.MANUAL,
+            file_name='sucesso.xml',
+            status=XMLImportJob.Status.IMPORTED,
+            budget=self.budget,
+            cilia_number=self.budget.cilia_number,
+        )
+
+        response = self.client.get(reverse('budgets:import_job_list') + '?status=ERROR')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'erro.xml')
+        self.assertNotContains(response, 'sucesso.xml')
+        self.assertContains(response, 'Com erro')
+
+    def test_import_job_detail_shows_reprocess_button(self):
+        self.client.login(email=self.estimator.email, password=self.password)
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='duplicado.xml',
+            status=XMLImportJob.Status.DUPLICATE,
+            error_message='Este XML já foi importado.',
+            raw_xml=self._build_cilia_xml(number='990222', plate='IMP2J23', document='45454545454').decode('utf-8'),
+        )
+
+        response = self.client.get(reverse('budgets:import_job_detail', kwargs={'pk': job.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Reprocessar importação')
+        self.assertContains(response, 'Excluir duplicado')
+        self.assertContains(response, 'Este XML já foi importado.')
+        self.assertContains(response, 'duplicado.xml')
+
+    def test_import_job_reprocess_imports_job_successfully(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='reprocessar.xml',
+            status=XMLImportJob.Status.ERROR,
+            error_message='Falha anterior',
+            raw_xml=self._build_cilia_xml(number='990333', plate='IMP3J23', document='56565656565').decode('utf-8'),
+        )
+
+        response = self.client.post(
+            reverse('budgets:import_job_reprocess', kwargs={'pk': job.pk}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, XMLImportJob.Status.IMPORTED)
+        self.assertTrue(Budget.objects.filter(cilia_number=990333).exists())
+        self.assertContains(response, 'Importação reprocessada com sucesso')
+
+    def test_import_job_reprocess_without_raw_xml_keeps_job_unchanged(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='sem-xml.xml',
+            status=XMLImportJob.Status.ERROR,
+            error_message='Sem XML salvo',
+        )
+
+        response = self.client.post(
+            reverse('budgets:import_job_reprocess', kwargs={'pk': job.pk}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        job.refresh_from_db()
+        self.assertEqual(job.status, XMLImportJob.Status.ERROR)
+        self.assertContains(response, 'não possui o XML bruto salvo')
+
+    def test_import_job_delete_duplicate_removes_only_duplicate_record(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='duplicado-excluir.xml',
+            status=XMLImportJob.Status.DUPLICATE,
+            error_message='Este XML já foi importado.',
+            raw_xml=self._build_cilia_xml(number='990444', plate='IMP4J23', document='67676767676').decode('utf-8'),
+        )
+
+        response = self.client.post(
+            reverse('budgets:import_job_delete_duplicate', kwargs={'pk': job.pk}),
+            {'next': reverse('budgets:import_job_list')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(XMLImportJob.objects.filter(pk=job.pk).exists())
+        self.assertContains(response, 'Registro duplicado')
+
+    def test_import_job_delete_duplicate_blocks_non_duplicate_job(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        job = XMLImportJob.objects.create(
+            provider=XMLImportJob.Provider.DROPBOX,
+            file_name='importado.xml',
+            status=XMLImportJob.Status.IMPORTED,
+            budget=self.budget,
+            cilia_number=self.budget.cilia_number,
+        )
+
+        response = self.client.post(
+            reverse('budgets:import_job_delete_duplicate', kwargs={'pk': job.pk}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(XMLImportJob.objects.filter(pk=job.pk).exists())
+        self.assertContains(response, 'Somente registros duplicados podem ser excluídos')
+
+    def test_import_job_list_blocks_operational_user(self):
+        self.client.login(email=self.operational.email, password=self.password)
+
+        response = self.client.get(reverse('budgets:import_job_list'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers['Location'].endswith(reverse('core:dashboard')))
 
 
 class PendingPartsBlockTests(TestCase):
@@ -1072,6 +1542,158 @@ class ThirdPartyWorkOrderFlowTests(TestCase):
         self.assertFalse(visible[0].effective_is_shop_service)
 
 
+class WorkOrderBulkAssignTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='workorder-bulk@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.customer = Customer.objects.create(name='Cliente Lote', document_cpf_cnpj='67676767676')
+        self.vehicle = Vehicle.objects.create(
+            customer=self.customer,
+            plate='BUL1A23',
+            model='Argo',
+            brand='Fiat',
+        )
+        self.budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1800.00'),
+        )
+        self.work_order = WorkOrder.objects.create(budget=self.budget)
+        self.other_work_order = WorkOrder.objects.create(
+            budget=Budget.objects.create(
+                customer=self.customer,
+                vehicle=Vehicle.objects.create(
+                    customer=self.customer,
+                    plate='BUL9Z99',
+                    model='Uno',
+                    brand='Fiat',
+                ),
+                status=Budget.Status.AUTHORIZED,
+                total_amount=Decimal('900.00'),
+            )
+        )
+        self.collaborator_a = Collaborator.objects.create(
+            name='Leonardo',
+            email='leonardo-bulk@test.com',
+            function=Collaborator.Function.OPERATIONAL,
+        )
+        self.collaborator_b = Collaborator.objects.create(
+            name='Gustavo',
+            email='gustavo-bulk@test.com',
+            function=Collaborator.Function.OPERATIONAL,
+        )
+        self.task_one = WorkOrderTask.objects.create(
+            work_order=self.work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA DIANTEIRA',
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+        self.task_two = WorkOrderTask.objects.create(
+            work_order=self.work_order,
+            activity=WorkOrderTask.Activity.PREPARATION,
+            description='LATERAL ESQ',
+            status=WorkOrderTask.Status.PAUSED,
+        )
+        self.task_done = WorkOrderTask.objects.create(
+            work_order=self.work_order,
+            activity=WorkOrderTask.Activity.PAINTING,
+            description='PARALAMA',
+            status=WorkOrderTask.Status.DONE,
+        )
+        self.other_task = WorkOrderTask.objects.create(
+            work_order=self.other_work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='CAPO',
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+
+    def test_workorder_detail_shows_bulk_assignment_controls(self):
+        self.client.login(email=self.manager.email, password=self.password)
+
+        response = self.client.get(reverse('budgets:workorder_detail', kwargs={'pk': self.work_order.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Aplicar nos marcados')
+        self.assertContains(response, 'Selecionar todas')
+
+    def test_workorder_detail_disables_checkbox_for_task_with_collaborator(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        self.task_two.collaborator = self.collaborator_a
+        self.task_two.save(update_fields=['collaborator'])
+
+        response = self.client.get(reverse('budgets:workorder_detail', kwargs={'pk': self.work_order.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode('utf-8')
+        self.assertIn(f"value='{self.task_two.id}'", content)
+        self.assertIn("data-bulk-task-checkbox='1'", content)
+        self.assertIn('disabled', content)
+
+    def test_bulk_assign_updates_selected_open_tasks(self):
+        self.client.login(email=self.manager.email, password=self.password)
+
+        response = self.client.post(
+            reverse('budgets:workorder_task_bulk_assign', kwargs={'pk': self.work_order.pk}),
+            {
+                'bulk_collaborator_id': str(self.collaborator_a.id),
+                'task_ids': f'{self.task_one.id},{self.task_two.id}',
+                'next': reverse('budgets:workorder_detail', kwargs={'pk': self.work_order.pk}),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.task_one.refresh_from_db()
+        self.task_two.refresh_from_db()
+        self.assertEqual(self.task_one.collaborator_id, self.collaborator_a.id)
+        self.assertEqual(self.task_two.collaborator_id, self.collaborator_a.id)
+        self.assertContains(response, '2 tarefa(s) atualizada(s)')
+
+    def test_bulk_assign_ignores_done_tasks_and_other_work_orders(self):
+        self.client.login(email=self.manager.email, password=self.password)
+
+        response = self.client.post(
+            reverse('budgets:workorder_task_bulk_assign', kwargs={'pk': self.work_order.pk}),
+            {
+                'bulk_collaborator_id': str(self.collaborator_b.id),
+                'task_ids': f'{self.task_one.id},{self.task_done.id},{self.other_task.id}',
+                'next': reverse('budgets:workorder_detail', kwargs={'pk': self.work_order.pk}),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.task_one.refresh_from_db()
+        self.task_done.refresh_from_db()
+        self.other_task.refresh_from_db()
+        self.assertEqual(self.task_one.collaborator_id, self.collaborator_b.id)
+        self.assertIsNone(self.task_done.collaborator_id)
+        self.assertIsNone(self.other_task.collaborator_id)
+        self.assertContains(response, '2 tarefa(s) foram ignoradas')
+
+    def test_bulk_assign_requires_valid_operational_collaborator(self):
+        self.client.login(email=self.manager.email, password=self.password)
+
+        response = self.client.post(
+            reverse('budgets:workorder_task_bulk_assign', kwargs={'pk': self.work_order.pk}),
+            {
+                'bulk_collaborator_id': '999999',
+                'task_ids': str(self.task_one.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.task_one.refresh_from_db()
+        self.assertIsNone(self.task_one.collaborator_id)
+        self.assertContains(response, 'Selecione um colaborador operacional válido')
+
+
 class ThirdPartyServiceFormTests(TestCase):
     def test_clean_amount_accepts_dot_decimal(self):
         form = ThirdPartyServiceForm(
@@ -1397,6 +2019,11 @@ class BudgetDetailCompletionUiTests(TestCase):
             password=self.password,
             role=CustomUser.Role.MANAGER,
         )
+        self.finance = CustomUser.objects.create_user(
+            email='budget-detail-ui-finance@test.com',
+            password=self.password,
+            role=CustomUser.Role.FINANCE,
+        )
         self.customer = Customer.objects.create(name='Cliente UI Entrega', document_cpf_cnpj='777')
         self.vehicle = Vehicle.objects.create(
             customer=self.customer,
@@ -1543,6 +2170,86 @@ class BudgetDetailCompletionUiTests(TestCase):
         self.assertContains(response, 'Entregar veículo')
         self.assertContains(response, 'Recebimento da seguradora previsto para depois da entrega.')
 
+    def test_budget_detail_shows_administrative_closure_button_for_manager_when_os_not_started(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1500.00'),
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA ESQ',
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+        CashMovement.objects.create(
+            budget=budget,
+            customer=self.customer,
+            direction=CashMovement.Direction.IN,
+            source=CashMovement.Source.PARTICULAR,
+            amount=Decimal('1500.00'),
+            due_date=date(2026, 6, 30),
+            is_realized=True,
+        )
+
+        response = self.client.get(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Finalização administrativa')
+        self.assertContains(response, 'Use apenas para orçamentos ativos ainda não iniciados no operacional.')
+        status = budget_administrative_closure_status(budget, self.manager)
+        self.assertTrue(status['can_administratively_close'])
+
+    def test_budget_detail_hides_administrative_closure_button_for_finance(self):
+        self.client.login(email=self.finance.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1500.00'),
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA ESQ',
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+
+        response = self.client.get(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Finalização administrativa')
+        status = budget_administrative_closure_status(budget, self.finance)
+        self.assertFalse(status['can_administratively_close'])
+
+    def test_budget_detail_hides_administrative_closure_button_when_os_already_started(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1500.00'),
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA ESQ',
+            status=WorkOrderTask.Status.DONE,
+            completed_at=timezone.now(),
+        )
+
+        response = self.client.get(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Finalização administrativa')
+        status = budget_administrative_closure_status(budget, self.manager)
+        self.assertFalse(status['can_administratively_close'])
+
 
 class BudgetDeliverViewTests(TestCase):
     def setUp(self):
@@ -1665,6 +2372,151 @@ class BudgetDeliverViewTests(TestCase):
         self.assertIsNotNone(budget.delivered_at)
         self.assertEqual(budget.delivered_by, self.manager)
         self.assertContains(response, 'Veículo entregue com sucesso.')
+
+
+class BudgetAdministrativeCloseViewTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='budget-admin-close@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.finance = CustomUser.objects.create_user(
+            email='budget-admin-close-finance@test.com',
+            password=self.password,
+            role=CustomUser.Role.FINANCE,
+        )
+        self.customer = Customer.objects.create(name='Cliente Fechamento Adm', document_cpf_cnpj='999')
+        self.vehicle = Vehicle.objects.create(
+            customer=self.customer,
+            plate='ADM1234',
+            model='Pulse',
+            brand='Fiat',
+        )
+        self.bank_account = BankAccount.objects.create(
+            bank_name='Banco Adm',
+            account_name='Conta Adm',
+        )
+
+    def test_budget_administrative_close_marks_budget_and_work_order(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1800.00'),
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA ESQ',
+            status=WorkOrderTask.Status.SCHEDULED,
+        )
+        CashMovement.objects.create(
+            budget=budget,
+            customer=self.customer,
+            bank_account=self.bank_account,
+            direction=CashMovement.Direction.IN,
+            source=CashMovement.Source.PARTICULAR,
+            amount=Decimal('1800.00'),
+            due_date=date(2026, 6, 30),
+            is_realized=True,
+        )
+
+        response = self.client.post(
+            reverse('budgets:budget_administrative_close', kwargs={'pk': budget.pk}),
+            data={
+                'delivery_date': '2026-06-15',
+                'reason': 'Veículo já entregue antes da implantação.',
+                'confirm_no_commission': '1',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        budget.refresh_from_db()
+        work_order.refresh_from_db()
+        self.assertTrue(budget.administrative_closure)
+        self.assertEqual(budget.administrative_closed_by, self.manager)
+        self.assertEqual(budget.administrative_closure_reason, 'Veículo já entregue antes da implantação.')
+        self.assertEqual(budget.delivered_by, self.manager)
+        self.assertEqual(budget.delivered_at.date(), date(2026, 6, 15))
+        self.assertEqual(work_order.status, WorkOrder.Status.CLOSED)
+        self.assertEqual(CommissionLine.objects.count(), 0)
+        self.assertContains(response, 'Finalização administrativa registrada com sucesso. Comissão não foi gerada.')
+
+    def test_budget_administrative_close_blocks_when_finance_is_missing(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1800.00'),
+        )
+        WorkOrder.objects.create(budget=budget)
+
+        response = self.client.post(
+            reverse('budgets:budget_administrative_close', kwargs={'pk': budget.pk}),
+            data={
+                'delivery_date': '2026-06-15',
+                'reason': 'Veículo já entregue antes da implantação.',
+                'confirm_no_commission': '1',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        budget.refresh_from_db()
+        self.assertFalse(budget.administrative_closure)
+        self.assertIsNone(budget.delivered_at)
+        self.assertContains(response, 'Não foi possível finalizar administrativamente.')
+        self.assertContains(response, 'O financeiro do orçamento ainda não foi registrado.')
+
+    def test_budget_administrative_close_blocks_when_work_order_has_started(self):
+        self.client.login(email=self.manager.email, password=self.password)
+        budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            status=Budget.Status.AUTHORIZED,
+            total_amount=Decimal('1800.00'),
+        )
+        work_order = WorkOrder.objects.create(budget=budget)
+        WorkOrderTask.objects.create(
+            work_order=work_order,
+            activity=WorkOrderTask.Activity.BODYWORK,
+            description='PORTA ESQ',
+            status=WorkOrderTask.Status.DONE,
+            completed_at=timezone.now(),
+        )
+        CashMovement.objects.create(
+            budget=budget,
+            customer=self.customer,
+            bank_account=self.bank_account,
+            direction=CashMovement.Direction.IN,
+            source=CashMovement.Source.PARTICULAR,
+            amount=Decimal('1800.00'),
+            due_date=date(2026, 6, 30),
+            is_realized=True,
+        )
+
+        response = self.client.post(
+            reverse('budgets:budget_administrative_close', kwargs={'pk': budget.pk}),
+            data={
+                'delivery_date': '2026-06-15',
+                'reason': 'Veículo já entregue antes da implantação.',
+                'confirm_no_commission': '1',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        budget.refresh_from_db()
+        self.assertFalse(budget.administrative_closure)
+        self.assertIsNone(budget.delivered_at)
+        self.assertContains(response, 'Não foi possível finalizar administrativamente.')
+        self.assertContains(response, 'A OS já foi iniciada no operacional.')
 
 
 class BankAccountDeleteTests(TestCase):

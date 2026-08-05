@@ -80,6 +80,22 @@ class ThirdPartyServiceForm(forms.Form):
         return status
 
 
+class AdministrativeClosureForm(forms.Form):
+    delivery_date = forms.DateField(
+        label='Data de entrega',
+        input_formats=['%Y-%m-%d'],
+    )
+    reason = forms.CharField(
+        label='Motivo',
+        max_length=500,
+        widget=forms.Textarea,
+    )
+    confirm_no_commission = forms.BooleanField(
+        label='Confirmo que este fechamento não deve gerar comissão.',
+        required=True,
+    )
+
+
 class ServiceCatalogForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()

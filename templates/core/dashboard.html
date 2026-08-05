@@ -4,7 +4,303 @@
 
 {% block content %}
   <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Dashboard</h1>
-    <p class='mt-2 text-sm text-[#A3A3A3]'>Você está autenticado como {{ user.email }}.</p>
+    <div class='flex flex-wrap items-start justify-between gap-4'>
+      <div>
+        <h1 class='text-2xl font-semibold text-[#D4AF37]'>Dashboard</h1>
+        <p class='mt-2 text-sm text-[#A3A3A3]'>Você está autenticado como {{ user.email }}.</p>
+      </div>
+      <div class='flex flex-wrap items-center gap-2'>
+        <a
+          href='?month={{ capacity_calendar.previous_month }}&year={{ capacity_calendar.previous_month_year }}'
+          class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'
+        >
+          Mês anterior
+        </a>
+        <div class='rounded-md border border-[#262626] bg-[#121212] px-4 py-2 text-sm text-[#F5F5F5]'>
+          {{ capacity_calendar.month_label }}
+        </div>
+        <a
+          href='?month={{ capacity_calendar.next_month }}&year={{ capacity_calendar.next_month_year }}'
+          class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'
+        >
+          Próximo mês
+        </a>
+      </div>
+    </div>
+
+    <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-3'>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>Operacionais</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.operational_collaborators }}</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Colaboradores operacionais no cadastro</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>Capacidade diária</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.daily_capacity_hours|floatformat:2 }}h</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Base de 8h por operacional, sem extra</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>Dias críticos</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.overloaded_days }}</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Dias do mês com carga acima de 90%</div>
+      </div>
+    </div>
+
+    <div class='mt-4 grid grid-cols-1 gap-4 md:grid-cols-3'>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>OS aprovadas</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.approved_work_orders_count }}</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Ordens abertas, autorizadas e ainda não entregues</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>HH total aprovado</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.approved_total_hours|floatformat:2 }}h</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Soma das horas planejadas das OS aprovadas</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>HH médio por OS</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.approved_average_hours|floatformat:2 }}h</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Média de horas planejadas por OS aprovada</div>
+      </div>
+    </div>
+
+    <div class='mt-4 grid grid-cols-1 gap-4 md:grid-cols-2'>
+      <div class='rounded-xl border border-[#854d0e] bg-[#2b1d0e] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#fde68a]'>OS sem agenda completa</div>
+        <div class='mt-2 text-3xl font-semibold text-[#fde68a]'>{{ capacity_calendar.approved_missing_schedule_count }}</div>
+        <div class='mt-1 text-sm text-[#fcd34d]'>Ordens com horas planejadas ainda sem data programada</div>
+      </div>
+      <div class='rounded-xl border border-[#7f1d1d] bg-[#2a0d0d] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#fecaca]'>OS com carga alta</div>
+        <div class='mt-2 text-3xl font-semibold text-[#fecaca]'>{{ capacity_calendar.approved_high_load_count }}</div>
+        <div class='mt-1 text-sm text-[#fca5a5]'>Ordens cujo HH total já alcança a capacidade diária da oficina</div>
+      </div>
+    </div>
   </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>HH por OS Aprovada</h2>
+        <p class='mt-1 text-sm text-[#A3A3A3]'>Resumo consolidado das horas planejadas por ordem de serviço aprovada.</p>
+      </div>
+      <div class='rounded-full border border-[#262626] bg-[#121212] px-3 py-2 text-sm text-[#F5F5F5]'>
+        {{ capacity_calendar.approved_work_orders_count }} OS
+      </div>
+    </div>
+
+    {% if capacity_calendar.approved_work_orders %}
+      <div class='mt-5 overflow-x-auto'>
+        <table class='min-w-full divide-y divide-[#262626] text-sm'>
+          <thead>
+            <tr class='text-left text-xs uppercase tracking-[0.2em] text-[#A3A3A3]'>
+              <th class='px-3 py-3'>OS</th>
+              <th class='px-3 py-3'>Cliente</th>
+              <th class='px-3 py-3'>Placa</th>
+              <th class='px-3 py-3'>Tarefas</th>
+              <th class='px-3 py-3'>HH total</th>
+              <th class='px-3 py-3'>Programado</th>
+              <th class='px-3 py-3'>Sem data</th>
+              <th class='px-3 py-3'>Sinalização</th>
+            </tr>
+          </thead>
+          <tbody class='divide-y divide-[#1f1f1f]'>
+            {% for work_order in capacity_calendar.approved_work_orders %}
+              <tr class='bg-[#121212]'>
+                <td class='px-3 py-3'>
+                  <a href='{% url "budgets:workorder_detail" work_order.work_order_id %}' class='font-medium text-[#D4AF37] hover:underline'>
+                    OS #{{ work_order.display_number }}
+                  </a>
+                </td>
+                <td class='px-3 py-3'>{{ work_order.customer_name }}</td>
+                <td class='px-3 py-3'>{{ work_order.vehicle_plate }}</td>
+                <td class='px-3 py-3'>{{ work_order.task_count }}</td>
+                <td class='px-3 py-3 font-medium text-[#F5F5F5]'>{{ work_order.total_planned_hours|floatformat:2 }}h</td>
+                <td class='px-3 py-3'>{{ work_order.scheduled_hours|floatformat:2 }}h</td>
+                <td class='px-3 py-3 {% if work_order.has_missing_schedule %}font-medium text-[#fde68a]{% else %}text-[#A3A3A3]{% endif %}'>{{ work_order.unscheduled_hours|floatformat:2 }}h</td>
+                <td class='px-3 py-3'>
+                  <div class='flex flex-wrap gap-2'>
+                    {% if work_order.is_high_load %}
+                      <span class='rounded-full border border-[#7f1d1d] bg-[#3b0a0a] px-2 py-1 text-[11px] font-medium text-[#fecaca]'>Carga alta</span>
+                    {% endif %}
+                    {% if work_order.has_missing_schedule %}
+                      <span class='rounded-full border border-[#854d0e] bg-[#422006] px-2 py-1 text-[11px] font-medium text-[#fde68a]'>Sem agenda completa</span>
+                    {% endif %}
+                    {% if not work_order.is_high_load and not work_order.has_missing_schedule %}
+                      <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2 py-1 text-[11px] font-medium text-[#bbf7d0]'>OK</span>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class='mt-5 rounded-lg border border-dashed border-[#404040] bg-[#121212] px-4 py-8 text-center text-sm text-[#A3A3A3]'>
+        Nenhuma OS aprovada com horas planejadas no momento.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Projeção da Capacidade a Partir de Hoje</h2>
+        <p class='mt-1 text-sm text-[#A3A3A3]'>Distribuição corrida do HH total aprovado na capacidade diária da oficina, começando em hoje.</p>
+      </div>
+      <div class='flex flex-wrap gap-2 text-sm'>
+        <span class='rounded-full border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]'>
+          Início: {{ capacity_calendar.approved_projection.start_date|date:'d/m/Y' }}
+        </span>
+        <span class='rounded-full border border-[#262626] bg-[#121212] px-3 py-2 text-[#F5F5F5]'>
+          Fim previsto: {{ capacity_calendar.approved_projection.last_date|date:'d/m/Y' }}
+        </span>
+      </div>
+    </div>
+
+    <div class='mt-4 grid grid-cols-1 gap-4 md:grid-cols-3'>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>HH aprovado em consumo</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.approved_total_hours|floatformat:2 }}h</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Total distribuído na projeção corrida</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>Dias ocupados</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.approved_projection.days_count }}</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Quantidade de dias necessários para consumir o HH aprovado</div>
+      </div>
+      <div class='rounded-xl border border-[#262626] bg-[#121212] p-4'>
+        <div class='text-xs uppercase tracking-[0.25em] text-[#A3A3A3]'>Capacidade por dia</div>
+        <div class='mt-2 text-3xl font-semibold text-[#D4AF37]'>{{ capacity_calendar.daily_capacity_hours|floatformat:2 }}h</div>
+        <div class='mt-1 text-sm text-[#A3A3A3]'>Base usada para preencher os dias a partir de hoje</div>
+      </div>
+    </div>
+
+    {% if capacity_calendar.approved_projection.days %}
+      <div class='mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4'>
+        {% for projection_day in capacity_calendar.approved_projection.days %}
+          <div class='rounded-xl border p-4 {% if projection_day.status == "critical" %}border-[#7f1d1d] bg-[#2a0d0d]{% elif projection_day.status == "warning" %}border-[#854d0e] bg-[#2b1d0e]{% elif projection_day.status == "ok" %}border-[#14532d] bg-[#052e16]{% else %}border-[#262626] bg-[#121212]{% endif %}'>
+            <div class='flex items-start justify-between gap-2'>
+              <div class='text-sm font-semibold text-[#F5F5F5]'>{{ projection_day.date|date:'d/m/Y' }}</div>
+              <div class='rounded-full border border-black/20 bg-black/20 px-2 py-0.5 text-[10px] font-medium text-[#F5F5F5]'>
+                {{ projection_day.occupancy_percent|floatformat:0 }}%
+              </div>
+            </div>
+            <div class='mt-4 text-xl font-semibold text-[#F5F5F5]'>{{ projection_day.allocated_hours|floatformat:2 }}h</div>
+            <div class='mt-1 text-xs text-[#d4d4d4]'>de {{ projection_day.available_hours|floatformat:2 }}h da oficina</div>
+            <div class='mt-3 text-xs text-[#d4d4d4]'>Saldo após o dia: {{ projection_day.remaining_after_day|floatformat:2 }}h</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class='mt-5 rounded-lg border border-dashed border-[#404040] bg-[#121212] px-4 py-8 text-center text-sm text-[#A3A3A3]'>
+        Não há HH aprovado para projetar a partir de hoje.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Capacidade da Oficina</h2>
+        <p class='mt-1 text-sm text-[#A3A3A3]'>Visão mensal da carga programada com base nas tarefas das OS autorizadas e ainda abertas.</p>
+      </div>
+      <div class='flex flex-wrap gap-2 text-xs'>
+        <span class='rounded-full border border-[#14532d] bg-[#052e16] px-3 py-1 text-[#bbf7d0]'>Livre</span>
+        <span class='rounded-full border border-[#854d0e] bg-[#422006] px-3 py-1 text-[#fde68a]'>Atenção</span>
+        <span class='rounded-full border border-[#7f1d1d] bg-[#3b0a0a] px-3 py-1 text-[#fecaca]'>Lotado</span>
+        <span class='rounded-full border border-[#881337] bg-[#4a081d] px-3 py-1 text-[#fbcfe8]'>Acima da capacidade</span>
+      </div>
+    </div>
+
+    <div class='mt-6 overflow-x-auto'>
+      <div class='grid min-w-[900px] grid-cols-7 gap-3'>
+        {% for weekday in capacity_calendar.weekdays %}
+          <div class='rounded-lg border border-[#262626] bg-[#121212] px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.2em] text-[#A3A3A3]'>
+            {{ weekday }}
+          </div>
+        {% endfor %}
+
+        {% for week in capacity_calendar.weeks %}
+          {% for day in week %}
+            <a
+              href='?month={{ capacity_calendar.month }}&year={{ capacity_calendar.year }}&selected_date={{ day.date|date:"Y-m-d" }}'
+              class='min-h-[128px] rounded-xl border p-3 transition hover:border-[#D4AF37] {% if not day.in_month %}border-[#1f1f1f] bg-[#101010] text-[#525252]{% elif day.status == "over_capacity" %}border-[#881337] bg-[#3b0a1d]{% elif day.status == "critical" %}border-[#7f1d1d] bg-[#2a0d0d]{% elif day.status == "warning" %}border-[#854d0e] bg-[#2b1d0e]{% elif day.status == "ok" %}border-[#14532d] bg-[#052e16]{% else %}border-[#262626] bg-[#121212]{% endif %} {% if day.is_selected %}ring-2 ring-[#D4AF37]{% endif %}'
+            >
+              <div class='flex items-start justify-between gap-2'>
+                <span class='text-sm font-semibold {% if day.in_month %}text-[#F5F5F5]{% else %}text-[#6b7280]{% endif %}'>{{ day.day_number }}</span>
+                {% if day.in_month %}
+                  <span class='rounded-full border border-black/20 bg-black/20 px-2 py-0.5 text-[10px] font-medium text-[#F5F5F5]'>
+                    {{ day.task_count }} tarefa{{ day.task_count|pluralize }}
+                  </span>
+                {% endif %}
+              </div>
+              {% if day.in_month %}
+                <div class='mt-5 text-lg font-semibold text-[#F5F5F5]'>{{ day.used_hours|floatformat:2 }}h</div>
+                <div class='mt-1 text-xs text-[#d4d4d4]'>de {{ day.available_hours|floatformat:2 }}h disponíveis</div>
+                <div class='mt-3 text-xs font-medium text-[#F5F5F5]'>{{ day.occupancy_percent|floatformat:0 }}% ocupado</div>
+              {% else %}
+                <div class='mt-8 text-xs text-[#6b7280]'>Fora do mês</div>
+              {% endif %}
+            </a>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% if capacity_calendar.selected_day %}
+    <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <div class='flex flex-wrap items-center justify-between gap-3'>
+        <div>
+          <h2 class='text-lg font-semibold text-[#D4AF37]'>Detalhe do dia {{ capacity_calendar.selected_day.date|date:'d/m/Y' }}</h2>
+          <p class='mt-1 text-sm text-[#A3A3A3]'>
+            {{ capacity_calendar.selected_day.used_hours|floatformat:2 }}h programadas de {{ capacity_calendar.selected_day.available_hours|floatformat:2 }}h disponíveis.
+          </p>
+        </div>
+        <div class='rounded-full border border-[#262626] bg-[#121212] px-3 py-2 text-sm text-[#F5F5F5]'>
+          {{ capacity_calendar.selected_day.task_count }} tarefa{{ capacity_calendar.selected_day.task_count|pluralize }}
+        </div>
+      </div>
+
+      {% if capacity_calendar.selected_day.tasks %}
+        <div class='mt-5 overflow-x-auto'>
+          <table class='min-w-full divide-y divide-[#262626] text-sm'>
+            <thead>
+              <tr class='text-left text-xs uppercase tracking-[0.2em] text-[#A3A3A3]'>
+                <th class='px-3 py-3'>OS</th>
+                <th class='px-3 py-3'>Cliente</th>
+                <th class='px-3 py-3'>Placa</th>
+                <th class='px-3 py-3'>Atividade</th>
+                <th class='px-3 py-3'>Responsável</th>
+                <th class='px-3 py-3'>Horas</th>
+              </tr>
+            </thead>
+            <tbody class='divide-y divide-[#1f1f1f]'>
+              {% for task in capacity_calendar.selected_day.tasks %}
+                <tr class='bg-[#121212]'>
+                  <td class='px-3 py-3'>
+                    <a href='{% url "budgets:workorder_detail" task.work_order_id %}' class='font-medium text-[#D4AF37] hover:underline'>
+                      OS #{{ task.work_order_number }}
+                    </a>
+                    <div class='mt-1 text-xs text-[#A3A3A3]'>{{ task.description }}</div>
+                  </td>
+                  <td class='px-3 py-3'>{{ task.customer_name }}</td>
+                  <td class='px-3 py-3'>{{ task.vehicle_plate }}</td>
+                  <td class='px-3 py-3'>{{ task.activity }}</td>
+                  <td class='px-3 py-3'>{{ task.collaborator_name }}</td>
+                  <td class='px-3 py-3 font-medium text-[#F5F5F5]'>{{ task.planned_hours|floatformat:2 }}h</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class='mt-5 rounded-lg border border-dashed border-[#404040] bg-[#121212] px-4 py-8 text-center text-sm text-[#A3A3A3]'>
+          Não há tarefas programadas para este dia.
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
 {% endblock %}
