@@ -228,7 +228,7 @@ def recalculate_budget_total(budget):
     xml = budget.source_xml or ''
     if xml:
         try:
-            _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
+            _, _, _, parsed_total_amount, _, _, _, *_ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
             base_total = parsed_total_amount
         except Exception:
             base_total = budget.total_amount
@@ -529,6 +529,7 @@ def serialize_pending_budget_data(cleaned_data):
     payload = {}
     for field in (
         'status',
+        'customer_type',
         'refusal_reason_code',
         'refusal_reason',
         'entry_date',
@@ -559,6 +560,7 @@ def deserialize_pending_budget_data(payload):
             data[field] = None
     data['allow_repair_without_parts'] = bool(data.get('allow_repair_without_parts'))
     data['status'] = data.get('status') or ''
+    data['customer_type'] = data.get('customer_type') or ''
     data['refusal_reason_code'] = data.get('refusal_reason_code') or ''
     data['refusal_reason'] = data.get('refusal_reason') or ''
     return data
@@ -694,6 +696,20 @@ def budget_delivery_status(budget):
             is_realized=False,
         ).order_by('due_date', 'created_at', 'id')
     )
+    today = timezone.localdate()
+    overdue_movements = [
+        m for m in open_in_movements
+        if m.due_date is not None and m.due_date < today
+    ]
+    overdue_amount = sum([(m.amount or Decimal('0')) for m in overdue_movements], Decimal('0'))
+    oldest_overdue_date = None
+    overdue_days = 0
+    if overdue_movements:
+        oldest_overdue_date = min(m.due_date for m in overdue_movements if m.due_date is not None)
+        if oldest_overdue_date is not None:
+            delta = today - oldest_overdue_date
+            overdue_days = max(delta.days, 0)
+
     open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
     allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
     realized_amount = sum(
@@ -738,6 +754,10 @@ def budget_delivery_status(budget):
         'finance_open_movements': open_in_movements,
         'finance_open_amount': open_amount,
         'finance_realized_amount': realized_amount,
+        'finance_overdue_count': len(overdue_movements),
+        'finance_overdue_days': overdue_days,
+        'finance_overdue_amount': overdue_amount,
+        'finance_oldest_overdue_date': oldest_overdue_date,
         'allows_future_insurer_receivables': allows_future_insurer_receivables,
         'finance_note': (
             'Recebimento da seguradora previsto para depois da entrega.'
@@ -773,6 +793,20 @@ def budget_administrative_closure_status(budget, user=None):
             is_realized=False,
         ).order_by('due_date', 'created_at', 'id')
     )
+    today = timezone.localdate()
+    overdue_movements = [
+        m for m in open_in_movements
+        if m.due_date is not None and m.due_date < today
+    ]
+    overdue_amount = sum([(m.amount or Decimal('0')) for m in overdue_movements], Decimal('0'))
+    oldest_overdue_date = None
+    overdue_days = 0
+    if overdue_movements:
+        oldest_overdue_date = min(m.due_date for m in overdue_movements if m.due_date is not None)
+        if oldest_overdue_date is not None:
+            delta = today - oldest_overdue_date
+            overdue_days = max(delta.days, 0)
+
     open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
     allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
 
@@ -803,6 +837,10 @@ def budget_administrative_closure_status(budget, user=None):
             direction=CashMovement.Direction.IN,
         ).exists(),
         'finance_open_amount': open_amount,
+        'finance_overdue_count': len(overdue_movements),
+        'finance_overdue_days': overdue_days,
+        'finance_overdue_amount': overdue_amount,
+        'finance_oldest_overdue_date': oldest_overdue_date,
         'allows_future_insurer_receivables': allows_future_insurer_receivables,
         'can_administratively_close': len(blockers) == 0,
         'suggested_delivery_date': budget.expected_delivery_date or timezone.localdate(),
@@ -2292,6 +2330,91 @@ class FinanceInsightsView(FinanceDashboardView):
             reverse=True,
         )[:8]
 
+        customer_type_filter = (request.GET.get('customer_type') or '').strip().upper()
+        if customer_type_filter not in {Budget.CustomerType.PARTICULAR, Budget.CustomerType.INSURER, Budget.CustomerType.COMPANY}:
+            customer_type_filter = ''
+
+        customer_type_month_start = start_month
+        customer_type_month_end = end_month
+        budget_month_qs = Budget.objects.filter(
+            status=Budget.Status.AUTHORIZED,
+            approved_at__isnull=False,
+        ).only('approved_at', 'created_at', 'total_amount', 'customer_type')
+        if customer_type_filter:
+            budget_month_qs = budget_month_qs.filter(customer_type=customer_type_filter)
+        customer_type_budget_map = {}
+        customer_type_labels = {
+            Budget.CustomerType.PARTICULAR: 'Particular',
+            Budget.CustomerType.INSURER: 'Seguradora',
+            Budget.CustomerType.COMPANY: 'Empresa',
+        }
+        for budget in budget_month_qs.iterator():
+            ref_date = None
+            if budget.approved_at:
+                if timezone.is_aware(budget.approved_at):
+                    ref_date = timezone.localtime(budget.approved_at).date()
+                else:
+                    ref_date = budget.approved_at.date()
+            elif budget.created_at:
+                if timezone.is_aware(budget.created_at):
+                    ref_date = timezone.localtime(budget.created_at).date()
+                else:
+                    ref_date = budget.created_at.date()
+            if not ref_date or ref_date < customer_type_month_start or ref_date > customer_type_month_end:
+                continue
+            ct = budget.customer_type or ''
+            if ct not in customer_type_labels:
+                ct = ''
+            key = ct or 'BLANK'
+            row = customer_type_budget_map.setdefault(
+                key,
+                {
+                    'key': key,
+                    'label': customer_type_labels.get(ct) or 'Não classificado',
+                    'budget_count': 0,
+                    'approved_total': Decimal('0'),
+                    'received_total': Decimal('0'),
+                    'open_total': Decimal('0'),
+                },
+            )
+            row['budget_count'] += 1
+            row['approved_total'] += budget.total_amount or Decimal('0')
+
+        budget_ids_in_month = {b.id for b in budget_month_qs.all()}
+        if budget_ids_in_month:
+            cash_qs = CashMovement.objects.filter(
+                direction=CashMovement.Direction.IN,
+                budget_id__in=budget_ids_in_month,
+            ).only('budget_id', 'amount', 'is_realized', 'customer_type')
+            if customer_type_filter:
+                cash_qs = cash_qs.filter(customer_type=customer_type_filter)
+            for cash in cash_qs.iterator():
+                ct = cash.customer_type or ''
+                if ct not in customer_type_labels:
+                    ct = ''
+                key = ct or 'BLANK'
+                row = customer_type_budget_map.setdefault(
+                    key,
+                    {
+                        'key': key,
+                        'label': customer_type_labels.get(ct) or 'Não classificado',
+                        'budget_count': 0,
+                        'approved_total': Decimal('0'),
+                        'received_total': Decimal('0'),
+                        'open_total': Decimal('0'),
+                    },
+                )
+                if cash.is_realized:
+                    row['received_total'] += cash.amount or Decimal('0')
+                else:
+                    row['open_total'] += cash.amount or Decimal('0')
+
+        customer_type_ranking = sorted(customer_type_budget_map.values(), key=lambda r: r['approved_total'], reverse=True)
+        customer_type_labels_list = [r['label'] for r in customer_type_ranking]
+        customer_type_approved_values = [float(r['approved_total']) for r in customer_type_ranking]
+        customer_type_received_values = [float(r['received_total']) for r in customer_type_ranking]
+        customer_type_budget_counts = [r['budget_count'] for r in customer_type_ranking]
+
         context = {
             'today': today,
             'range_start': range_start,
@@ -2300,8 +2423,10 @@ class FinanceInsightsView(FinanceDashboardView):
             'filters': {
                 'direction': direction,
                 'source': source,
+                'customer_type': customer_type_filter,
             },
             'source_options': self._source_options(),
+            'customer_type_options': Budget.CustomerType.choices,
             'month_labels': month_labels,
             'expected_in_series': expected_in_series,
             'expected_out_series': expected_out_series,
@@ -2323,6 +2448,11 @@ class FinanceInsightsView(FinanceDashboardView):
             'insurer_budget_counts': [item['budget_count'] for item in insurer_ranking],
             'insurer_amount_values': [float(item['approved_total']) for item in insurer_ranking],
             'insurer_ranking': insurer_ranking,
+            'customer_type_ranking': customer_type_ranking,
+            'customer_type_labels_list': customer_type_labels_list,
+            'customer_type_approved_values': customer_type_approved_values,
+            'customer_type_received_values': customer_type_received_values,
+            'customer_type_budget_counts': customer_type_budget_counts,
             'status_labels': ['Em aberto', 'Realizado'],
             'status_values': [float(open_amount), float(realized_amount)],
             'receivable_open': receivable_open,
@@ -3814,6 +3944,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
     template_name = 'budgets/budget_form.html'
     fields = (
         'status',
+        'customer_type',
         'refusal_reason_code',
         'refusal_reason',
         'entry_date',
@@ -3836,7 +3967,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         base_total = self.object.total_amount
         if xml:
             try:
-                _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
+                _, _, _, parsed_total_amount, _, _, _, *_ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
                 if parsed_total_amount > 0:
                     base_total = parsed_total_amount
             except Exception:
@@ -3862,13 +3993,16 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             and not CashMovement.objects.filter(budget=self.object).exists()
         )
         context['needs_finance'] = needs_finance
-        show_finance_modal = (self.request.GET.get('finance') or '').strip() == '1'
-        show_finance_modal = bool(
+        force_show_modal = (self.request.GET.get('finance') or '').strip() == '1'
+        skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
+        skip_modal = self.request.session.get(skip_flag_key) is True and not force_show_modal
+        auto_show_modal = (
             can_access_finance
-            and show_finance_modal
-            and (self.object.status == Budget.Status.AUTHORIZED or pending_finance)
-            and not CashMovement.objects.filter(budget=self.object).exists()
+            and needs_finance
+            and self.object.status == Budget.Status.AUTHORIZED
+            and not skip_modal
         )
+        show_finance_modal = bool(force_show_modal or auto_show_modal)
         context['show_finance_modal'] = show_finance_modal
         pending_data = deserialize_pending_budget_data(pending_finance) if pending_finance else {}
         context['finance_default_due_date'] = (
@@ -3884,6 +4018,11 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         self.object = self.get_object()
         if request.GET.get('discard_finance') == '1':
             request.session.pop(pending_budget_finance_session_key(self.object.pk), None)
+            skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
+            if not CashMovement.objects.filter(budget=self.object).exists():
+                request.session[skip_flag_key] = True
+            else:
+                request.session.pop(skip_flag_key, None)
             return redirect('budgets:budget_update', pk=self.object.pk)
         return super().get(request, *args, **kwargs)
 
@@ -3928,13 +4067,6 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             if form.errors:
                 return self.form_invalid(form)
 
-            if not CashMovement.objects.filter(budget=self.object).exists():
-                self.request.session[pending_budget_finance_session_key(self.object.pk)] = serialize_pending_budget_data(
-                    form.cleaned_data
-                )
-                messages.info(self.request, 'Confirme o financeiro para concluir a aprovação do orçamento.')
-                return redirect(f"{reverse('budgets:budget_update', kwargs={'pk': self.object.pk})}?finance=1")
-
         transitioned_to_authorized = (
             getattr(self, '_old_status', None) != Budget.Status.AUTHORIZED and status == Budget.Status.AUTHORIZED
         )
@@ -3943,6 +4075,20 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
                 form.instance.approved_at = timezone.now()
         else:
             form.instance.approved_at = None
+
+        needs_finance_modal = False
+        pending_key = None
+        if status == Budget.Status.AUTHORIZED and not CashMovement.objects.filter(budget=self.object).exists():
+            user = getattr(self.request, 'user', None)
+            if user and getattr(user, 'role', None) in (
+                CustomUser.Role.MANAGER,
+                CustomUser.Role.FINANCE,
+                CustomUser.Role.ESTIMATOR,
+            ):
+                needs_finance_modal = True
+                pending_key = pending_budget_finance_session_key(self.object.pk)
+                self.request.session[pending_key] = serialize_pending_budget_data(form.cleaned_data)
+
         response = super().form_valid(form)
         if transitioned_to_authorized:
             messages.success(self.request, 'Orçamento aprovado.')
@@ -3962,19 +4108,19 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         if self.object.status == Budget.Status.AUTHORIZED:
             ensure_work_order_for_budget(self.object)
 
-        finance_missing = (
-            self.object.status == Budget.Status.AUTHORIZED
-            and not CashMovement.objects.filter(budget=self.object).exists()
-        )
-        if finance_missing:
-            user = getattr(self.request, 'user', None)
-            if user and getattr(user, 'role', None) in (
-                CustomUser.Role.MANAGER,
-                CustomUser.Role.FINANCE,
-                CustomUser.Role.ESTIMATOR,
-            ):
-                url = reverse('budgets:budget_update', kwargs={'pk': self.object.pk})
-                return redirect(f'{url}?finance=1')
+        if needs_finance_modal:
+            messages.info(self.request, 'Confirme o financeiro para concluir a aprovação do orçamento.')
+            skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
+            self.request.session.pop(skip_flag_key, None)
+            url = reverse('budgets:budget_update', kwargs={'pk': self.object.pk})
+            return redirect(f'{url}?finance=1')
+        else:
+            if status != Budget.Status.AUTHORIZED:
+                skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
+                self.request.session.pop(skip_flag_key, None)
+            if CashMovement.objects.filter(budget=self.object).exists():
+                skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
+                self.request.session.pop(skip_flag_key, None)
 
         return response
 
@@ -4002,6 +4148,8 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
             return redirect('budgets:budget_update', pk=budget.pk)
 
         kind = (request.POST.get('kind') or '').strip().upper()
+        has_entry = (request.POST.get('has_entry') or '1').strip() == '1'
+        has_franchise = (request.POST.get('has_franchise') or '1').strip() == '1'
         total = budget.total_amount or Decimal('0')
         today = timezone.localdate()
         bank_account_id_raw = (request.POST.get('bank_account_id') or '').strip()
@@ -4009,7 +4157,6 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
             bank_account_id = int(bank_account_id_raw) if bank_account_id_raw else None
         except ValueError:
             bank_account_id = None
-        bank_account = None
         if not bank_account_id:
             messages.error(request, 'Selecione o banco/conta para os lançamentos deste orçamento.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
@@ -4017,6 +4164,25 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if bank_account is None:
             messages.error(request, 'Banco/conta inválido.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
+
+        raw_customer_type = (request.POST.get('customer_type') or '').strip().upper()
+        if not raw_customer_type:
+            if kind == 'SEGURADORA':
+                raw_customer_type = Budget.CustomerType.INSURER
+            elif kind == 'PARTICULAR':
+                raw_customer_type = Budget.CustomerType.PARTICULAR
+            else:
+                raw_customer_type = budget.customer_type or Budget.CustomerType.PARTICULAR
+        valid_customer_types = {Budget.CustomerType.PARTICULAR, Budget.CustomerType.INSURER, Budget.CustomerType.COMPANY}
+        if raw_customer_type not in valid_customer_types:
+            if budget.customer_type and budget.customer_type in valid_customer_types:
+                raw_customer_type = budget.customer_type
+            else:
+                raw_customer_type = (
+                    Budget.CustomerType.INSURER
+                    if kind == 'SEGURADORA'
+                    else Budget.CustomerType.PARTICULAR
+                )
 
         def parse_money(value):
             raw = (value or '').strip()
@@ -4028,13 +4194,28 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                 raw = raw.replace('.', '').replace(',', '.')
             elif ',' in raw:
                 raw = raw.replace(',', '.')
-            return Decimal(raw)
+            try:
+                return Decimal(raw)
+            except Exception:
+                return Decimal('0')
 
         def parse_date(value, default_date):
             raw = (value or '').strip()
             if not raw:
                 return default_date
-            return date.fromisoformat(raw)
+            try:
+                return date.fromisoformat(raw)
+            except Exception:
+                return default_date
+
+        def _resolve_cash_movement_source(kind_value, movement_kind_value):
+            if raw_customer_type == Budget.CustomerType.INSURER:
+                if movement_kind_value in ('seguradora',):
+                    return CashMovement.Source.INSURERS
+                return CashMovement.Source.PARTICULAR
+            if raw_customer_type == Budget.CustomerType.COMPANY:
+                return CashMovement.Source.COMPANY
+            return CashMovement.Source.PARTICULAR
 
         try:
             with transaction.atomic():
@@ -4047,20 +4228,30 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                     budget.repair_start_date = pending_data.get('repair_start_date')
                     budget.expected_delivery_date = pending_data.get('expected_delivery_date')
                     budget.allow_repair_without_parts = bool(pending_data.get('allow_repair_without_parts'))
+                    if not budget.customer_type:
+                        pending_customer_type = (pending_data.get('customer_type') or '').strip().upper()
+                        if pending_customer_type in valid_customer_types:
+                            budget.customer_type = pending_customer_type
                     if budget.status == Budget.Status.AUTHORIZED:
                         if old_status != Budget.Status.AUTHORIZED or not budget.approved_at:
                             budget.approved_at = timezone.now()
                     else:
                         budget.approved_at = None
+                    budget.customer_type = raw_customer_type or budget.customer_type
                     budget.save()
                     if budget.status != Budget.Status.AUTHORIZED:
                         raise ValueError('O orçamento precisa estar Autorizado para registrar o financeiro.')
                     ensure_work_order_for_budget(budget)
+                else:
+                    budget.customer_type = raw_customer_type or budget.customer_type
+                    budget.save(update_fields=['customer_type'])
 
                 if kind == 'PARTICULAR':
-                    entry_amount = parse_money(request.POST.get('entry_amount'))
+                    entry_amount = Decimal('0') if not has_entry else parse_money(request.POST.get('entry_amount'))
                     entry_due = parse_date(request.POST.get('entry_due_date'), today)
-                    is_received = (request.POST.get('entry_received') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+                    is_received = bool(has_entry) and (
+                        (request.POST.get('entry_received') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+                    )
 
                     if entry_amount < 0:
                         raise ValueError('Valor de entrada inválido.')
@@ -4072,9 +4263,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
+                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.PARTICULAR,
+                            source=_resolve_cash_movement_source(kind, 'entrada'),
                             description=f'Orçamento #{budget.display_number} - Entrada',
                             amount=entry_amount,
                             launch_date=today,
@@ -4090,9 +4282,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
+                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.PARTICULAR,
+                            source=_resolve_cash_movement_source(kind, 'saldo'),
                             description=f'Orçamento #{budget.display_number} - Saldo',
                             amount=remainder,
                             launch_date=today,
@@ -4100,13 +4293,15 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                             is_realized=False,
                         )
                 elif kind == 'SEGURADORA':
-                    franchise_amount = parse_money(request.POST.get('franchise_amount'))
+                    franchise_amount = Decimal('0') if not has_franchise else parse_money(request.POST.get('franchise_amount'))
                     franchise_due = parse_date(request.POST.get('franchise_due_date'), today)
-                    franchise_received = (request.POST.get('franchise_received') or '').strip().lower() in (
-                        '1',
-                        'true',
-                        'on',
-                        'yes',
+                    franchise_received = bool(has_franchise) and (
+                        (request.POST.get('franchise_received') or '').strip().lower() in (
+                            '1',
+                            'true',
+                            'on',
+                            'yes',
+                        )
                     )
                     insurer_due = parse_date(
                         request.POST.get('insurer_due_date'),
@@ -4124,9 +4319,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
+                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.PARTICULAR,
+                            source=_resolve_cash_movement_source(kind, 'franquia'),
                             description=f'Orçamento #{budget.display_number} - Franquia',
                             amount=franchise_amount,
                             launch_date=today,
@@ -4138,9 +4334,10 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
+                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=CashMovement.Source.INSURERS,
+                            source=_resolve_cash_movement_source(kind, 'seguradora'),
                             description=f'Orçamento #{budget.display_number} - Seguradora',
                             amount=insurer_amount,
                             launch_date=today,
@@ -4148,12 +4345,17 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                             is_realized=False,
                         )
                 else:
-                    raise ValueError('Tipo inválido.')
+                    raise ValueError('Tipo inválido. Escolha Particular ou Seguradora.')
         except Exception as exc:
-            messages.error(request, str(exc) or 'Não foi possível registrar o financeiro.')
+            err = str(exc)
+            if not err:
+                err = 'Não foi possível registrar o financeiro.'
+            messages.error(request, f'Erro no financeiro: {err}')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
 
         request.session.pop(pending_budget_finance_session_key(budget.pk), None)
+        skip_flag_key = f'_skip_finance_modal_{budget.pk}'
+        request.session.pop(skip_flag_key, None)
         messages.success(request, 'Financeiro registrado.')
         return redirect('budgets:budget_detail', pk=budget.pk)
 

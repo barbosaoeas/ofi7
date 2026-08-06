@@ -1,18 +1,18 @@
-{% extends 'base.html' %}
+﻿{% extends 'base.html' %}
 
 {% block title %}Fornecedores | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Fornecedores</h1>
+    <h1 class='text-2xl font-semibold text-amber-700'>Fornecedores</h1>
     <a href='{% url "budgets:supplier_create" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
       Novo fornecedor
     </a>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A]'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-[#141414] text-[#D4AF37]'>
+      <thead class='bg-slate-100 text-amber-700'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Nome</th>
           <th class='px-4 py-3 font-semibold'>Tipo</th>
@@ -23,19 +23,19 @@
       </thead>
       <tbody class='divide-y divide-[#262626]'>
         {% for supplier in suppliers %}
-          <tr class='hover:bg-[#121212]'>
+          <tr class='hover:bg-slate-50'>
             <td class='px-4 py-3'>{{ supplier.name }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{{ supplier.get_kind_display }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{{ supplier.phone|default:supplier.email|default:'-' }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{% if supplier.is_active %}Ativo{% else %}Inativo{% endif %}</td>
+            <td class='px-4 py-3 text-slate-500'>{{ supplier.get_kind_display }}</td>
+            <td class='px-4 py-3 text-slate-500'>{{ supplier.phone|default:supplier.email|default:'-' }}</td>
+            <td class='px-4 py-3 text-slate-500'>{% if supplier.is_active %}Ativo{% else %}Inativo{% endif %}</td>
             <td class='px-4 py-3 text-right'>
-              <a href='{% url "budgets:supplier_update" supplier.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>Editar</a>
-              <a href='{% url "budgets:supplier_delete" supplier.pk %}' class='ml-2 rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>Excluir</a>
+              <a href='{% url "budgets:supplier_update" supplier.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>Editar</a>
+              <a href='{% url "budgets:supplier_delete" supplier.pk %}' class='ml-2 rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>Excluir</a>
             </td>
           </tr>
         {% empty %}
           <tr>
-            <td class='px-4 py-6 text-[#A3A3A3]' colspan='5'>Nenhum fornecedor cadastrado.</td>
+            <td class='px-4 py-6 text-slate-500' colspan='5'>Nenhum fornecedor cadastrado.</td>
           </tr>
         {% endfor %}
       </tbody>

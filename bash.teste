@@ -1,0 +1,74 @@
+mkdir -p /home/ofi7ipojuca/.secrets
+cat > /home/ofi7ipojuca/.secrets/oficina_env.sh <<'EOF'
+export DROPBOX_CILIA_ENABLED=true
+export DROPBOX_ACCESS_TOKEN=sl.u.AGo6BrbhiBaExlwxTvE8Zl3I-zHDENDpaeTo6ALeA0GzSLseTKDICvF9FSt419dLif33OOF4bctTRauVLJXtjPSL8LZZRsDbQR4_x0gqUkD5Rr7SutSOptau4tQJNxeG1xD5weWBg70-sapqtvU5LgaEqOPa9ZqlnIdzcJCNkUepwTXsS_J8SuK6Kw0xjfY4Smk_P3yrD662yAp-YFTZM2x5eXnyaA_hmZS8Way3ssQ6qjsKoYuit3wvZL3weG_Q946juoGMAYbo5gcqzVUz2ldUqHyikNw2CZPRSmRVvj11GmFbzPzAOfvF5yIgmtuIieF9Czpfpd_3NZKOFNJ94CuclFroAy4J-iTuCvHa_C2fr-uw1zbLNTv7ofC4FdlzSeDySKIjgHmAzB40kziSnutVH2_61PRVKQUAeJywy9yLTeX8T-0fbAzpz2ljV7GkxlIgDtLQN-Hyf1k1UPw_p64wqqDzjBYWZNVLG82ZuMqlvuM7iXlYS-cj3WJuqpdL6ai1QQnv7zEBeGdUbRHulWu5x8X5D_YTwyUxvd_dQhmke9_HY8RSRAtmplQhAT0nzOJ1wbLLqg79G2iuIypo0TO-WbHF_xBCB2OvZ1OqqQoZ6dKNDJcIok1NikO_qJLp42ogJWfePw8PPFPycVgYaL2NV1gT_VSuovYgOWhTJ7Ts1U6lkvdbkfvZ-O-j6dyytYDKorpjsYVujcnvMe-tMI--anALYrNCeLVb8uJZozbWFR70M_fOEjhHBRWRkh3ZFrGg6HUq6nqGakTo_Rwpvmc1gufhcex9KGm8MkoSOSyJ-UxFRfcDu-6jF9JbH_JhMVce39ilQWkJmo2iX8nBbLWGnGlSi5qtKM-gxkmmHvnFt4uxu9SUewmVRHeqwqxftj5A2-cF5rzXMtiy5I3_whmphUZmhDfTpv59cOYUZcDSSr2Xo2E3KHrBiLJS2iyYnD4qmIc1AU9SSUbozTftC4FxCaCalz2nWSqb0s-aX6_phqBuGUoXYYBK0Eke60H2mtuG_SJ7jLA12G51tbAWHUFtP0fylhBYozxAGZ8iF21Up7gG1_iwLOMP4NBbut_lYqoUn1v8tJ-HYS31FROEXo8UY4LRMA7peITmjlKtbSHAoYxV2irNSjYKSzMKJKyFboqZpl9PvmK2otDmNk7zjdAWuo1-l6h4BPeC3VQvmh2lKJGyORYqq7KmJAcyuuYsCdrvo4mqmZ6D64eAuL80rqsCvIxN3nr3vu6bwBQtnBuex1ViCcEW-ERG8vHPZThw-lXSqE8Rb4B-FZ1t6rtwvWqV2a6IVjfsJ8NZx88657TO6lqiqhet1RPBi4zmUDctiSg
+export DROPBOX_CILIA_INPUT_PATH=/xml-cilia/entrada
+export DROPBOX_CILIA_PROCESSED_PATH=/xml-cilia/processados
+export DROPBOX_CILIA_ERROR_PATH=/xml-cilia/erro
+EOF
+chmod 600 /home/ofi7ipojuca/.secrets/oficina_env.sh
+cat /home/ofi7ipojuca/.secrets/oficina_env.sh
+
+
+
+
+export DROPBOX_CILIA_ENABLED=true
+export DROPBOX_ACCESS_TOKEN=sl.u.AGo6BrbhiBaExlwxTvE8Zl3I-zHDENDpaeTo6ALeA0GzSLseTKDICvF9FSt419dLif33OOF4bctTRauVLJXtjPSL8LZZRsDbQR4_x0gqUkD5Rr7SutSOptau4tQJNxeG1xD5weWBg70-sapqtvU5LgaEqOPa9ZqlnIdzcJCNkUepwTXsS_J8SuK6Kw0xjfY4Smk_P3yrD662yAp-YFTZM2x5eXnyaA_hmZS8Way3ssQ6qjsKoYuit3wvZL3weG_Q946juoGMAYbo5gcqzVUz2ldUqHyikNw2CZPRSmRVvj11GmFbzPzAOfvF5yIgmtuIieF9Czpfpd_3NZKOFNJ94CuclFroAy4J-iTuCvHa_C2fr-uw1zbLNTv7ofC4FdlzSeDySKIjgHmAzB40kziSnutVH2_61PRVKQUAeJywy9yLTeX8T-0fbAzpz2ljV7GkxlIgDtLQN-Hyf1k1UPw_p64wqqDzjBYWZNVLG82ZuMqlvuM7iXlYS-cj3WJuqpdL6ai1QQnv7zEBeGdUbRHulWu5x8X5D_YTwyUxvd_dQhmke9_HY8RSRAtmplQhAT0nzOJ1wbLLqg79G2iuIypo0TO-WbHF_xBCB2OvZ1OqqQoZ6dKNDJcIok1NikO_qJLp42ogJWfePw8PPFPycVgYaL2NV1gT_VSuovYgOWhTJ7Ts1U6lkvdbkfvZ-O-j6dyytYDKorpjsYVujcnvMe-tMI--anALYrNCeLVb8uJZozbWFR70M_fOEjhHBRWRkh3ZFrGg6HUq6nqGakTo_Rwpvmc1gufhcex9KGm8MkoSOSyJ-UxFRfcDu-6jF9JbH_JhMVce39ilQWkJmo2iX8nBbLWGnGlSi5qtKM-gxkmmHvnFt4uxu9SUewmVRHeqwqxftj5A2-cF5rzXMtiy5I3_whmphUZmhDfTpv59cOYUZcDSSr2Xo2E3KHrBiLJS2iyYnD4qmIc1AU9SSUbozTftC4FxCaCalz2nWSqb0s-aX6_phqBuGUoXYYBK0Eke60H2mtuG_SJ7jLA12G51tbAWHUFtP0fylhBYozxAGZ8iF21Up7gG1_iwLOMP4NBbut_lYqoUn1v8tJ-HYS31FROEXo8UY4LRMA7peITmjlKtbSHAoYxV2irNSjYKSzMKJKyFboqZpl9PvmK2otDmNk7zjdAWuo1-l6h4BPeC3VQvmh2lKJGyORYqq7KmJAcyuuYsCdrvo4mqmZ6D64eAuL80rqsCvIxN3nr3vu6bwBQtnBuex1ViCcEW-ERG8vHPZThw-lXSqE8Rb4B-FZ1t6rtwvWqV2a6IVjfsJ8NZx88657TO6lqiqhet1RPBi4zmUDctiSg
+export DROPBOX_CILIA_INPUT_PATH=/xml-cilia/entrada
+export DROPBOX_CILIA_PROCESSED_PATH=/xml-cilia/processados
+export DROPBOX_CILIA_ERROR_PATH=/xml-cilia/erro
+
+
+/home/ofi7ipojuca/.virtualenvs/venv/bin/python <<'PYEOF'
+import os
+
+NOVO_TOKEN = "COLOQUE_O_NOVO_TOKEN_AQUI_NA_MESMA_LINHA"
+
+content = f"""export DROPBOX_CILIA_ENABLED=true
+export DROPBOX_ACCESS_TOKEN={NOVO_TOKEN}
+export DROPBOX_CILIA_INPUT_PATH=/xml-cilia/entrada
+export DROPBOX_CILIA_PROCESSED_PATH=/xml-cilia/processados
+export DROPBOX_CILIA_ERROR_PATH=/xml-cilia/erro
+"""
+
+path = '/home/ofi7ipojuca/.secrets/oficina_env.sh'
+with open(path, 'w') as f:
+    f.write(content)
+os.chmod(path, 0o600)
+print("Arquivo salvo com sucesso!")
+print("\nConteudo salvo:")
+with open(path, 'r') as f:
+    for i, line in enumerate(f, 1):
+        if 'ACCESS_TOKEN' in line:
+            print(f"{i}: export DROPBOX_ACCESS_TOKEN=sl.xxxx...(tamanho: {len(line.strip())} chars)")
+        else:
+            print(f"{i}: {line.rstrip()}")
+PYEOF
+
+
+
+/home/ofi7ipojuca/.virtualenvs/venv/bin/python <<'PYEOF'
+import os
+
+NOVO_TOKEN = "COLOQUE_O_NOVO_TOKEN_AQUI_NA_MESMA_LINHA"
+
+content = f"""export DROPBOX_CILIA_ENABLED=true
+export DROPBOX_ACCESS_TOKEN={NOVO_TOKEN}
+export DROPBOX_CILIA_INPUT_PATH=/xml-cilia/entrada
+export DROPBOX_CILIA_PROCESSED_PATH=/xml-cilia/processados
+export DROPBOX_CILIA_ERROR_PATH=/xml-cilia/erro
+"""
+
+path = '/home/ofi7ipojuca/.secrets/oficina_env.sh'
+with open(path, 'w') as f:
+    f.write(content)
+os.chmod(path, 0o600)
+print("Arquivo salvo com sucesso!")
+print("\nConteudo salvo:")
+with open(path, 'r') as f:
+    for i, line in enumerate(f, 1):
+        if 'ACCESS_TOKEN' in line:
+            print(f"{i}: export DROPBOX_ACCESS_TOKEN=sl.xxxx...(tamanho: {len(line.strip())} chars)")
+        else:
+            print(f"{i}: {line.rstrip()}")
+PYEOF

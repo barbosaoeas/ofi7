@@ -1,21 +1,21 @@
-{% extends 'base.html' %}
+﻿{% extends 'base.html' %}
 
 {% block title %}Importação XML | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Importação XML</h1>
-      <p class='mt-1 text-sm text-[#A3A3A3]'>Arquivo {{ job.file_name }}</p>
+      <h1 class='text-2xl font-semibold text-amber-700'>Importação XML</h1>
+      <p class='mt-1 text-sm text-slate-500'>Arquivo {{ job.file_name }}</p>
     </div>
     <div class='flex flex-wrap gap-3'>
-      <a href='{% url "budgets:import_job_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:import_job_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>
         Voltar
       </a>
       {% if can_delete_duplicate %}
         <form method='post' action='{% url "budgets:import_job_delete_duplicate" job.pk %}'>
           {% csrf_token %}
-          <button type='submit' class='rounded-md border border-[#7f1d1d] bg-[#450a0a] px-4 py-2 font-medium text-[#fca5a5] hover:brightness-110' onclick='return confirm("Excluir este registro duplicado da listagem?")'>
+          <button type='submit' class='rounded-md border border-red-200 bg-red-50 px-4 py-2 font-medium text-red-700 hover:brightness-110' onclick='return confirm("Excluir este registro duplicado da listagem?")'>
             Excluir duplicado
           </button>
         </form>
@@ -32,84 +32,84 @@
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3'>
-    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6 lg:col-span-2'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Resumo</h2>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 lg:col-span-2'>
+      <h2 class='text-lg font-semibold text-amber-700'>Resumo</h2>
       <div class='mt-4 grid grid-cols-1 gap-4 md:grid-cols-2'>
-        <div class='rounded-lg border border-[#262626] bg-[#121212] p-4'>
-          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Origem</div>
-          <div class='mt-2 text-base font-medium text-[#F5F5F5]'>{{ job.get_provider_display }}</div>
+        <div class='rounded-lg border border-slate-200 bg-slate-50 p-4'>
+          <div class='text-xs uppercase tracking-wide text-slate-500'>Origem</div>
+          <div class='mt-2 text-base font-medium text-slate-900'>{{ job.get_provider_display }}</div>
         </div>
-        <div class='rounded-lg border border-[#262626] bg-[#121212] p-4'>
-          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Status</div>
-          <div class='mt-2 text-base font-medium text-[#F5F5F5]'>{{ job.get_status_display }}</div>
+        <div class='rounded-lg border border-slate-200 bg-slate-50 p-4'>
+          <div class='text-xs uppercase tracking-wide text-slate-500'>Status</div>
+          <div class='mt-2 text-base font-medium text-slate-900'>{{ job.get_status_display }}</div>
         </div>
-        <div class='rounded-lg border border-[#262626] bg-[#121212] p-4'>
-          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Nº Cilia</div>
-          <div class='mt-2 text-base font-medium text-[#F5F5F5]'>{% if job.cilia_number %}#{{ job.cilia_number }}{% else %}-{% endif %}</div>
+        <div class='rounded-lg border border-slate-200 bg-slate-50 p-4'>
+          <div class='text-xs uppercase tracking-wide text-slate-500'>Nº Cilia</div>
+          <div class='mt-2 text-base font-medium text-slate-900'>{% if job.cilia_number %}#{{ job.cilia_number }}{% else %}-{% endif %}</div>
         </div>
-        <div class='rounded-lg border border-[#262626] bg-[#121212] p-4'>
-          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Hash</div>
-          <div class='mt-2 break-all font-mono text-xs text-[#F5F5F5]'>{% if job.file_hash %}{{ job.file_hash }}{% else %}-{% endif %}</div>
+        <div class='rounded-lg border border-slate-200 bg-slate-50 p-4'>
+          <div class='text-xs uppercase tracking-wide text-slate-500'>Hash</div>
+          <div class='mt-2 break-all font-mono text-xs text-slate-900'>{% if job.file_hash %}{{ job.file_hash }}{% else %}-{% endif %}</div>
         </div>
       </div>
 
       {% if job.error_message %}
-        <div class='mt-6 rounded-lg border border-[#7f1d1d] bg-[#2a0d0d] p-4'>
-          <div class='text-sm font-medium text-[#fecaca]'>Mensagem do processamento</div>
+        <div class='mt-6 rounded-lg border border-red-200 bg-[#2a0d0d] p-4'>
+          <div class='text-sm font-medium text-red-700'>Mensagem do processamento</div>
           <div class='mt-2 whitespace-pre-wrap text-sm text-[#f5d0d0]'>{{ job.error_message }}</div>
         </div>
       {% endif %}
 
       <div class='mt-6'>
-        <h3 class='text-base font-semibold text-[#D4AF37]'>XML bruto</h3>
-        <div class='mt-3 overflow-x-auto rounded-lg border border-[#262626] bg-[#121212] p-4'>
+        <h3 class='text-base font-semibold text-amber-700'>XML bruto</h3>
+        <div class='mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4'>
           {% if job.raw_xml %}
-            <pre class='whitespace-pre-wrap break-words text-xs text-[#d4d4d4]'>{{ job.raw_xml }}</pre>
+            <pre class='whitespace-pre-wrap break-words text-xs text-slate-400'>{{ job.raw_xml }}</pre>
           {% else %}
-            <div class='text-sm text-[#A3A3A3]'>Este job não possui o XML bruto salvo.</div>
+            <div class='text-sm text-slate-500'>Este job não possui o XML bruto salvo.</div>
           {% endif %}
         </div>
       </div>
     </div>
 
     <div class='space-y-6'>
-      <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-        <h2 class='text-lg font-semibold text-[#D4AF37]'>Linha do tempo</h2>
+      <div class='rounded-xl border border-slate-200 bg-white p-6'>
+        <h2 class='text-lg font-semibold text-amber-700'>Linha do tempo</h2>
         <dl class='mt-4 space-y-4 text-sm'>
           <div>
-            <dt class='text-[#A3A3A3]'>Detectado em</dt>
-            <dd class='mt-1 text-[#F5F5F5]'>{{ job.detected_at|date:'d/m/Y H:i' }}</dd>
+            <dt class='text-slate-500'>Detectado em</dt>
+            <dd class='mt-1 text-slate-900'>{{ job.detected_at|date:'d/m/Y H:i' }}</dd>
           </div>
           <div>
-            <dt class='text-[#A3A3A3]'>Processado em</dt>
-            <dd class='mt-1 text-[#F5F5F5]'>{% if job.processed_at %}{{ job.processed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}</dd>
+            <dt class='text-slate-500'>Processado em</dt>
+            <dd class='mt-1 text-slate-900'>{% if job.processed_at %}{{ job.processed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}</dd>
           </div>
           <div>
-            <dt class='text-[#A3A3A3]'>Atualizado em</dt>
-            <dd class='mt-1 text-[#F5F5F5]'>{{ job.updated_at|date:'d/m/Y H:i' }}</dd>
+            <dt class='text-slate-500'>Atualizado em</dt>
+            <dd class='mt-1 text-slate-900'>{{ job.updated_at|date:'d/m/Y H:i' }}</dd>
           </div>
         </dl>
       </div>
 
-      <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-        <h2 class='text-lg font-semibold text-[#D4AF37]'>Orçamento vinculado</h2>
+      <div class='rounded-xl border border-slate-200 bg-white p-6'>
+        <h2 class='text-lg font-semibold text-amber-700'>Orçamento vinculado</h2>
         {% if job.budget %}
           <div class='mt-4 space-y-3 text-sm'>
             <div>
-              <div class='text-[#A3A3A3]'>Orçamento</div>
-              <a href='{% url "budgets:budget_detail" job.budget.pk %}' class='mt-1 inline-flex text-[#D4AF37] hover:underline'>#{{ job.budget.display_number }}</a>
+              <div class='text-slate-500'>Orçamento</div>
+              <a href='{% url "budgets:budget_detail" job.budget.pk %}' class='mt-1 inline-flex text-amber-700 hover:underline'>#{{ job.budget.display_number }}</a>
             </div>
             <div>
-              <div class='text-[#A3A3A3]'>Cliente</div>
-              <div class='mt-1 text-[#F5F5F5]'>{{ job.budget.customer.name }}</div>
+              <div class='text-slate-500'>Cliente</div>
+              <div class='mt-1 text-slate-900'>{{ job.budget.customer.name }}</div>
             </div>
             <div>
-              <div class='text-[#A3A3A3]'>Placa</div>
-              <div class='mt-1 text-[#F5F5F5]'>{{ job.budget.vehicle.plate }}</div>
+              <div class='text-slate-500'>Placa</div>
+              <div class='mt-1 text-slate-900'>{{ job.budget.vehicle.plate }}</div>
             </div>
           </div>
         {% else %}
-          <div class='mt-4 text-sm text-[#A3A3A3]'>Nenhum orçamento vinculado a este processamento.</div>
+          <div class='mt-4 text-sm text-slate-500'>Nenhum orçamento vinculado a este processamento.</div>
         {% endif %}
       </div>
     </div>

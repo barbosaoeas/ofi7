@@ -1,26 +1,26 @@
-{% extends 'base.html' %}
+﻿{% extends 'base.html' %}
 
 {% block title %}Comissões (Abertas) | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Comissões (Abertas)</h1>
-      <p class='mt-1 text-sm text-[#A3A3A3]'>{% if show_all %}Total (filtrado):{% else %}Total em aberto:{% endif %} R$ {{ total_open_commission|floatformat:2 }}</p>
+      <h1 class='text-2xl font-semibold text-amber-700'>Comissões (Abertas)</h1>
+      <p class='mt-1 text-sm text-slate-500'>{% if show_all %}Total (filtrado):{% else %}Total em aberto:{% endif %} R$ {{ total_open_commission|floatformat:2 }}</p>
     </div>
     <div class='flex flex-wrap items-end gap-2 print-hide'>
       <form method='get' class='flex items-end gap-2'>
         <div>
-          <label class='block text-xs text-[#A3A3A3]' for='id_date_from'>De</label>
-          <input id='id_date_from' name='date_from' type='date' value='{{ date_from|date:"Y-m-d" }}' class='mt-1 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          <label class='block text-xs text-slate-500' for='id_date_from'>De</label>
+          <input id='id_date_from' name='date_from' type='date' value='{{ date_from|date:"Y-m-d" }}' class='mt-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' />
         </div>
         <div>
-          <label class='block text-xs text-[#A3A3A3]' for='id_date_to'>Até</label>
-          <input id='id_date_to' name='date_to' type='date' value='{{ date_to|date:"Y-m-d" }}' class='mt-1 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+          <label class='block text-xs text-slate-500' for='id_date_to'>Até</label>
+          <input id='id_date_to' name='date_to' type='date' value='{{ date_to|date:"Y-m-d" }}' class='mt-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' />
         </div>
         <div>
-          <label class='block text-xs text-[#A3A3A3]' for='id_collaborator_id'>Colaborador</label>
-          <select id='id_collaborator_id' name='collaborator_id' class='mt-1 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' {% if restrict_to_own_commissions %}disabled{% endif %}>
+          <label class='block text-xs text-slate-500' for='id_collaborator_id'>Colaborador</label>
+          <select id='id_collaborator_id' name='collaborator_id' class='mt-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if restrict_to_own_commissions %}disabled{% endif %}>
             {% if not restrict_to_own_commissions %}
               <option value=''>Todos</option>
             {% endif %}
@@ -32,13 +32,13 @@
             <input type='hidden' name='collaborator_id' value='{{ selected_collaborator_id }}' />
           {% endif %}
         </div>
-        <label class='mb-1 flex items-center gap-2 text-sm text-[#A3A3A3]'>
-          <input id='id_show_all' type='checkbox' name='show_all' value='1' {% if show_all %}checked{% endif %} class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+        <label class='mb-1 flex items-center gap-2 text-sm text-slate-500'>
+          <input id='id_show_all' type='checkbox' name='show_all' value='1' {% if show_all %}checked{% endif %} class='h-4 w-4 rounded border border-slate-300 bg-white' />
           Mostrar pagos
         </label>
-        <button type='submit' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>Filtrar</button>
+        <button type='submit' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:border-[#D4AF37]'>Filtrar</button>
       </form>
-      <button type='button' id='commission-print' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+      <button type='button' id='commission-print' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm hover:border-[#D4AF37]'>
         Imprimir
       </button>
     </div>
@@ -120,9 +120,9 @@
       </div>
     </div>
 
-    <div class='overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='overflow-hidden rounded-lg border border-slate-200'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414]'>
+        <thead class='bg-slate-100'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Colaborador</th>
             <th class='px-4 py-3 font-semibold'>Orçamento</th>
@@ -161,9 +161,9 @@
 
   <div id='commission-print-host'></div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A]'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-[#141414] text-[#D4AF37]'>
+      <thead class='bg-slate-100 text-amber-700'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Colaborador</th>
           <th class='px-4 py-3 font-semibold'>Orçamento</th>
@@ -177,28 +177,28 @@
       </thead>
       <tbody class='divide-y divide-[#262626]'>
         {% for line in commissions %}
-          <tr class='hover:bg-[#121212]'>
+          <tr class='hover:bg-slate-50'>
             <td class='px-4 py-3'>{{ line.collaborator.name }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>
+            <td class='px-4 py-3 text-slate-500'>
               <a class='hover:underline' href='{% url "budgets:budget_detail" line.task.work_order.budget_id %}'>#{{ line.task.work_order.budget.display_number }}</a>
             </td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>
-              <div class='text-[#F5F5F5]'>
+            <td class='px-4 py-3 text-slate-500'>
+              <div class='text-slate-900'>
                 {% if line.task.service %}{{ line.task.service.name }}{% else %}{{ line.task.get_activity_display }}{% endif %}
               </div>
               {% if line.task.description %}
-                <div class='mt-0.5 text-xs text-[#A3A3A3]'>{{ line.task.description }}</div>
+                <div class='mt-0.5 text-xs text-slate-500'>{{ line.task.description }}</div>
               {% endif %}
             </td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{% if line.task.completed_at %}{{ line.task.completed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ line.base_amount|floatformat:2 }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{{ line.percent|floatformat:2 }}%</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ line.commission_amount|floatformat:2 }}</td>
-            <td class='px-4 py-3 text-[#A3A3A3]'>{% if line.is_paid %}Pago{% else %}Em aberto{% endif %}</td>
+            <td class='px-4 py-3 text-slate-500'>{% if line.task.completed_at %}{{ line.task.completed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}</td>
+            <td class='px-4 py-3 text-slate-500'>R$ {{ line.base_amount|floatformat:2 }}</td>
+            <td class='px-4 py-3 text-slate-500'>{{ line.percent|floatformat:2 }}%</td>
+            <td class='px-4 py-3 text-slate-500'>R$ {{ line.commission_amount|floatformat:2 }}</td>
+            <td class='px-4 py-3 text-slate-500'>{% if line.is_paid %}Pago{% else %}Em aberto{% endif %}</td>
           </tr>
         {% empty %}
           <tr>
-            <td class='px-4 py-6 text-[#A3A3A3]' colspan='8'>Nenhuma comissão.</td>
+            <td class='px-4 py-6 text-slate-500' colspan='8'>Nenhuma comissão.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -206,14 +206,14 @@
   </div>
 
   {% if is_paginated %}
-    <div class='mt-6 flex items-center justify-between text-sm text-[#A3A3A3]'>
+    <div class='mt-6 flex items-center justify-between text-sm text-slate-500'>
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>

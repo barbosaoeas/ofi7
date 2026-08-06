@@ -546,6 +546,64 @@ def extract_service_lines(xml_bytes):
     return service_lines
 
 
+def _infer_customer_type(root, customer_document):
+    insurer_tags = {
+        'seguradora',
+        'seguradoras',
+        'nome_seguradora',
+        'nome_seguradoras',
+        'nomeseguradora',
+        'seguradora_nome',
+        'seguradoranome',
+        'segurado',
+        'apolice',
+        'apólice',
+        'numero_apolice',
+        'numeroapolice',
+        'n_apolice',
+        'sinistro',
+        'numero_sinistro',
+        'numerosinistro',
+        'n_sinistro',
+        'num_sinistro',
+        'data_sinistro',
+        'datasinistro',
+        'tipo_cliente',
+        'tipocliente',
+        'cliente_tipo',
+        'clientetipo',
+    }
+    for el in root.iter():
+        if el.tag is None:
+            continue
+        tag = str(el.tag).split('}')[-1].lower()
+        if tag in insurer_tags:
+            text = _element_value(el)
+            if text:
+                return 'INSURER'
+        for attr_key in el.attrib.keys():
+            key = _normalize_text(attr_key).lower()
+            if key in insurer_tags:
+                value = _normalize_text(el.attrib.get(attr_key))
+                if value:
+                    return 'INSURER'
+
+    tipo_cliente_raw = _find_first_text(root, ['tipo_cliente', 'tipocliente', 'cliente_tipo', 'clientetipo']).lower()
+    if tipo_cliente_raw:
+        if 'segur' in tipo_cliente_raw:
+            return 'INSURER'
+        if 'empres' in tipo_cliente_raw or 'juridi' in tipo_cliente_raw or 'cnpj' in tipo_cliente_raw or 'pj' in tipo_cliente_raw:
+            return 'COMPANY'
+        if 'partic' in tipo_cliente_raw or 'fisic' in tipo_cliente_raw or 'cpf' in tipo_cliente_raw or 'pf' in tipo_cliente_raw:
+            return 'PARTICULAR'
+
+    document_digits = _digits_only(customer_document)
+    if len(document_digits) == 14:
+        return 'COMPANY'
+
+    return 'PARTICULAR'
+
+
 def parse_cilia_xml(xml_bytes):
     root = ElementTree.fromstring(xml_bytes)
     cilia_number = _digits_only(_find_first_text(root, ['numero_orcamento'])) or ''
@@ -631,5 +689,6 @@ def parse_cilia_xml(xml_bytes):
     )
 
     total_amount, breakdown = _find_total_amount(root)
+    customer_type = _infer_customer_type(root, customer_document)
 
-    return customer, vehicle, pieces, total_amount, breakdown, cilia_number_value, cilia_version_value
+    return customer, vehicle, pieces, total_amount, breakdown, cilia_number_value, cilia_version_value, customer_type

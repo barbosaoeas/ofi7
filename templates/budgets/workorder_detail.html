@@ -9,64 +9,80 @@
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-[#D4AF37]'>OS #{{ work_order.budget.display_number }}</h1>
-      <p class='mt-1 text-sm text-[#A3A3A3]'>Criada em {{ work_order.created_at|date:'d/m/Y H:i' }}</p>
+      <h1 class='text-2xl font-semibold text-amber-700'>OS #{{ work_order.budget.display_number }}</h1>
+      <p class='mt-1 text-sm text-slate-500'>Criada em {{ work_order.created_at|date:'d/m/Y H:i' }}</p>
     </div>
     <div class='flex flex-wrap gap-3'>
-      <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
         Abrir Orçamento
       </a>
-      <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
         Voltar
       </a>
     </div>
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-3'>
-    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6 md:col-span-2'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Dados</h2>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:col-span-2'>
+      <h2 class='text-lg font-semibold text-amber-700'>Dados</h2>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
         <div>
-          <dt class='text-[#A3A3A3]'>Status</dt>
-          <dd class='mt-1'>{{ work_order.get_status_display }}</dd>
+          <dt class='text-slate-500'>Status</dt>
+          <dd class='mt-1 text-slate-900'>{{ work_order.get_status_display }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Cliente</dt>
-          <dd class='mt-1'>{{ work_order.budget.customer.name }}</dd>
+          <dt class='text-slate-500'>Tipo cliente</dt>
+          <dd class='mt-1'>
+            {% with ct=work_order.budget.customer_type %}
+              {% if ct == 'INSURER' %}
+                <span class='rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800'>Seguradora</span>
+              {% elif ct == 'COMPANY' %}
+                <span class='rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800'>Empresa</span>
+              {% elif ct == 'PARTICULAR' %}
+                <span class='rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800'>Particular</span>
+              {% else %}
+                <span class='rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800'>Não classificado</span>
+              {% endif %}
+            {% endwith %}
+          </dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Veículo</dt>
-          <dd class='mt-1'>{{ work_order.budget.vehicle.plate }}</dd>
+          <dt class='text-slate-500'>Cliente</dt>
+          <dd class='mt-1 text-slate-900'>{{ work_order.budget.customer.name }}</dd>
+        </div>
+        <div>
+          <dt class='text-slate-500'>Veículo</dt>
+          <dd class='mt-1 text-slate-900'>{{ work_order.budget.vehicle.plate }}</dd>
         </div>
       </dl>
       <div class='mt-6'>
-        <div class='text-sm text-[#A3A3A3]'>Atualizada</div>
-        <div class='mt-1 text-sm'>{{ work_order.updated_at|date:'d/m/Y H:i' }}</div>
+        <div class='text-sm text-slate-500'>Atualizada</div>
+        <div class='mt-1 text-sm text-slate-700'>{{ work_order.updated_at|date:'d/m/Y H:i' }}</div>
       </div>
     </div>
 
-    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Foto</h2>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
+      <h2 class='text-lg font-semibold text-amber-700'>Foto</h2>
       <div class='mt-4'>
         {% if work_order.vehicle_image_url %}
-          <a href='{{ work_order.vehicle_image_url }}' target='_blank' class='block overflow-hidden rounded-lg border border-[#262626] hover:border-[#D4AF37]'>
+          <a href='{{ work_order.vehicle_image_url }}' target='_blank' class='block overflow-hidden rounded-lg border border-slate-200 hover:border-[#D4AF37]'>
             <img src='{{ work_order.vehicle_image_url }}' alt='Veículo' class='h-48 w-full object-cover' />
           </a>
         {% else %}
-          <div class='rounded-lg border border-[#262626] bg-[#141414] px-4 py-6 text-sm text-[#A3A3A3]'>Sem imagem</div>
+          <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500'>Sem imagem</div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Tarefas</h2>
+      <h2 class='text-lg font-semibold text-amber-700'>Tarefas</h2>
       <div class='flex items-center gap-3 no-print'>
         <form method='get' class='flex items-end gap-2'>
           <div>
-            <label class='block text-xs text-[#A3A3A3]' for='id_task_collaborator'>Colaborador</label>
-            <select id='id_task_collaborator' name='collaborator_id' class='mt-1 w-56 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' onchange='this.form.submit()'>
+            <label class='block text-xs text-slate-500' for='id_task_collaborator'>Colaborador</label>
+            <select id='id_task_collaborator' name='collaborator_id' class='mt-1 w-56 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' onchange='this.form.submit()'>
               <option value=''>Todos</option>
               {% for c in collaborators_operational %}
                 <option value='{{ c.id }}' {% if selected_collaborator and selected_collaborator.id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -74,27 +90,27 @@
             </select>
           </div>
         </form>
-        <button type='button' onclick='window.print()' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+        <button type='button' onclick='window.print()' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
           Imprimir
         </button>
       </div>
     </div>
-    <div class='mt-1 text-sm text-[#A3A3A3]'>
+    <div class='mt-1 text-sm text-slate-500'>
       {{ tasks_open_count }} abertas · {{ tasks_done_count }} concluídas{% if selected_collaborator %} · {{ selected_collaborator.name }}{% endif %}
     </div>
 
-    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-[#262626] bg-[#121212] p-4 no-print'>
+    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 no-print'>
       <form method='post' action='{% url "budgets:workorder_task_bulk_assign" work_order.pk %}' class='flex flex-wrap items-end gap-3'>
         {% csrf_token %}
         <input type='hidden' name='next' value='{{ request.get_full_path }}' />
         <input type='hidden' name='task_ids' value='' data-bulk-task-ids='1' />
         <div class='min-w-[150px]'>
-          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Selecionadas</div>
-          <div class='mt-1 text-sm text-[#F5F5F5]'><span data-bulk-selected-count='1'>0</span> tarefa(s)</div>
+          <div class='text-xs uppercase tracking-wide text-slate-500'>Selecionadas</div>
+          <div class='mt-1 text-sm text-slate-900'><span data-bulk-selected-count='1'>0</span> tarefa(s)</div>
         </div>
         <div class='min-w-[240px]'>
-          <label class='block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_bulk_collaborator_id'>Atribuir para</label>
-          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' required>
+          <label class='block text-xs uppercase tracking-wide text-slate-500' for='id_bulk_collaborator_id'>Atribuir para</label>
+          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' required>
             <option value=''>Selecione</option>
             {% for c in collaborators_operational %}
               <option value='{{ c.id }}'>{{ c.name }}</option>
@@ -102,10 +118,10 @@
           </select>
         </div>
         <div class='flex flex-wrap gap-2'>
-          <button type='button' data-bulk-select-all='1' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+          <button type='button' data-bulk-select-all='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
             Selecionar todas
           </button>
-          <button type='button' data-bulk-clear='1' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+          <button type='button' data-bulk-clear='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
             Limpar
           </button>
           <button type='submit' data-bulk-submit='1' disabled class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-50'>
@@ -115,12 +131,12 @@
       </form>
     </div>
 
-    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold bulk-select-col no-print'>
-              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-slate-300 bg-white' />
             </th>
             <th class='px-4 py-3 font-semibold'>Atividade</th>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
@@ -133,22 +149,22 @@
             <th class='px-4 py-3 font-semibold'></th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626]'>
+        <tbody class='divide-y divide-slate-200'>
           {% for t in tasks_open %}
-            <tr class='hover:bg-[#121212]' data-task-row='1'>
+            <tr class='hover:bg-slate-50' data-task-row='1'>
               <td class='px-4 py-3 bulk-select-col no-print'>
                 <input
                   type='checkbox'
                   value='{{ t.id }}'
                   data-bulk-task-checkbox='1'
-                  class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-40'
+                  class='h-4 w-4 rounded border border-slate-300 bg-white disabled:cursor-not-allowed disabled:opacity-40'
                   {% if t.collaborator_id %}disabled{% endif %}
                 />
               </td>
-              <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-slate-900'>{{ t.get_activity_display }}</td>
+              <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
               <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                   <option value=''>-</option>
                   {% for c in collaborators_operational %}
                     <option value='{{ c.id }}' {% if t.collaborator_id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -160,11 +176,11 @@
                   form='task-{{ t.id }}'
                   name='scheduled_date'
                   type='date'
-                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}'
                 />
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-slate-600'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
               <td class='px-4 py-3'>
                 <input
                   form='task-{{ t.id }}'
@@ -172,7 +188,7 @@
                   type='number'
                   step='0.01'
                   min='0'
-                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{{ t.planned_amount|unlocalize }}'
                 />
               </td>
@@ -185,15 +201,15 @@
                     step='0.01'
                     min='0'
                     data-planned-hours='{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|unlocalize }}{% else %}0{% endif %}'
-                    class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5] actual-hours-input'
+                    class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 actual-hours-input'
                     value='{{ t.actual_hours|unlocalize }}'
                     {% if t.status == 'RUNNING' %}disabled{% endif %}
                   />
-                  <div class='text-xs text-[#FECACA] hidden' data-overrun-text='1'></div>
+                  <div class='text-xs text-red-700 hidden' data-overrun-text='1'></div>
                 </div>
               </td>
               <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                   {% for value, label in task_status_choices %}
                     <option value='{{ value }}' {% if t.status == value %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
@@ -210,30 +226,30 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='10'>Nenhuma tarefa cadastrada.</td>
+              <td class='px-4 py-6 text-slate-500' colspan='10'>Nenhuma tarefa cadastrada.</td>
             </tr>
           {% endfor %}
 
           {% if tasks_done_count and tasks_done_count > 0 %}
-            <tr class='bg-[#141414]'>
-              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='10'>Concluídas ({{ tasks_done_count }})</td>
+            <tr class='bg-slate-50'>
+              <td class='px-4 py-3 text-sm font-semibold text-amber-700' colspan='10'>Concluídas ({{ tasks_done_count }})</td>
             </tr>
             {% for t in tasks_done %}
-              <tr class='hover:bg-[#121212] opacity-70'>
+              <tr class='hover:bg-slate-50 opacity-80'>
                 <td class='px-4 py-3 bulk-select-col no-print'></td>
-                <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
-                <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
+                <td class='px-4 py-3 text-slate-900'>{{ t.get_activity_display }}</td>
+                <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
                 <td class='px-4 py-3'>
-                  <select disabled class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                  <select disabled class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                     <option>{% if t.collaborator %}{{ t.collaborator.name }}{% else %}-{% endif %}</option>
                   </select>
                 </td>
                 <td class='px-4 py-3'>
-                  <input disabled type='date' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}' />
+                  <input disabled type='date' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}' />
                 </td>
-                <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
+                <td class='px-4 py-3 text-slate-600'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
                 <td class='px-4 py-3'>
-                  <input disabled type='number' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' value='{{ t.planned_amount|unlocalize }}' />
+                  <input disabled type='number' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' value='{{ t.planned_amount|unlocalize }}' />
                 </td>
                 <td class='px-4 py-3'>
                   <div class='space-y-1'>
@@ -244,19 +260,19 @@
                       step='0.01'
                       min='0'
                       data-planned-hours='{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|unlocalize }}{% else %}0{% endif %}'
-                      class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5] actual-hours-input'
+                      class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 actual-hours-input'
                       value='{{ t.actual_hours|unlocalize }}'
                     />
-                    <div class='text-xs text-[#FECACA] hidden' data-overrun-text='1'></div>
+                    <div class='text-xs text-red-700 hidden' data-overrun-text='1'></div>
                   </div>
                 </td>
                 <td class='px-4 py-3'>
-                  <select disabled class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                  <select disabled class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                     <option>Concluído</option>
                   </select>
                 </td>
                 <td class='px-4 py-3 text-right'>
-                  <span class='inline-flex items-center rounded-full border border-[#404040] bg-[#262626] px-3 py-2 text-sm text-[#A3A3A3]'>Concluída</span>
+                  <span class='inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-600'>Concluída</span>
                 </td>
               </tr>
             {% endfor %}
@@ -266,10 +282,10 @@
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Serviços de Terceiros</h2>
-      <div class='text-sm text-[#A3A3A3]'>
+      <h2 class='text-lg font-semibold text-amber-700'>Serviços de Terceiros</h2>
+      <div class='text-sm text-slate-500'>
         {{ third_party_open_count }} abertos · {{ third_party_done_count }} concluídos
       </div>
     </div>
@@ -278,12 +294,12 @@
       {% csrf_token %}
       <input type='hidden' name='next' value='{{ request.get_full_path }}' />
       <div class='md:col-span-4'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_description'>Descrição</label>
-        <input id='id_os_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Ex.: alinhamento externo' required />
+        <label class='block text-sm text-slate-500' for='id_os_third_party_description'>Descrição</label>
+        <input id='id_os_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' placeholder='Ex.: alinhamento externo' required />
       </div>
       <div class='md:col-span-3'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_supplier'>Fornecedor</label>
-        <select id='id_os_third_party_supplier' name='supplier_id' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+        <label class='block text-sm text-slate-500' for='id_os_third_party_supplier'>Fornecedor</label>
+        <select id='id_os_third_party_supplier' name='supplier_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
           <option value=''>-</option>
           {% for supplier in suppliers_active %}
             <option value='{{ supplier.id }}'>{{ supplier.name }}</option>
@@ -291,16 +307,16 @@
         </select>
       </div>
       <div class='md:col-span-2'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_date'>Data</label>
-        <input id='id_os_third_party_date' name='scheduled_date' type='date' value='{{ today|date:"Y-m-d" }}' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' />
+        <label class='block text-sm text-slate-500' for='id_os_third_party_date'>Data</label>
+        <input id='id_os_third_party_date' name='scheduled_date' type='date' value='{{ today|date:"Y-m-d" }}' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' />
       </div>
       <div class='md:col-span-2'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_os_third_party_amount'>Valor (R$)</label>
-        <input id='id_os_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='0,00' required />
+        <label class='block text-sm text-slate-500' for='id_os_third_party_amount'>Valor (R$)</label>
+        <input id='id_os_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' placeholder='0,00' required />
       </div>
       <div class='md:col-span-1 flex items-end'>
-        <label class='flex items-center gap-2 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
-          <input type='checkbox' name='is_shop_service' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
+        <label class='flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800'>
+          <input type='checkbox' name='is_shop_service' class='h-4 w-4 rounded border border-slate-300 bg-white' />
           Oficina
         </label>
       </div>
@@ -311,9 +327,9 @@
       </div>
     </form>
 
-    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Fornecedor</th>
@@ -324,20 +340,20 @@
             <th class='px-4 py-3 font-semibold text-right'>Ações</th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626]'>
+        <tbody class='divide-y divide-slate-200'>
           {% for s in third_party_open %}
-            <tr class='hover:bg-[#121212]'>
+            <tr class='hover:bg-slate-50'>
               <td class='px-4 py-3'>
                 <input
                   form='third-party-{{ s.id }}'
                   name='description'
                   type='text'
-                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{{ s.description }}'
                 />
               </td>
               <td class='px-4 py-3'>
-                <select form='third-party-{{ s.id }}' name='supplier_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                <select form='third-party-{{ s.id }}' name='supplier_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                   <option value=''>-</option>
                   {% for supplier in suppliers_active %}
                     <option value='{{ supplier.id }}' {% if s.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
@@ -349,7 +365,7 @@
                   form='third-party-{{ s.id }}'
                   name='scheduled_date'
                   type='date'
-                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{% if s.scheduled_date %}{{ s.scheduled_date|date:"Y-m-d" }}{% endif %}'
                 />
               </td>
@@ -358,7 +374,7 @@
                   form='third-party-{{ s.id }}'
                   name='amount'
                   type='text'
-                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{{ s.amount|unlocalize }}'
                 />
               </td>
@@ -367,12 +383,12 @@
                   form='third-party-{{ s.id }}'
                   name='is_shop_service'
                   type='checkbox'
-                  class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]'
+                  class='h-4 w-4 rounded border border-slate-300 bg-white'
                   {% if s.effective_is_shop_service %}checked{% endif %}
                 />
               </td>
               <td class='px-4 py-3'>
-                <select form='third-party-{{ s.id }}' name='status' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
+                <select form='third-party-{{ s.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
                   {% for value, label in third_party_status_choices %}
                     <option value='{{ value }}' {% if s.status == value %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
@@ -390,7 +406,7 @@
                   <form method='post' action='{% url "budgets:third_party_finish" s.id %}'>
                     {% csrf_token %}
                     <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-                    <button type='submit' class='rounded-md border border-[#14532d] bg-[#052e16] px-3 py-2 text-sm text-[#86efac] hover:brightness-110'>
+                    <button type='submit' class='rounded-md border border-green-300 bg-green-100 px-3 py-2 text-sm text-green-800 hover:brightness-95'>
                       Finalizar
                     </button>
                   </form>
@@ -399,27 +415,27 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='7'>Nenhum serviço de terceiro em aberto.</td>
+              <td class='px-4 py-6 text-slate-500' colspan='7'>Nenhum serviço de terceiro em aberto.</td>
             </tr>
           {% endfor %}
 
           {% if third_party_done_count and third_party_done_count > 0 %}
-            <tr class='bg-[#141414]'>
-              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='7'>Concluídos ({{ third_party_done_count }})</td>
+            <tr class='bg-slate-50'>
+              <td class='px-4 py-3 text-sm font-semibold text-amber-700' colspan='7'>Concluídos ({{ third_party_done_count }})</td>
             </tr>
             {% for s in third_party_done %}
-              <tr class='hover:bg-[#121212] opacity-70'>
-                <td class='px-4 py-3'>{{ s.description }}</td>
-                <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.supplier %}{{ s.supplier.name }}{% else %}-{% endif %}</td>
-                <td class='px-4 py-3 text-[#A3A3A3]'>
+              <tr class='hover:bg-slate-50 opacity-80'>
+                <td class='px-4 py-3 text-slate-900'>{{ s.description }}</td>
+                <td class='px-4 py-3 text-slate-600'>{% if s.supplier %}{{ s.supplier.name }}{% else %}-{% endif %}</td>
+                <td class='px-4 py-3 text-slate-600'>
                   {% if s.scheduled_date %}{{ s.scheduled_date|date:'d/m/Y' }}{% else %}-{% endif %}
                 </td>
-                <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ s.amount|floatformat:2 }}</td>
-                <td class='px-4 py-3 text-center text-[#A3A3A3]'>{% if s.effective_is_shop_service %}Sim{% else %}Não{% endif %}</td>
+                <td class='px-4 py-3 text-slate-600'>R$ {{ s.amount|floatformat:2 }}</td>
+                <td class='px-4 py-3 text-center text-slate-600'>{% if s.effective_is_shop_service %}Sim{% else %}Não{% endif %}</td>
                 <td class='px-4 py-3'>
-                  <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2.5 py-1 text-xs text-[#86efac]'>Concluído</span>
+                  <span class='rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs text-green-800'>Concluído</span>
                 </td>
-                <td class='px-4 py-3 text-right text-[#A3A3A3]'>
+                <td class='px-4 py-3 text-right text-slate-500'>
                   {% if s.completed_at %}{{ s.completed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}
                 </td>
               </tr>
@@ -604,12 +620,14 @@
 
   <style>
     .actual-ok {
-      background-color: #063018 !important;
-      border-color: #2F855A !important;
+      background-color: #ECFDF5 !important;
+      border-color: #10B981 !important;
+      color: #065F46 !important;
     }
     .actual-over {
-      background-color: #3B0A0A !important;
-      border-color: #7F1D1D !important;
+      background-color: #FEF2F2 !important;
+      border-color: #EF4444 !important;
+      color: #991B1B !important;
     }
     @media print {
       header {

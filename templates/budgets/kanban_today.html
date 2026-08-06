@@ -5,6 +5,7 @@
 {% block main_class %}{% if not user.is_superuser and user.role == 'VISUAL' %}p-1{% else %}px-2 py-3{% endif %}{% endblock %}
 
 {% block content %}
+  <div style="background:#0D0D0D!important;min-height:calc(100vh - 80px);margin:-2rem -1rem;padding:2rem 1rem;">
   {% if not user.is_superuser and user.role == 'VISUAL' %}
     <div class='mb-2 flex items-center justify-between gap-2'>
       <div class='text-sm font-semibold text-[#D4AF37]'>Kanban <span id='kanban-selected-date'>{{ selected_date|date:'d/m/Y' }}</span></div>
@@ -264,4 +265,5 @@
       setInterval(refreshKanban, 8000);
     })();
   </script>
+  </div>
 {% endblock %}

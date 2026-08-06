@@ -18,6 +18,11 @@ class Budget(models.Model):
         AUTHORIZED = 'AUTHORIZED', 'Autorizada'
         NOT_APPROVED = 'NOT_APPROVED', 'Não Aprovada'
 
+    class CustomerType(models.TextChoices):
+        PARTICULAR = 'PARTICULAR', 'Particular'
+        INSURER = 'INSURER', 'Seguradora'
+        COMPANY = 'COMPANY', 'Empresa'
+
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name='budgets')
     vehicle = models.ForeignKey(Vehicle, on_delete=models.PROTECT, related_name='budgets')
     cilia_number = models.PositiveIntegerField(unique=True, null=True, blank=True)
@@ -31,6 +36,7 @@ class Budget(models.Model):
     )
     complement_sequence = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    customer_type = models.CharField(max_length=20, choices=CustomerType.choices, null=True, blank=True)
     refusal_reason_code = models.CharField(max_length=40, choices=RefusalReasonCode.choices, blank=True)
     refusal_reason = models.CharField(max_length=255, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
@@ -388,6 +394,7 @@ class CashMovement(models.Model):
     )
     budget = models.ForeignKey(Budget, on_delete=models.PROTECT, null=True, blank=True, related_name='cash_movements')
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_movements')
+    customer_type = models.CharField(max_length=20, choices=Budget.CustomerType.choices, null=True, blank=True)
     bank_account = models.ForeignKey('BankAccount', on_delete=models.PROTECT, null=True, blank=True, related_name='movements')
     supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='movements')
     direction = models.CharField(max_length=10, choices=Direction.choices, default=Direction.IN)

@@ -5,139 +5,153 @@
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-[#D4AF37]'>Orçamento #{{ budget.display_number }}</h1>
-      <p class='mt-1 text-sm text-[#A3A3A3]'>Criado em {{ budget.created_at|date:'d/m/Y H:i' }}</p>
+      <h1 class='text-2xl font-semibold text-amber-700'>Orçamento #{{ budget.display_number }}</h1>
+      <p class='mt-1 text-sm text-slate-500'>Criado em {{ budget.created_at|date:'d/m/Y H:i' }}</p>
     </div>
     <div class='flex flex-wrap gap-3'>
       {% if budget.cilia_number %}
-        <a href='{% url "budgets:budget_download_xml" budget.cilia_number %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:budget_download_xml" budget.cilia_number %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
           Baixar XML
         </a>
       {% endif %}
       {% if work_order and user.is_superuser or work_order and user.role == 'MANAGER' or work_order and user.role == 'FINANCE' %}
-        <a href='{% url "budgets:workorder_detail" work_order.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+        <a href='{% url "budgets:workorder_detail" work_order.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D] shadow-sm'>
           Abrir OS
         </a>
       {% endif %}
-      <a href='{% url "budgets:budget_update" budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:budget_update" budget.pk %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
         Editar
       </a>
       {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' %}
-        <a href='{% url "budgets:budget_delete" budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:budget_delete" budget.pk %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
           Excluir
         </a>
       {% endif %}
-      <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:budget_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
         Voltar
       </a>
     </div>
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-2'>
-    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Cliente</h2>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
+      <h2 class='text-lg font-semibold text-amber-700'>Cliente</h2>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
         <div>
-          <dt class='text-[#A3A3A3]'>Nome</dt>
-          <dd class='mt-1'>{{ budget.customer.name }}</dd>
+          <dt class='text-slate-500'>Nome</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.customer.name }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>CPF/CNPJ</dt>
-          <dd class='mt-1'>{{ budget.customer.document_cpf_cnpj }}</dd>
+          <dt class='text-slate-500'>Tipo</dt>
+          <dd class='mt-1'>
+            {% if budget.customer_type == 'INSURER' %}
+              <span class='rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800'>Seguradora</span>
+            {% elif budget.customer_type == 'COMPANY' %}
+              <span class='rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800'>Empresa</span>
+            {% elif budget.customer_type == 'PARTICULAR' %}
+              <span class='rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800'>Particular</span>
+            {% else %}
+              <span class='rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800'>Não classificado</span>
+            {% endif %}
+          </dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Telefone</dt>
-          <dd class='mt-1'>{{ budget.customer.phone|default:'-' }}</dd>
+          <dt class='text-slate-500'>CPF/CNPJ</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.customer.document_cpf_cnpj }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>E-mail</dt>
-          <dd class='mt-1'>{{ budget.customer.email|default:'-' }}</dd>
+          <dt class='text-slate-500'>Telefone</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.customer.phone|default:'-' }}</dd>
+        </div>
+        <div>
+          <dt class='text-slate-500'>E-mail</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.customer.email|default:'-' }}</dd>
         </div>
       </dl>
     </div>
 
-    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
       <div class='flex flex-wrap items-center justify-between gap-3'>
-        <h2 class='text-lg font-semibold text-[#D4AF37]'>Veículo</h2>
+        <h2 class='text-lg font-semibold text-amber-700'>Veículo</h2>
         {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' %}
-          <a href='{% url "customers:vehicle_update" budget.vehicle.pk %}?next={{ request.get_full_path|urlencode }}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
+          <a href='{% url "customers:vehicle_update" budget.vehicle.pk %}?next={{ request.get_full_path|urlencode }}' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
             Editar foto
           </a>
         {% endif %}
       </div>
       <div class='mt-4'>
         {% if budget.vehicle.photo_url %}
-          <a href='{{ budget.vehicle.photo_url }}' target='_blank' rel='noreferrer' class='block overflow-hidden rounded-lg border border-[#262626] hover:border-[#D4AF37]'>
+          <a href='{{ budget.vehicle.photo_url }}' target='_blank' rel='noreferrer' class='block overflow-hidden rounded-lg border border-slate-200 hover:border-[#D4AF37]'>
             <img src='{{ budget.vehicle.photo_url }}' alt='Veículo {{ budget.vehicle.plate }}' class='h-48 w-full object-cover' />
           </a>
         {% else %}
-          <div class='rounded-lg border border-[#262626] bg-[#141414] px-4 py-6 text-sm text-[#A3A3A3]'>Sem imagem</div>
+          <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500'>Sem imagem</div>
         {% endif %}
       </div>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
         <div>
-          <dt class='text-[#A3A3A3]'>Placa</dt>
-          <dd class='mt-1'>{{ budget.vehicle.plate }}</dd>
+          <dt class='text-slate-500'>Placa</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.vehicle.plate }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Marca/Modelo</dt>
-          <dd class='mt-1'>{{ budget.vehicle.brand }} {{ budget.vehicle.model }}</dd>
+          <dt class='text-slate-500'>Marca/Modelo</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.vehicle.brand }} {{ budget.vehicle.model }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Cor</dt>
-          <dd class='mt-1'>{{ budget.vehicle.color|default:'-' }}</dd>
+          <dt class='text-slate-500'>Cor</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.vehicle.color|default:'-' }}</dd>
         </div>
         <div>
-          <dt class='text-[#A3A3A3]'>Ano</dt>
-          <dd class='mt-1'>{{ budget.vehicle.year|default:'-' }}</dd>
+          <dt class='text-slate-500'>Ano</dt>
+          <dd class='mt-1 text-slate-900'>{{ budget.vehicle.year|default:'-' }}</dd>
         </div>
       </dl>
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <div>
-        <h2 class='text-lg font-semibold text-[#D4AF37]'>Fotos do orçamento</h2>
-        <p class='mt-1 text-sm text-[#A3A3A3]'>Registre avarias, detalhes e evolução do serviço.</p>
+        <h2 class='text-lg font-semibold text-amber-700'>Fotos do orçamento</h2>
+        <p class='mt-1 text-sm text-slate-500'>Registre avarias, detalhes e evolução do serviço.</p>
       </div>
-      <span class='rounded-full border border-[#404040] bg-[#262626] px-3 py-1 text-sm text-[#A3A3A3]'>{{ photos|length }} foto{{ photos|length|pluralize }}</span>
+      <span class='rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm text-slate-500'>{{ photos|length }} foto{{ photos|length|pluralize }}</span>
     </div>
 
     <form class='mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto]' method='post' action='{% url "budgets:budget_photo_create" budget.pk %}' enctype='multipart/form-data'>
       {% csrf_token %}
       <div>
-        <label class='block text-sm text-[#A3A3A3]' for='id_budget_photo_caption'>Legenda</label>
-        <input id='id_budget_photo_caption' name='caption' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Ex.: lateral direita antes da funilaria' />
+        <label class='block text-sm text-slate-500' for='id_budget_photo_caption'>Legenda</label>
+        <input id='id_budget_photo_caption' name='caption' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' placeholder='Ex.: lateral direita antes da funilaria' />
       </div>
       <div>
-        <label class='block text-sm text-[#A3A3A3]' for='id_budget_photo_file'>Foto</label>
-        <input id='id_budget_photo_file' name='image_file' type='file' accept='image/*' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-[#262626] file:px-3 file:py-2 file:text-sm file:text-[#F5F5F5]' required />
+        <label class='block text-sm text-slate-500' for='id_budget_photo_file'>Foto</label>
+        <input id='id_budget_photo_file' name='image_file' type='file' accept='image/*' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:text-slate-800' required />
       </div>
       <div class='flex items-end'>
-        <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>Enviar foto</button>
+        <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D] shadow-sm'>Enviar foto</button>
       </div>
     </form>
 
     {% if photos %}
       <div class='mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3'>
         {% for photo in photos %}
-          <div class='overflow-hidden rounded-xl border border-[#262626] bg-[#121212]'>
+          <div class='overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm'>
             <a href='{{ photo.image_url }}' target='_blank' rel='noreferrer' class='block'>
-              <img src='{{ photo.image_url }}' alt='Foto orçamento {{ budget.display_number }}' class='h-56 w-full bg-[#0D0D0D] object-cover' />
+              <img src='{{ photo.image_url }}' alt='Foto orçamento {{ budget.display_number }}' class='h-56 w-full bg-slate-50 object-cover' />
             </a>
             <div class='space-y-3 p-4'>
               <div>
-                <div class='text-sm font-medium text-[#F5F5F5]'>{{ photo.caption|default:'Sem legenda' }}</div>
-                <div class='mt-1 text-xs text-[#A3A3A3]'>{{ photo.created_at|date:'d/m/Y H:i' }}</div>
+                <div class='text-sm font-medium text-slate-900'>{{ photo.caption|default:'Sem legenda' }}</div>
+                <div class='mt-1 text-xs text-slate-500'>{{ photo.created_at|date:'d/m/Y H:i' }}</div>
               </div>
               <div class='flex flex-wrap gap-2'>
-                <a href='{{ photo.image_url }}' target='_blank' rel='noreferrer' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                <a href='{{ photo.image_url }}' target='_blank' rel='noreferrer' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]'>
                   Abrir
                 </a>
                 <form method='post' action='{% url "budgets:budget_photo_delete" photo.pk %}' onsubmit='return confirm("Excluir esta foto do orçamento?");'>
                   {% csrf_token %}
-                  <button type='submit' class='rounded-md border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-2 text-xs text-[#FECACA] hover:border-[#DC2626]'>
+                  <button type='submit' class='rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 shadow-sm hover:border-red-400'>
                     Excluir
                   </button>
                 </form>
@@ -147,54 +161,68 @@
         {% endfor %}
       </div>
     {% else %}
-      <div class='mt-6 rounded-lg border border-dashed border-[#404040] bg-[#121212] px-4 py-8 text-center text-sm text-[#A3A3A3]'>
+      <div class='mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500'>
         Nenhuma foto cadastrada neste orçamento.
       </div>
     {% endif %}
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
-    <h2 class='text-lg font-semibold text-[#D4AF37]'>Dados do orçamento</h2>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
+    <h2 class='text-lg font-semibold text-amber-700'>Dados do orçamento</h2>
     <div class='mt-4 grid grid-cols-1 gap-6 md:grid-cols-6'>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Status</div>
-        <div class='mt-1'>{{ budget.get_status_display }}</div>
+        <div class='text-sm text-slate-500'>Status</div>
+        <div class='mt-1 text-slate-900'>{{ budget.get_status_display }}</div>
       </div>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Motivo recusa</div>
+        <div class='text-sm text-slate-500'>Tipo cliente</div>
         <div class='mt-1'>
+          {% if budget.customer_type == 'INSURER' %}
+            <span class='rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800'>Seguradora</span>
+          {% elif budget.customer_type == 'COMPANY' %}
+            <span class='rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800'>Empresa</span>
+          {% elif budget.customer_type == 'PARTICULAR' %}
+            <span class='rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800'>Particular</span>
+          {% else %}
+            <span class='rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800'>Não classificado</span>
+          {% endif %}
+        </div>
+      </div>
+      <div>
+        <div class='text-sm text-slate-500'>Motivo recusa</div>
+        <div class='mt-1 text-slate-900'>
           {% if budget.refusal_reason_code %}{{ budget.get_refusal_reason_code_display }}{% endif %}
           {% if budget.refusal_reason %}{% if budget.refusal_reason_code %} · {% endif %}{{ budget.refusal_reason }}{% endif %}
           {% if not budget.refusal_reason_code and not budget.refusal_reason %}-{% endif %}
         </div>
       </div>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Data entrada</div>
-        <div class='mt-1'>{{ budget.entry_date|date:'d/m/Y'|default:'-' }}</div>
+        <div class='text-sm text-slate-500'>Data entrada</div>
+        <div class='mt-1 text-slate-900'>{{ budget.entry_date|date:'d/m/Y'|default:'-' }}</div>
       </div>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Início reparo</div>
-        <div class='mt-1'>{{ budget.repair_start_date|date:'d/m/Y'|default:'-' }}</div>
+        <div class='text-sm text-slate-500'>Início reparo</div>
+        <div class='mt-1 text-slate-900'>{{ budget.repair_start_date|date:'d/m/Y'|default:'-' }}</div>
       </div>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Previsão entrega</div>
-        <div class='mt-1'>{{ budget.expected_delivery_date|date:'d/m/Y'|default:'-' }}</div>
+        <div class='text-sm text-slate-500'>Previsão entrega</div>
+        <div class='mt-1 text-slate-900'>{{ budget.expected_delivery_date|date:'d/m/Y'|default:'-' }}</div>
       </div>
       <div>
-        <div class='text-sm text-[#A3A3A3]'>Reparo sem peças</div>
-        <div class='mt-1'>{% if budget.allow_repair_without_parts %}Sim{% else %}Não{% endif %}</div>
+        <div class='text-sm text-slate-500'>Reparo sem peças</div>
+        <div class='mt-1 text-slate-900'>{% if budget.allow_repair_without_parts %}Sim{% else %}Não{% endif %}</div>
       </div>
     </div>
     <div class='mt-6'>
-      <div class='text-sm text-[#A3A3A3]'>Total</div>
-      <div class='mt-1 text-xl font-semibold text-[#D4AF37]'>R$ {{ budget.total_amount|floatformat:2 }}</div>
+      <div class='text-sm text-slate-500'>Total</div>
+      <div class='mt-1 text-xl font-semibold text-amber-700'>R$ {{ budget.total_amount|floatformat:2 }}</div>
     </div>
 
-    <div class='mt-6 rounded-lg border border-[#262626] bg-[#121212] p-4'>
+    <div class='mt-6 rounded-lg border border-slate-200 bg-slate-50 p-4'>
       <div class='flex flex-wrap items-center justify-between gap-3'>
         <div>
-          <div class='text-sm text-[#A3A3A3]'>Entrega do veículo</div>
-          <div class='mt-1 text-base font-semibold {% if delivery_status.can_deliver %}text-[#D4AF37]{% else %}text-[#F5F5F5]{% endif %}'>
+          <div class='text-sm text-slate-500'>Entrega do veículo</div>
+          <div class='mt-1 text-base font-semibold {% if delivery_status.can_deliver %}text-amber-700{% else %}text-slate-900{% endif %}'>
             {% if budget.is_delivered %}
               Veículo entregue
             {% elif delivery_status.can_deliver %}
@@ -204,30 +232,49 @@
             {% endif %}
           </div>
         </div>
-        <div class='text-sm text-[#A3A3A3]'>
+        <div class='text-sm text-slate-500'>
           {{ delivery_status.task_done }}/{{ delivery_status.task_total }} tarefas · {{ delivery_status.third_done }}/{{ delivery_status.third_total }} terceiros
         </div>
       </div>
       <div class='mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
-        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
-          <div class='text-[#A3A3A3]'>Tipo financeiro</div>
-          <div class='mt-1 font-medium text-[#F5F5F5]'>{{ delivery_status.kind }}</div>
+        <div class='rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm'>
+          <div class='text-slate-500'>Tipo financeiro</div>
+          <div class='mt-1 font-medium text-slate-900'>{{ delivery_status.kind }}</div>
         </div>
-        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
-          <div class='text-[#A3A3A3]'>Recebido</div>
-          <div class='mt-1 font-medium text-[#F5F5F5]'>R$ {{ delivery_status.finance_realized_amount|floatformat:2 }}</div>
+        <div class='rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm'>
+          <div class='text-slate-500'>Recebido</div>
+          <div class='mt-1 font-medium text-slate-900'>R$ {{ delivery_status.finance_realized_amount|floatformat:2 }}</div>
         </div>
-        <div class='rounded-lg border border-[#262626] bg-[#141414] px-3 py-3'>
-          <div class='text-[#A3A3A3]'>Em aberto</div>
-          <div class='mt-1 font-medium text-[#F5F5F5]'>R$ {{ delivery_status.finance_open_amount|floatformat:2 }}</div>
+        <div class='rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm {% if delivery_status.finance_overdue_days > 0 %}ring-1 ring-red-500/60{% endif %}'>
+          <div class='text-slate-500'>Em aberto</div>
+          <div class='mt-1 font-medium {% if delivery_status.finance_overdue_days > 0 %}text-red-700{% else %}text-slate-900{% endif %}'>
+            R$ {{ delivery_status.finance_open_amount|floatformat:2 }}
+          </div>
+          {% if delivery_status.finance_overdue_days > 0 %}
+            <div class='mt-2 flex flex-wrap items-center gap-2 text-xs'>
+              <span class='rounded-full bg-red-50 px-2 py-1 font-semibold text-red-700 ring-1 ring-inset ring-red-200'>
+                {{ delivery_status.finance_overdue_days }} dia{{ delivery_status.finance_overdue_days|pluralize }} em atraso
+              </span>
+              {% if delivery_status.finance_overdue_amount > 0 %}
+                <span class='rounded-full border border-red-200 bg-red-50 px-2 py-1 text-red-800'>
+                  R$ {{ delivery_status.finance_overdue_amount|floatformat:2 }} atrasado{{ delivery_status.finance_overdue_amount|pluralize }}
+                </span>
+              {% endif %}
+              {% if delivery_status.finance_oldest_overdue_date %}
+                <span class='text-amber-700 font-medium'>
+                  desde {{ delivery_status.finance_oldest_overdue_date|date:'d/m/Y' }}
+                </span>
+              {% endif %}
+            </div>
+          {% endif %}
         </div>
       </div>
       {% if budget.delivered_at %}
-        <div class='mt-3 text-sm text-[#A3A3A3]'>
+        <div class='mt-3 text-sm text-slate-500'>
           Entregue em {{ budget.delivered_at|date:'d/m/Y H:i' }}{% if budget.delivered_by %} por {{ budget.delivered_by.email }}{% endif %}.
         </div>
         {% if budget.administrative_closure %}
-          <div class='mt-3 rounded-md border border-[#854d0e] bg-[#2b1d0e] px-3 py-2 text-xs text-[#fde68a]'>
+          <div class='mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800'>
             Finalização administrativa registrada{% if budget.administrative_closed_at %} em {{ budget.administrative_closed_at|date:'d/m/Y H:i' }}{% endif %}{% if budget.administrative_closed_by %} por {{ budget.administrative_closed_by.email }}{% endif %}.
             {% if budget.administrative_closure_reason %} Motivo: {{ budget.administrative_closure_reason }}{% endif %}
           </div>
@@ -239,7 +286,7 @@
               {% csrf_token %}
               <button
                 type='submit'
-                class='inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition {% if delivery_status.can_deliver %}bg-[#D4AF37] text-[#111111] hover:brightness-110{% else %}cursor-not-allowed border border-[#3a3a3a] bg-[#1a1a1a] text-[#6b7280]{% endif %}'
+                class='inline-flex items-center rounded-md px-4 py-2 text-sm font-medium transition {% if delivery_status.can_deliver %}bg-[#D4AF37] text-[#111111] hover:brightness-110{% else %}cursor-not-allowed border border-slate-300 bg-white text-slate-400{% endif %} shadow-sm'
                 {% if not delivery_status.can_deliver %}disabled{% endif %}
                 {% if delivery_status.can_deliver %}onclick='return confirm("Confirmar entrega do veículo?")'{% endif %}
               >
@@ -250,7 +297,7 @@
               <button
                 type='button'
                 data-admin-close-open='1'
-                class='inline-flex items-center rounded-md border border-[#854d0e] bg-[#2b1d0e] px-4 py-2 text-sm font-medium text-[#fde68a] transition hover:border-[#D4AF37] hover:bg-[#33220d]'
+                class='inline-flex items-center rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 transition shadow-sm hover:border-[#D4AF37] hover:bg-amber-100'
               >
                 Finalização administrativa
               </button>
@@ -262,73 +309,73 @@
         <div class='mt-3 flex flex-wrap gap-2'>
           {% for blocker in delivery_status.blockers %}
             {% if blocker == 'Existem pendências financeiras em aberto.' and delivery_finance_url %}
-              <a href='{{ delivery_finance_url }}' class='rounded-full border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-1 text-xs text-[#FECACA] underline decoration-[#FECACA]/70 underline-offset-2 hover:brightness-110'>
+              <a href='{{ delivery_finance_url }}' class='rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs text-red-800 underline decoration-red-700/70 underline-offset-2 hover:brightness-110'>
                 {{ blocker }}
               </a>
             {% else %}
-              <span class='rounded-full border border-[#7F1D1D] bg-[#2A0D0D] px-3 py-1 text-xs text-[#FECACA]'>{{ blocker }}</span>
+              <span class='rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs text-red-800'>{{ blocker }}</span>
             {% endif %}
           {% endfor %}
         </div>
       {% endif %}
       {% if delivery_status.finance_note %}
-        <div class='mt-3 rounded-md border border-[#1d4ed8] bg-[#0b1733] px-3 py-2 text-xs text-[#bfdbfe]'>
+        <div class='mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800'>
           {{ delivery_status.finance_note }}
         </div>
       {% endif %}
     </div>
 
-    <div class='mt-6 overflow-hidden rounded-lg border border-[#262626]'>
-      <div class='bg-[#141414] px-4 py-3 text-sm font-semibold text-[#D4AF37]'>Composição (Cilia)</div>
+    <div class='mt-6 overflow-hidden rounded-lg border border-slate-200 shadow-sm'>
+      <div class='bg-slate-50 px-4 py-3 text-sm font-semibold text-amber-700 border-b border-slate-200'>Composição (Cilia)</div>
       <div class='grid grid-cols-1 gap-4 px-4 py-4 text-sm md:grid-cols-6'>
         {% if budget.shop_parts_total and budget.shop_parts_total > 0 %}
           <div>
-            <div class='text-[#A3A3A3]'>Peças (Oficina)</div>
-            <div class='mt-1'>R$ {{ budget.shop_parts_total|floatformat:2 }}</div>
+            <div class='text-slate-500'>Peças (Oficina)</div>
+            <div class='mt-1 text-slate-900'>R$ {{ budget.shop_parts_total|floatformat:2 }}</div>
           </div>
         {% endif %}
         {% if third_party_services_total and third_party_services_total > 0 %}
           <div>
-            <div class='text-[#A3A3A3]'>Serviços e Terceiros</div>
-            <div class='mt-1'>R$ {{ third_party_services_total|floatformat:2 }}</div>
+            <div class='text-slate-500'>Serviços e Terceiros</div>
+            <div class='mt-1 text-slate-900'>R$ {{ third_party_services_total|floatformat:2 }}</div>
           </div>
         {% endif %}
         {% if budget.labor_total and budget.labor_total > 0 %}
           <div>
-            <div class='text-[#A3A3A3]'>Mão de obra</div>
-            <div class='mt-1'>R$ {{ budget.labor_total|floatformat:2 }}</div>
+            <div class='text-slate-500'>Mão de obra</div>
+            <div class='mt-1 text-slate-900'>R$ {{ budget.labor_total|floatformat:2 }}</div>
           </div>
         {% endif %}
         {% if budget.discount_total and budget.discount_total > 0 %}
           <div>
-            <div class='text-[#A3A3A3]'>Desconto</div>
-            <div class='mt-1'>R$ {{ budget.discount_total|floatformat:2 }}</div>
+            <div class='text-slate-500'>Desconto</div>
+            <div class='mt-1 text-slate-900'>R$ {{ budget.discount_total|floatformat:2 }}</div>
           </div>
         {% endif %}
         {% if budget.markup_total and budget.markup_total > 0 %}
           <div>
-            <div class='text-[#A3A3A3]'>Majoração</div>
-            <div class='mt-1'>R$ {{ budget.markup_total|floatformat:2 }}</div>
+            <div class='text-slate-500'>Majoração</div>
+            <div class='mt-1 text-slate-900'>R$ {{ budget.markup_total|floatformat:2 }}</div>
           </div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Peças</h2>
+      <h2 class='text-lg font-semibold text-amber-700'>Peças</h2>
       <div class='flex items-center gap-3'>
-        <a href='{% url "budgets:piece_create" budget.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
+        <a href='{% url "budgets:piece_create" budget.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] shadow-sm'>
           Nova peça
         </a>
-        <span class='text-sm text-[#A3A3A3]'>{{ pieces_parts.count }}</span>
+        <span class='text-sm text-slate-500'>{{ pieces_parts.count }}</span>
       </div>
     </div>
 
-    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200 shadow-sm'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Nome</th>
             <th class='px-4 py-3 font-semibold'>Fornecedor</th>
@@ -339,36 +386,36 @@
             <th class='px-4 py-3 font-semibold'></th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626]'>
+        <tbody class='divide-y divide-slate-200'>
           {% for piece in pieces_parts %}
-            <tr class='hover:bg-[#121212]'>
-              <td class='px-4 py-3'>{{ piece.name }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{{ piece.get_provider_type_display }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+            <tr class='hover:bg-slate-50'>
+              <td class='px-4 py-3 text-slate-900'>{{ piece.name }}</td>
+              <td class='px-4 py-3 text-slate-500'>{{ piece.get_provider_type_display }}</td>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if piece.purchase_date %}
                   {{ piece.purchase_date|date:'d/m/Y' }}
                 {% else %}
-                  <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#FECACA]'>Não comprada</span>
+                  <span class='rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800'>Não comprada</span>
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if piece.expected_arrival_date %}
                   {{ piece.expected_arrival_date|date:'d/m/Y' }}
                   {% if not piece.arrived and piece.expected_arrival_date < today %}
-                    <span class='ml-2 rounded-full border border-[#7F1D1D] bg-[#3B0A0A] px-2 py-0.5 text-xs text-[#FECACA]'>Atrasada</span>
+                    <span class='ml-2 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800'>Atrasada</span>
                   {% endif %}
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if piece.arrived %}
                   Sim{% if piece.arrival_date %} · {{ piece.arrival_date|date:'d/m/Y' }}{% endif %}
                 {% else %}
                   Não
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if piece.provider_type == 'SHOP' %}
                   R$ {{ piece.cost_price|floatformat:2 }}
                 {% else %}
@@ -377,10 +424,10 @@
               </td>
               <td class='px-4 py-3'>
                 <div class='flex flex-wrap justify-end gap-2'>
-                  <a href='{% url "budgets:piece_update" piece.pk %}' class='whitespace-nowrap rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                  <a href='{% url "budgets:piece_update" piece.pk %}' class='whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 shadow-sm hover:border-[#D4AF37]'>
                     Editar
                   </a>
-                  <a href='{% url "budgets:piece_delete" piece.pk %}' class='whitespace-nowrap rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
+                  <a href='{% url "budgets:piece_delete" piece.pk %}' class='whitespace-nowrap rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 shadow-sm hover:border-[#D4AF37]'>
                     Excluir
                   </a>
                 </div>
@@ -388,7 +435,7 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='7'>Nenhuma peça cadastrada.</td>
+              <td class='px-4 py-6 text-slate-500' colspan='7'>Nenhuma peça cadastrada.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -396,15 +443,15 @@
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Mão de obra (detalhada)</h2>
-      <span class='text-sm text-[#A3A3A3]'>{{ service_lines|length }}</span>
+      <h2 class='text-lg font-semibold text-amber-700'>Mão de obra (detalhada)</h2>
+      <span class='text-sm text-slate-500'>{{ service_lines|length }}</span>
     </div>
 
-    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200 shadow-sm'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Cód.</th>
@@ -416,77 +463,77 @@
             <th class='px-4 py-3 font-semibold'>Valor</th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626]'>
+        <tbody class='divide-y divide-slate-200'>
           {% for s in service_lines %}
-            <tr class='hover:bg-[#121212]'>
-              <td class='px-4 py-3'>{{ s.description }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if s.code %}{{ s.code }}{% else %}-{% endif %}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+            <tr class='hover:bg-slate-50'>
+              <td class='px-4 py-3 text-slate-900'>{{ s.description }}</td>
+              <td class='px-4 py-3 text-slate-500'>{% if s.code %}{{ s.code }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.desmontagem_hours and s.desmontagem_hours > 0 %}
                   <div class='flex items-center gap-2'>
                     <span>{{ s.desmontagem_hours }}</span>
                     {% if s.desmontagem_amount and s.desmontagem_amount > 0 %}
-                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.desmontagem_amount|floatformat:2 }}</span>
+                      <span class='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-amber-700'>R$ {{ s.desmontagem_amount|floatformat:2 }}</span>
                     {% endif %}
                   </div>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.funilaria_hours and s.funilaria_hours > 0 %}
                   <div class='flex items-center gap-2'>
                     <span>{{ s.funilaria_hours }}</span>
                     {% if s.funilaria_amount and s.funilaria_amount > 0 %}
-                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.funilaria_amount|floatformat:2 }}</span>
+                      <span class='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-amber-700'>R$ {{ s.funilaria_amount|floatformat:2 }}</span>
                     {% endif %}
                   </div>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.preparacao_hours and s.preparacao_hours > 0 %}
                   <div class='flex items-center gap-2'>
                     <span>{{ s.preparacao_hours }}</span>
                     {% if s.preparacao_amount and s.preparacao_amount > 0 %}
-                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.preparacao_amount|floatformat:2 }}</span>
+                      <span class='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-amber-700'>R$ {{ s.preparacao_amount|floatformat:2 }}</span>
                     {% endif %}
                   </div>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.pintura_hours and s.pintura_hours > 0 %}
                   <div class='flex items-center gap-2'>
                     <span>{{ s.pintura_hours }}</span>
                     {% if s.pintura_amount and s.pintura_amount > 0 %}
-                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.pintura_amount|floatformat:2 }}</span>
+                      <span class='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-amber-700'>R$ {{ s.pintura_amount|floatformat:2 }}</span>
                     {% endif %}
                   </div>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.montagem_hours and s.montagem_hours > 0 %}
                   <div class='flex items-center gap-2'>
                     <span>{{ s.montagem_hours }}</span>
                     {% if s.montagem_amount and s.montagem_amount > 0 %}
-                      <span class='rounded-full border border-[#404040] bg-[#262626] px-2 py-0.5 text-xs text-[#D4AF37]'>R$ {{ s.montagem_amount|floatformat:2 }}</span>
+                      <span class='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-amber-700'>R$ {{ s.montagem_amount|floatformat:2 }}</span>
                     {% endif %}
                   </div>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if s.total_amount and s.total_amount > 0 %}
-                  <div class='flex flex-wrap items-center gap-2'>
+                  <div class='flex flex-wrap items-center gap-2 text-slate-900'>
                     <span>R$ {{ s.total_amount|floatformat:2 }}</span>
                     {% if s.completion_items %}
-                      <span class='rounded-full border px-2 py-0.5 text-xs {% if s.is_completed %}border-[#14532D] bg-[#052E16] text-[#BBF7D0]{% else %}border-[#7F1D1D] bg-[#2A0D0D] text-[#FECACA]{% endif %}'>
+                      <span class='rounded-full border px-2 py-0.5 text-xs {% if s.is_completed %}border-green-200 bg-green-50 text-green-800{% else %}border-red-200 bg-red-50 text-red-800{% endif %}'>
                         {{ s.completion_label }}
                       </span>
                     {% endif %}
@@ -494,7 +541,7 @@
                   {% if s.completion_items %}
                     <div class='mt-2 flex flex-wrap gap-1'>
                       {% for item in s.completion_items %}
-                        <span class='rounded-full border px-2 py-0.5 text-[11px] {% if item.done %}border-[#14532D] bg-[#052E16] text-[#BBF7D0]{% else %}border-[#404040] bg-[#262626] text-[#D4AF37]{% endif %}'>
+                        <span class='rounded-full border px-2 py-0.5 text-[11px] {% if item.done %}border-green-200 bg-green-50 text-green-800{% else %}border-slate-200 bg-slate-50 text-amber-700{% endif %}'>
                           {{ item.label }}: {% if item.done %}Concluído{% else %}Pendente{% endif %}
                         </span>
                       {% endfor %}
@@ -507,7 +554,7 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='8'>Nenhuma mão de obra encontrada no XML.</td>
+              <td class='px-4 py-6 text-slate-500' colspan='8'>Nenhuma mão de obra encontrada no XML.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -515,42 +562,42 @@
     </div>
   </div>
 
-  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-[#D4AF37]'>Serviços e Terceiros</h2>
-      <span class='text-sm text-[#A3A3A3]'>{{ third_party_services|length }}</span>
+      <h2 class='text-lg font-semibold text-amber-700'>Serviços e Terceiros</h2>
+      <span class='text-sm text-slate-500'>{{ third_party_services|length }}</span>
     </div>
 
     <form class='mt-4 flex flex-wrap items-end gap-3' method='post' action='{% url "budgets:third_party_create" budget.pk %}'>
       {% csrf_token %}
       <div class='flex-1 min-w-[220px]'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_third_party_description'>Descrição</label>
-        <input id='id_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='Lavagem do veículo' required />
+        <label class='block text-sm text-slate-500' for='id_third_party_description'>Descrição</label>
+        <input id='id_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' placeholder='Lavagem do veículo' required />
       </div>
       <div class='w-[160px]'>
-        <label class='block text-sm text-[#A3A3A3]' for='id_third_party_amount'>Valor (R$)</label>
-        <input id='id_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm' placeholder='70,00' required />
+        <label class='block text-sm text-slate-500' for='id_third_party_amount'>Valor (R$)</label>
+        <input id='id_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' placeholder='70,00' required />
       </div>
-      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>Adicionar</button>
+      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D] shadow-sm'>Adicionar</button>
     </form>
 
-    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200 shadow-sm'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Valor</th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626]'>
+        <tbody class='divide-y divide-slate-200'>
           {% for s in third_party_services %}
-            <tr class='hover:bg-[#121212]'>
-              <td class='px-4 py-3'>{{ s.description }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>R$ {{ s.total_amount|floatformat:2 }}</td>
+            <tr class='hover:bg-slate-50'>
+              <td class='px-4 py-3 text-slate-900'>{{ s.description }}</td>
+              <td class='px-4 py-3 text-slate-500'>R$ {{ s.total_amount|floatformat:2 }}</td>
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-[#A3A3A3]' colspan='2'>Nenhum serviço terceiro cadastrado.</td>
+              <td class='px-4 py-6 text-slate-500' colspan='2'>Nenhum serviço terceiro cadastrado.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -559,38 +606,38 @@
   </div>
 
   {% if administrative_closure_status.can_administratively_close %}
-    <div id='admin-close-modal' class='fixed inset-0 z-50 {% if administrative_closure_open %}flex{% else %}hidden{% endif %} items-center justify-center bg-black/70 px-4 py-6'>
-      <div class='w-full max-w-2xl rounded-xl border border-[#854d0e] bg-[#111111] shadow-2xl'>
-        <div class='flex items-start justify-between gap-4 border-b border-[#2d2d2d] px-6 py-4'>
+    <div id='admin-close-modal' class='fixed inset-0 z-50 {% if administrative_closure_open %}flex{% else %}hidden{% endif %} items-center justify-center bg-black/50 px-4 py-6'>
+      <div class='w-full max-w-2xl rounded-xl border border-amber-200 bg-white shadow-2xl'>
+        <div class='flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-4'>
           <div>
-            <h3 class='text-lg font-semibold text-[#fde68a]'>Finalização administrativa</h3>
-            <p class='mt-1 text-sm text-[#a3a3a3]'>Use apenas para orçamentos ativos ainda não iniciados no operacional.</p>
+            <h3 class='text-lg font-semibold text-amber-800'>Finalização administrativa</h3>
+            <p class='mt-1 text-sm text-slate-500'>Use apenas para orçamentos ativos ainda não iniciados no operacional.</p>
           </div>
-          <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-[#404040] bg-[#1a1a1a] px-3 py-2 text-xs text-[#f5f5f5] hover:border-[#D4AF37]'>
+          <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]'>
             Fechar
           </button>
         </div>
         <form method='post' action='{% url "budgets:budget_administrative_close" budget.pk %}' class='space-y-5 px-6 py-5'>
           {% csrf_token %}
-          <div class='rounded-lg border border-[#854d0e] bg-[#2b1d0e] px-4 py-3 text-sm text-[#fde68a]'>
+          <div class='rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800'>
             Este fluxo é exclusivo para implantação e não gera comissão.
           </div>
           <div class='grid grid-cols-1 gap-4 md:grid-cols-2'>
-            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-              <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Data de entrega sugerida</div>
+            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+              <div class='text-xs uppercase tracking-wide text-slate-500'>Data de entrega sugerida</div>
               <div class='mt-2'>
                 <input
                   name='delivery_date'
                   type='date'
                   value='{{ administrative_closure_form.delivery_date.value|default:administrative_closure_status.suggested_delivery_date|date:"Y-m-d" }}'
-                  class='w-full rounded-md border border-[#404040] bg-[#0d0d0d] px-3 py-2 text-sm text-[#f5f5f5]'
+                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'
                   required
                 />
               </div>
             </div>
-            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-              <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Financeiro</div>
-              <div class='mt-2 text-sm text-[#f5f5f5]'>
+            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+              <div class='text-xs uppercase tracking-wide text-slate-500'>Financeiro</div>
+              <div class='mt-2 text-sm text-slate-900'>
                 {% if administrative_closure_status.finance_registered %}
                   Lançamentos financeiros já localizados para este orçamento.
                 {% else %}
@@ -598,56 +645,63 @@
                 {% endif %}
               </div>
               {% if administrative_closure_status.finance_open_amount > 0 %}
-                <div class='mt-2 text-xs text-[#fde68a]'>
-                  Em aberto: R$ {{ administrative_closure_status.finance_open_amount|floatformat:2 }}
+                <div class='mt-2 flex flex-wrap items-center gap-2 text-xs'>
+                  <span class='text-amber-700 font-medium'>
+                    Em aberto: R$ {{ administrative_closure_status.finance_open_amount|floatformat:2 }}
+                  </span>
+                  {% if administrative_closure_status.finance_overdue_days > 0 %}
+                    <span class='rounded-full bg-red-50 px-2 py-1 font-semibold text-red-700 ring-1 ring-inset ring-red-200'>
+                      {{ administrative_closure_status.finance_overdue_days }} dia{{ administrative_closure_status.finance_overdue_days|pluralize }} em atraso
+                    </span>
+                  {% endif %}
                 </div>
               {% endif %}
               {% if administrative_closure_status.allows_future_insurer_receivables %}
-                <div class='mt-2 text-xs text-[#93c5fd]'>
+                <div class='mt-2 text-xs text-sky-800'>
                   Recebimento futuro de seguradora permitido para esta finalização.
                 </div>
               {% endif %}
             </div>
           </div>
-          <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-            <div class='text-xs uppercase tracking-wide text-[#a3a3a3]'>Motivo da finalização administrativa</div>
+          <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+            <div class='text-xs uppercase tracking-wide text-slate-500'>Motivo da finalização administrativa</div>
             <textarea
               name='reason'
               rows='4'
               placeholder='Ex.: veículo já entregue antes da implantação do Kanban.'
-              class='mt-2 w-full rounded-md border border-[#404040] bg-[#0d0d0d] px-3 py-2 text-sm text-[#f5f5f5]'
+              class='mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'
               required
             >{{ administrative_closure_form.reason.value|default:'' }}</textarea>
-            <label class='mt-3 flex items-center gap-2 text-sm text-[#f5f5f5]'>
+            <label class='mt-3 flex items-center gap-2 text-sm text-slate-700'>
               <input
                 type='checkbox'
                 name='confirm_no_commission'
                 value='1'
-                class='h-4 w-4 rounded border border-[#404040] bg-[#0d0d0d]'
+                class='h-4 w-4 rounded border border-slate-300 bg-white'
                 {% if administrative_closure_form.confirm_no_commission.value %}checked{% endif %}
               />
               Confirmo que esta finalização administrativa não deve gerar comissão.
             </label>
           </div>
           <div class='grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
-            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-              <div class='text-[#a3a3a3]'>Permissão</div>
-              <div class='mt-1 font-medium text-[#f5f5f5]'>Gerente</div>
+            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+              <div class='text-slate-500'>Permissão</div>
+              <div class='mt-1 font-medium text-slate-900'>Gerente</div>
             </div>
-            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-              <div class='text-[#a3a3a3]'>Fluxo</div>
-              <div class='mt-1 font-medium text-[#f5f5f5]'>Implantação / exceção</div>
+            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+              <div class='text-slate-500'>Fluxo</div>
+              <div class='mt-1 font-medium text-slate-900'>Implantação / exceção</div>
             </div>
-            <div class='rounded-lg border border-[#262626] bg-[#161616] px-4 py-3'>
-              <div class='text-[#a3a3a3]'>Comissão</div>
-              <div class='mt-1 font-medium text-[#f5f5f5]'>Não gera</div>
+            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
+              <div class='text-slate-500'>Comissão</div>
+              <div class='mt-1 font-medium text-slate-900'>Não gera</div>
             </div>
           </div>
-          <div class='flex flex-wrap justify-end gap-3 border-t border-[#2d2d2d] pt-4'>
-            <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-[#404040] bg-[#1a1a1a] px-4 py-2 text-sm text-[#f5f5f5] hover:border-[#D4AF37]'>
+          <div class='flex flex-wrap justify-end gap-3 border-t border-slate-200 pt-4'>
+            <button type='button' data-admin-close-dismiss='1' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
               Cancelar
             </button>
-            <button type='submit' class='rounded-md border border-[#854d0e] bg-[#2b1d0e] px-4 py-2 text-sm font-medium text-[#fde68a] hover:border-[#D4AF37] hover:bg-[#33220d]'>
+            <button type='submit' class='rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900 shadow-sm hover:border-[#D4AF37] hover:bg-amber-100'>
               Confirmar finalização administrativa
             </button>
           </div>

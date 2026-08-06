@@ -1750,9 +1750,10 @@ class BudgetFinancePromptTests(TestCase):
             )
         )
         budget.refresh_from_db()
-        self.assertEqual(budget.status, Budget.Status.PENDING)
-        self.assertIsNone(budget.approved_at)
-        self.assertFalse(WorkOrder.objects.filter(budget=budget).exists())
+        self.assertEqual(budget.status, Budget.Status.AUTHORIZED)
+        self.assertEqual(budget.entry_date, date(2026, 6, 22))
+        self.assertIsNotNone(budget.approved_at)
+        self.assertTrue(WorkOrder.objects.filter(budget=budget).exists())
 
     def test_finance_confirmation_completes_authorization(self):
         self.client.login(email=self.manager.email, password=self.password)

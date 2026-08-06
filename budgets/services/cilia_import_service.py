@@ -265,6 +265,7 @@ def import_cilia_xml_bytes(
             breakdown,
             cilia_number,
             cilia_version,
+            parsed_customer_type,
         ) = parse_cilia_xml(xml_bytes)
     except ElementTree.ParseError as exc:
         update_import_job(
@@ -395,6 +396,8 @@ def import_cilia_xml_bytes(
                 budget.labor_total = breakdown.get('labor_total', Decimal('0'))
                 budget.discount_total = breakdown.get('discount_total', Decimal('0'))
                 budget.markup_total = breakdown.get('markup_total', Decimal('0'))
+                if not budget.customer_type and parsed_customer_type:
+                    budget.customer_type = parsed_customer_type
                 budget.save(
                     update_fields=[
                         'customer',
@@ -408,6 +411,7 @@ def import_cilia_xml_bytes(
                         'discount_total',
                         'markup_total',
                         'source_xml',
+                        'customer_type',
                     ]
                 )
                 if xml_created_at is not None:

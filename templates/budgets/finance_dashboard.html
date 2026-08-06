@@ -5,62 +5,62 @@
 {% block main_class %}mx-auto max-w-7xl px-4 py-8{% endblock %}
 
 {% block content %}
-  <div class='rounded-3xl border border-[#262626] bg-gradient-to-br from-[#1A1A1A] via-[#161616] to-[#101010] p-6 shadow-2xl'>
+  <div class='rounded-3xl border border-slate-200 bg-white p-6 shadow-sm'>
     <div class='flex flex-wrap items-center justify-between gap-4'>
       <div>
-        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Controle Financeiro</div>
-        <h1 class='mt-2 text-3xl font-semibold text-[#F5F5F5]'>Lançamentos, recorrência e previsões</h1>
-        <p class='mt-2 max-w-3xl text-sm text-[#A3A3A3]'>
+        <div class='text-xs uppercase tracking-[0.35em] text-slate-500'>Controle Financeiro</div>
+        <h1 class='mt-2 text-3xl font-semibold text-slate-900'>Lançamentos, recorrência e previsões</h1>
+        <p class='mt-2 max-w-3xl text-sm text-slate-500'>
           Acompanhe o período, crie lançamentos manuais mais rápido e abra o dashboard gráfico para visão executiva.
         </p>
       </div>
       <div class='flex flex-wrap gap-3'>
-        <a href='{% url "budgets:finance_insights" %}' class='rounded-xl border border-[#1d4ed8] bg-[#0b1f3b] px-4 py-3 text-sm font-semibold text-[#bfdbfe] hover:brightness-110'>
+        <a href='{% url "budgets:finance_insights" %}' class='rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800 hover:bg-blue-100'>
           Abrir dashboard financeiro
         </a>
-        <a href='{% url "budgets:finance_import_xml" %}' class='rounded-xl border border-[#14532d] bg-[#052e16] px-4 py-3 text-sm font-semibold text-[#86efac] hover:brightness-110'>
+        <a href='{% url "budgets:finance_import_xml" %}' class='rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-100'>
           Importar XML financeiro
         </a>
-        <a href='{% url "budgets:finance_export_xml_template" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:finance_export_xml_template" %}' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
           Exportar modelo XML
         </a>
-        <button type='button' data-open-modal='movement-create' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-3 text-sm font-semibold text-[#0D0D0D] shadow-lg shadow-[#D4AF37]/10'>
+        <button type='button' data-open-modal='movement-create' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-3 text-sm font-semibold text-[#0D0D0D] shadow-sm'>
           Novo lançamento
         </button>
-        <button type='button' data-open-modal='categories' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+        <button type='button' data-open-modal='categories' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
           Tipos
         </button>
       </div>
     </div>
 
-    <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4 md:grid-cols-6'>
+    <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-6'>
       <div>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_start'>De</label>
-        <input id='id_start' type='date' name='start' value='{{ filters.start|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5] shadow-inner shadow-black/20' />
+        <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_start'>De</label>
+        <input id='id_start' type='date' name='start' value='{{ filters.start|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
       </div>
       <div>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_end'>Até</label>
-        <input id='id_end' type='date' name='end' value='{{ filters.end|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5] shadow-inner shadow-black/20' />
+        <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_end'>Até</label>
+        <input id='id_end' type='date' name='end' value='{{ filters.end|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
       </div>
       <div>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_direction'>Direção</label>
-        <select id='id_direction' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_direction'>Direção</label>
+        <select id='id_direction' name='direction' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
           <option value='' {% if not filters.direction %}selected{% endif %}>Todas</option>
           <option value='IN' {% if filters.direction == 'IN' %}selected{% endif %}>Entradas</option>
           <option value='OUT' {% if filters.direction == 'OUT' %}selected{% endif %}>Saídas</option>
         </select>
       </div>
       <div>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_realized'>Status</label>
-        <select id='id_realized' name='realized' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_realized'>Status</label>
+        <select id='id_realized' name='realized' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
           <option value='' {% if filters.realized == '' %}selected{% endif %}>Todos</option>
           <option value='0' {% if filters.realized == '0' %}selected{% endif %}>Em aberto</option>
           <option value='1' {% if filters.realized == '1' %}selected{% endif %}>Realizados</option>
         </select>
       </div>
       <div>
-        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_filter_source'>Origem</label>
-        <select id='id_filter_source' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_filter_source'>Origem</label>
+        <select id='id_filter_source' name='source' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
           <option value='' {% if not filters.origin_category_id %}selected{% endif %}>Todas</option>
           {% for origin in origin_options %}
             <option value='{{ origin.value }}' data-direction='{{ origin.direction }}' {% if filters.origin_category_id == origin.value %}selected{% endif %}>{{ origin.label }}</option>
@@ -69,11 +69,11 @@
       </div>
       <div class='md:col-span-2'></div>
       <div class='md:col-span-6 flex flex-wrap items-center justify-end gap-3 pt-1'>
-        <div class='mr-auto text-xs text-[#737373]'>{{ movement_count }} lançamento(s) no período selecionado</div>
+        <div class='mr-auto text-xs text-slate-400'>{{ movement_count }} lançamento(s) no período selecionado</div>
         <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2.5 text-sm font-semibold text-[#0D0D0D]'>
           Filtrar
         </button>
-        <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-2.5 text-sm hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
           Limpar
         </a>
       </div>
@@ -81,39 +81,39 @@
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
-    <div class='rounded-2xl border border-[#1f3b2d] bg-gradient-to-br from-[#0d1f16] to-[#0a140f] p-5'>
-      <div class='text-xs uppercase tracking-wide text-[#86efac]'>Previsto</div>
-      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ expected_net|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-[#A3A3A3]'>Entradas R$ {{ expected_in|floatformat:2 }} · Saídas R$ {{ expected_out|floatformat:2 }}</div>
+    <div class='rounded-2xl border border-emerald-200 bg-emerald-50 p-5'>
+      <div class='text-xs uppercase tracking-wide text-emerald-800'>Previsto</div>
+      <div class='mt-3 text-2xl font-semibold text-emerald-900'>R$ {{ expected_net|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-emerald-700'>Entradas R$ {{ expected_in|floatformat:2 }} · Saídas R$ {{ expected_out|floatformat:2 }}</div>
     </div>
-    <div class='rounded-2xl border border-[#233a57] bg-gradient-to-br from-[#0b1f3b] to-[#091728] p-5'>
-      <div class='text-xs uppercase tracking-wide text-[#93c5fd]'>Realizado</div>
-      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ realized_net|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-[#A3A3A3]'>Entradas R$ {{ realized_in|floatformat:2 }} · Saídas R$ {{ realized_out|floatformat:2 }}</div>
+    <div class='rounded-2xl border border-blue-200 bg-blue-50 p-5'>
+      <div class='text-xs uppercase tracking-wide text-blue-800'>Realizado</div>
+      <div class='mt-3 text-2xl font-semibold text-blue-900'>R$ {{ realized_net|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-blue-700'>Entradas R$ {{ realized_in|floatformat:2 }} · Saídas R$ {{ realized_out|floatformat:2 }}</div>
     </div>
-    <div class='rounded-2xl border border-[#5b3b13] bg-gradient-to-br from-[#2a1e06] to-[#1d1403] p-5'>
-      <div class='text-xs uppercase tracking-wide text-[#fcd34d]'>Em aberto</div>
-      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ open_in|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-[#A3A3A3]'>Receber R$ {{ open_in|floatformat:2 }} · Pagar R$ {{ open_out|floatformat:2 }}</div>
+    <div class='rounded-2xl border border-amber-200 bg-amber-50 p-5'>
+      <div class='text-xs uppercase tracking-wide text-amber-800'>Em aberto</div>
+      <div class='mt-3 text-2xl font-semibold text-amber-900'>R$ {{ open_in|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-amber-700'>Receber R$ {{ open_in|floatformat:2 }} · Pagar R$ {{ open_out|floatformat:2 }}</div>
     </div>
-    <div class='rounded-2xl border border-[#5f1f1f] bg-gradient-to-br from-[#3b0a0a] to-[#220808] p-5'>
-      <div class='text-xs uppercase tracking-wide text-[#fca5a5]'>Atrasado</div>
-      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ overdue_open|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-[#A3A3A3]'>Lançamentos em aberto vencidos até hoje</div>
+    <div class='rounded-2xl border border-red-200 bg-red-50 p-5'>
+      <div class='text-xs uppercase tracking-wide text-red-800'>Atrasado</div>
+      <div class='mt-3 text-2xl font-semibold text-red-900'>R$ {{ overdue_open|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-red-700'>Lançamentos em aberto vencidos até hoje</div>
     </div>
   </div>
 
-  <div class='mt-6 rounded-3xl border border-[#262626] bg-[#161616] p-5 shadow-xl'>
+  <div class='mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <div>
-        <h2 class='text-xl font-semibold text-[#D4AF37]'>Lançamentos do período</h2>
-        <p class='mt-1 text-sm text-[#A3A3A3]'>Use recorrência mensal para contas fixas e a opção entrada + saldo para recebimentos manuais.</p>
+        <h2 class='text-xl font-semibold text-amber-700'>Lançamentos do período</h2>
+        <p class='mt-1 text-sm text-slate-500'>Use recorrência mensal para contas fixas e a opção entrada + saldo para recebimentos manuais.</p>
       </div>
     </div>
 
-    <div class='mt-4 overflow-hidden rounded-2xl border border-[#262626]'>
+    <div class='mt-4 overflow-hidden rounded-2xl border border-slate-200'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-[#141414] text-[#D4AF37]'>
+        <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Lanç.</th>
             <th class='px-4 py-3 font-semibold'>Pagamento</th>
@@ -128,81 +128,81 @@
             <th class='px-4 py-3 font-semibold text-right'>Ações</th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-[#262626] bg-[#111111]'>
+        <tbody class='divide-y divide-slate-200 bg-white'>
           {% for m in movements %}
-            <tr class='hover:bg-[#171717]{% if not m.is_realized and m.due_date and m.due_date < filters.today %} bg-[#160808]{% endif %}'>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+            <tr class='hover:bg-slate-50{% if not m.is_realized and m.due_date and m.due_date < filters.today %} bg-red-50{% endif %}'>
+              <td class='px-4 py-3 text-slate-500'>
                 {{ m.launch_date|date:'d/m/Y'|default:'-' }}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 <div class='flex flex-wrap items-center gap-2'>
                   <div>{{ m.due_date|date:'d/m/Y' }}</div>
                   {% if not m.is_realized and m.due_date and m.due_date < filters.today %}
-                    <span class='rounded-full border border-[#7f1d1d] bg-[#450a0a] px-2.5 py-1 text-[11px] font-semibold text-[#fecaca]'>Atrasado</span>
+                    <span class='rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-700'>Atrasado</span>
                   {% endif %}
                 </div>
               </td>
               <td class='px-4 py-3'>
                 {% if m.direction == 'IN' %}
-                  <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2.5 py-1 text-xs text-[#86efac]'>Entrada</span>
+                  <span class='rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700'>Entrada</span>
                 {% else %}
-                  <span class='rounded-full border border-[#7f1d1d] bg-[#450a0a] px-2.5 py-1 text-xs text-[#fca5a5]'>Saída</span>
+                  <span class='rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs text-red-700'>Saída</span>
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.get_direction_display }}{% if m.category.direction == 'OUT' and m.category.group %} · {{ m.category.get_group_display }}{% endif %} · {{ m.category.name }}{% else %}{{ m.get_source_display }}{% endif %}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.bank_account %}{{ m.bank_account.bank_name }} - {{ m.bank_account.account_name }}{% else %}-{% endif %}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>{% if m.category %}{{ m.category.get_direction_display }}{% if m.category.direction == 'OUT' and m.category.group %} · {{ m.category.get_group_display }}{% endif %} · {{ m.category.name }}{% else %}{{ m.get_source_display }}{% endif %}</td>
+              <td class='px-4 py-3 text-slate-500'>{% if m.bank_account %}{{ m.bank_account.bank_name }} - {{ m.bank_account.account_name }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if m.direction == 'IN' %}
                   {{ m.customer.name|default:'-' }}
                 {% else %}
                   {% if m.supplier %}{{ m.supplier.name }}{% else %}-{% endif %}
                 {% endif %}
               </td>
-              <td class='px-4 py-3'>
+              <td class='px-4 py-3 text-slate-900'>
                 <div>{{ m.description|default:'-' }}</div>
                 {% if m.recurrence_total > 1 %}
-                  <div class='mt-1 text-xs text-[#93c5fd]'>Recorrente mensal · {{ m.recurrence_index }}/{{ m.recurrence_total }}</div>
+                  <div class='mt-1 text-xs text-blue-600'>Recorrente mensal · {{ m.recurrence_index }}/{{ m.recurrence_total }}</div>
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-slate-500'>
                 {% if m.budget %}
-                  <a class='hover:underline' href='{% url "budgets:budget_detail" m.budget.pk %}'>#{{ m.budget.display_number }}</a>
+                  <a class='hover:underline text-slate-900' href='{% url "budgets:budget_detail" m.budget.pk %}'>#{{ m.budget.display_number }}</a>
                 {% else %}
                   -
                 {% endif %}
               </td>
-              <td class='px-4 py-3 text-right font-semibold'>R$ {{ m.amount|floatformat:2 }}</td>
-              <td class='px-4 py-3 text-[#A3A3A3]'>
+              <td class='px-4 py-3 text-right font-semibold text-slate-900'>R$ {{ m.amount|floatformat:2 }}</td>
+              <td class='px-4 py-3'>
                 {% if m.is_realized %}
-                  <span class='rounded-full border border-[#14532d] bg-[#052e16] px-2.5 py-1 text-xs text-[#86efac]'>Realizado</span>
+                  <span class='rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700'>Realizado</span>
                 {% else %}
                   {% if m.due_date and m.due_date < filters.today %}
-                    <span class='rounded-full border border-[#7f1d1d] bg-[#450a0a] px-2.5 py-1 text-xs text-[#fecaca]'>Atrasado</span>
+                    <span class='rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs text-red-700'>Atrasado</span>
                   {% else %}
-                    <span class='rounded-full border border-[#404040] bg-[#262626] px-2.5 py-1 text-xs text-[#d4d4d4]'>Em aberto</span>
+                    <span class='rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs text-slate-700'>Em aberto</span>
                   {% endif %}
                 {% endif %}
               </td>
               <td class='px-4 py-3'>
-                <div class='flex flex-wrap justify-end gap-2'>
-                  <form method='post' class='inline'>
+                <div class='flex items-center justify-end gap-2'>
+                  <form method='post' class='flex items-center'>
                     {% csrf_token %}
                     <input type='hidden' name='action' value='toggle_movement_realized' />
                     <input type='hidden' name='movement_id' value='{{ m.id }}' />
                     <input type='hidden' name='next' value='{{ current_query }}' />
-                    <button type='submit' class='{% if m.is_realized %}rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]{% else %}rounded-xl bg-[#052e16] px-3 py-2 text-xs text-[#86efac] hover:brightness-110{% endif %}'>
+                    <button type='submit' class='{% if m.is_realized %}rounded-xl border border-slate-300 bg-white text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]{% else %}rounded-xl bg-emerald-500 text-xs text-white hover:bg-emerald-600{% endif %} inline-flex h-8 items-center justify-center px-3'>
                       {% if m.is_realized %}Reabrir{% else %}Confirmar{% endif %}
                     </button>
                   </form>
-                  <a href='{{ current_query }}{% if "?" in current_query %}&{% else %}?{% endif %}edit={{ m.id }}' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                  <a href='{{ current_query }}{% if "?" in current_query %}&{% else %}?{% endif %}edit={{ m.id }}' class='inline-flex h-8 items-center justify-center rounded-xl border border-slate-300 bg-white px-3 text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]'>
                     Editar
                   </a>
-                  <form method='post' class='inline' data-confirm='Excluir este lançamento?'>
+                  <form method='post' class='flex items-center' data-confirm='Excluir este lançamento?'>
                     {% csrf_token %}
                     <input type='hidden' name='action' value='delete_movement' />
                     <input type='hidden' name='movement_id' value='{{ m.id }}' />
                     <input type='hidden' name='next' value='{{ current_query }}' />
-                    <button type='submit' class='rounded-xl border border-[#7f1d1d] bg-[#450a0a] px-3 py-2 text-xs text-[#fca5a5] hover:brightness-110'>
+                    <button type='submit' class='inline-flex h-8 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 text-xs text-red-700 hover:border-red-400'>
                       Excluir
                     </button>
                   </form>
@@ -211,7 +211,7 @@
             </tr>
           {% empty %}
             <tr>
-              <td colspan='11' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Sem lançamentos no período.</td>
+              <td colspan='11' class='px-4 py-10 text-center text-sm text-slate-500'>Sem lançamentos no período.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -220,13 +220,13 @@
   </div>
 
   <div id='modal-movement-create' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4' data-modal='movement-create'>
-    <div class='w-full max-w-5xl overflow-hidden rounded-3xl border border-[#262626] bg-[#121212] shadow-2xl'>
-      <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-gradient-to-r from-[#141414] to-[#1d1d1d] px-5 py-4'>
+    <div class='w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl'>
+      <div class='flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4'>
         <div>
-          <div class='text-sm font-semibold text-[#D4AF37]'>Novo lançamento</div>
-          <div class='text-xs text-[#A3A3A3]'>Com recorrência mensal e opção de entrada + saldo</div>
+          <div class='text-sm font-semibold text-amber-700'>Novo lançamento</div>
+          <div class='text-xs text-slate-500'>Com recorrência mensal e opção de entrada + saldo</div>
         </div>
-        <button type='button' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' data-close-modal='movement-create'>Fechar</button>
+        <button type='button' class='rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]' data-close-modal='movement-create'>Fechar</button>
       </div>
       <form method='post' class='grid grid-cols-1 gap-4 p-5 md:grid-cols-12'>
         {% csrf_token %}
@@ -234,32 +234,32 @@
         <input type='hidden' name='next' value='{{ current_query }}' />
 
         <div class='md:col-span-5'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_desc'>Descrição</label>
-          <input id='id_mov_desc' name='description' type='text' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_desc'>Descrição</label>
+          <input id='id_mov_desc' name='description' type='text' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
         </div>
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_amount'>Valor total (R$)</label>
-          <input id='id_mov_amount' name='amount' type='number' min='0' step='0.01' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_amount'>Valor total (R$)</label>
+          <input id='id_mov_amount' name='amount' type='number' min='0' step='0.01' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
         </div>
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_launch'>Data lançamento</label>
-          <input id='id_mov_launch' name='launch_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_launch'>Data lançamento</label>
+          <input id='id_mov_launch' name='launch_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
         </div>
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due'>Data pagamento</label>
-          <input id='id_mov_due' name='due_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_due'>Data pagamento</label>
+          <input id='id_mov_due' name='due_date' type='date' value='{{ filters.today|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
         </div>
         <div class='md:col-span-1'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_dir'>Direção</label>
-          <select id='id_mov_dir' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_dir'>Direção</label>
+          <select id='id_mov_dir' name='direction' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
             <option value='IN'>Entrada</option>
             <option value='OUT' selected>Saída</option>
           </select>
         </div>
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_source'>Origem</label>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_source'>Origem</label>
           <input id='id_mov_source_value' type='hidden' name='source' value='COMPANY' />
-          <select id='id_mov_source' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+          <select id='id_mov_source' name='category_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
             <option value=''>Selecione</option>
             {% for origin in origin_options %}
               <option value='{{ origin.value }}' data-direction='{{ origin.direction }}'>{{ origin.label }}</option>
@@ -267,8 +267,8 @@
           </select>
         </div>
         <div class='md:col-span-3'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_bank_account'>Banco/Conta</label>
-          <select id='id_mov_bank_account' name='bank_account_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' required>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_bank_account'>Banco/Conta</label>
+          <select id='id_mov_bank_account' name='bank_account_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' required>
             <option value=''>Selecione</option>
             {% for bank in bank_accounts %}
               <option value='{{ bank.id }}'>{{ bank.bank_name }} - {{ bank.account_name }}</option>
@@ -276,8 +276,8 @@
           </select>
         </div>
         <div id='customer-block' class='md:col-span-3'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_customer'>Cliente</label>
-          <select id='id_mov_customer' name='customer_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_customer'>Cliente</label>
+          <select id='id_mov_customer' name='customer_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
             <option value=''>Selecione</option>
             {% for customer in customers %}
               <option value='{{ customer.id }}'>{{ customer.name }}</option>
@@ -285,8 +285,8 @@
           </select>
         </div>
         <div id='supplier-block' class='md:col-span-3'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_supplier'>Fornecedor</label>
-          <select id='id_mov_supplier' name='supplier_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_supplier'>Fornecedor</label>
+          <select id='id_mov_supplier' name='supplier_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
             <option value=''>-</option>
             {% for supplier in suppliers %}
               <option value='{{ supplier.id }}'>{{ supplier.name }}</option>
@@ -295,38 +295,38 @@
         </div>
 
         <div class='md:col-span-2'>
-          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_recurrence_total'>Recorrência mensal</label>
-          <input id='id_mov_recurrence_total' name='recurrence_total' type='number' min='1' max='60' value='1' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
-          <div class='mt-1 text-xs text-[#737373]'>`1` = lançamento único, `12` = repete por 12 meses</div>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_recurrence_total'>Recorrência mensal</label>
+          <input id='id_mov_recurrence_total' name='recurrence_total' type='number' min='1' max='60' value='1' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
+          <div class='mt-1 text-xs text-slate-400'>`1` = lançamento único, `12` = repete por 12 meses</div>
         </div>
         <div class='md:col-span-2 flex items-center gap-2 pt-6'>
-          <input id='id_mov_realized' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' />
-          <label for='id_mov_realized' class='text-sm text-[#A3A3A3]'>Marcar como realizado agora</label>
+          <input id='id_mov_realized' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-slate-300 bg-white' />
+          <label for='id_mov_realized' class='text-sm text-slate-700'>Marcar como realizado agora</label>
         </div>
         <div id='split-entry-toggle' class='md:col-span-2 flex items-center gap-2 pt-6'>
-          <input id='id_mov_split_entry' type='checkbox' name='split_entry' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' disabled />
-          <label for='id_mov_split_entry' class='text-sm text-[#A3A3A3]'>Entrada agora e saldo depois</label>
+          <input id='id_mov_split_entry' type='checkbox' name='split_entry' class='h-4 w-4 rounded border border-slate-300 bg-white' disabled />
+          <label for='id_mov_split_entry' class='text-sm text-slate-700'>Entrada agora e saldo depois</label>
         </div>
 
-        <div id='split-entry-block' class='md:col-span-12 hidden rounded-2xl border border-[#233a57] bg-[#0b1f3b]/40 p-4'>
-          <div class='mb-3 text-sm font-semibold text-[#bfdbfe]'>Dividir esta entrada manual</div>
+        <div id='split-entry-block' class='md:col-span-12 hidden rounded-2xl border border-blue-200 bg-blue-50 p-4'>
+          <div class='mb-3 text-sm font-semibold text-blue-800'>Dividir esta entrada manual</div>
           <div class='grid grid-cols-1 gap-4 md:grid-cols-3'>
             <div>
-              <label class='mb-1 block text-xs uppercase tracking-wide text-[#93c5fd]' for='id_entry_amount'>Valor da entrada (R$)</label>
-              <input id='id_entry_amount' name='entry_amount' type='number' min='0' step='0.01' class='w-full rounded-xl border border-[#35547c] bg-[#081528] px-3 py-3 text-sm text-[#F5F5F5]' />
+              <label class='mb-1 block text-xs uppercase tracking-wide text-blue-700' for='id_entry_amount'>Valor da entrada (R$)</label>
+              <input id='id_entry_amount' name='entry_amount' type='number' min='0' step='0.01' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
             </div>
             <div>
-              <label class='mb-1 block text-xs uppercase tracking-wide text-[#93c5fd]' for='id_balance_due_date'>Vencimento do saldo</label>
-              <input id='id_balance_due_date' name='balance_due_date' type='date' class='w-full rounded-xl border border-[#35547c] bg-[#081528] px-3 py-3 text-sm text-[#F5F5F5]' />
+              <label class='mb-1 block text-xs uppercase tracking-wide text-blue-700' for='id_balance_due_date'>Vencimento do saldo</label>
+              <input id='id_balance_due_date' name='balance_due_date' type='date' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
             </div>
-            <div class='flex items-center text-xs text-[#bfdbfe]'>
+            <div class='flex items-center text-xs text-blue-700'>
               Cria dois lançamentos: a entrada agora e o saldo para a frente.
             </div>
           </div>
         </div>
 
-        <div class='md:col-span-12 flex justify-end gap-3 border-t border-[#262626] pt-4'>
-          <button type='button' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]' data-close-modal='movement-create'>Cancelar</button>
+        <div class='md:col-span-12 flex justify-end gap-3 border-t border-slate-200 pt-4'>
+          <button type='button' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]' data-close-modal='movement-create'>Cancelar</button>
           <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-5 py-3 text-sm font-semibold text-[#0D0D0D]'>
             Salvar lançamento
           </button>
@@ -337,15 +337,15 @@
 
   {% if edit_movement %}
     <div class='fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4'>
-      <div class='w-full max-w-5xl overflow-hidden rounded-3xl border border-[#262626] bg-[#121212] shadow-2xl'>
-        <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-gradient-to-r from-[#141414] to-[#1d1d1d] px-5 py-4'>
+      <div class='w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl'>
+        <div class='flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4'>
           <div>
-            <div class='text-sm font-semibold text-[#D4AF37]'>Editar lançamento</div>
+            <div class='text-sm font-semibold text-amber-700'>Editar lançamento</div>
             {% if edit_movement.recurrence_total > 1 %}
-              <div class='text-xs text-[#93c5fd]'>Série recorrente mensal · parcela {{ edit_movement.recurrence_index }}/{{ edit_movement.recurrence_total }}</div>
+              <div class='text-xs text-blue-600'>Série recorrente mensal · parcela {{ edit_movement.recurrence_index }}/{{ edit_movement.recurrence_total }}</div>
             {% endif %}
           </div>
-          <a href='{{ current_query_no_edit }}' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>Fechar</a>
+          <a href='{{ current_query_no_edit }}' class='rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>Fechar</a>
         </div>
         <form method='post' class='grid grid-cols-1 gap-4 p-5 md:grid-cols-12'>
           {% csrf_token %}
@@ -354,32 +354,32 @@
           <input type='hidden' name='next' value='{{ current_query_no_edit }}' />
 
           <div class='md:col-span-5'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_desc_edit'>Descrição</label>
-            <input id='id_mov_desc_edit' name='description' type='text' value='{{ edit_movement.description|default_if_none:"" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_desc_edit'>Descrição</label>
+            <input id='id_mov_desc_edit' name='description' type='text' value='{{ edit_movement.description|default_if_none:"" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
           </div>
           <div class='md:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_amount_edit'>Valor (R$)</label>
-            <input id='id_mov_amount_edit' name='amount' type='number' min='0' step='0.01' value='{{ edit_movement.amount|unlocalize }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_amount_edit'>Valor (R$)</label>
+            <input id='id_mov_amount_edit' name='amount' type='number' min='0' step='0.01' value='{{ edit_movement.amount|unlocalize }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
           </div>
           <div class='md:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_launch_edit'>Data lançamento</label>
-            <input id='id_mov_launch_edit' name='launch_date' type='date' value='{{ edit_movement.launch_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_launch_edit'>Data lançamento</label>
+            <input id='id_mov_launch_edit' name='launch_date' type='date' value='{{ edit_movement.launch_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
           </div>
           <div class='md:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_due_edit'>Data pagamento</label>
-            <input id='id_mov_due_edit' name='due_date' type='date' value='{{ edit_movement.due_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_due_edit'>Data pagamento</label>
+            <input id='id_mov_due_edit' name='due_date' type='date' value='{{ edit_movement.due_date|date:"Y-m-d" }}' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
           </div>
           <div class='md:col-span-1'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_dir_edit'>Direção</label>
-            <select id='id_mov_dir_edit' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_dir_edit'>Direção</label>
+            <select id='id_mov_dir_edit' name='direction' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value='IN' {% if edit_movement.direction == 'IN' %}selected{% endif %}>Entrada</option>
               <option value='OUT' {% if edit_movement.direction == 'OUT' %}selected{% endif %}>Saída</option>
             </select>
           </div>
           <div class='md:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_source_edit'>Origem</label>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_source_edit'>Origem</label>
             <input id='id_mov_source_value_edit' type='hidden' name='source' value='{{ edit_movement.source|default:"COMPANY" }}' />
-            <select id='id_mov_source_edit' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <select id='id_mov_source_edit' name='category_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value=''>Selecione</option>
               {% for origin in origin_options %}
                 <option value='{{ origin.value }}' data-direction='{{ origin.direction }}' {% if edit_movement.category and edit_movement.category.id == origin.value %}selected{% endif %}>{{ origin.label }}</option>
@@ -387,8 +387,8 @@
             </select>
           </div>
           <div class='md:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_bank_account_edit'>Banco/Conta</label>
-            <select id='id_mov_bank_account_edit' name='bank_account_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' required>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_bank_account_edit'>Banco/Conta</label>
+            <select id='id_mov_bank_account_edit' name='bank_account_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' required>
               <option value=''>Selecione</option>
               {% for bank in bank_accounts %}
                 <option value='{{ bank.id }}' {% if edit_movement.bank_account and edit_movement.bank_account.id == bank.id %}selected{% endif %}>{{ bank.bank_name }} - {{ bank.account_name }}</option>
@@ -396,8 +396,8 @@
             </select>
           </div>
           <div id='customer-block-edit' class='md:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_customer_edit'>Cliente</label>
-            <select id='id_mov_customer_edit' name='customer_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_customer_edit'>Cliente</label>
+            <select id='id_mov_customer_edit' name='customer_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value=''>Selecione</option>
               {% for customer in customers %}
                 <option value='{{ customer.id }}' {% if edit_movement.customer and edit_movement.customer.id == customer.id %}selected{% endif %}>{{ customer.name }}</option>
@@ -405,8 +405,8 @@
             </select>
           </div>
           <div id='supplier-block-edit' class='md:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_supplier_edit'>Fornecedor</label>
-            <select id='id_mov_supplier_edit' name='supplier_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_mov_supplier_edit'>Fornecedor</label>
+            <select id='id_mov_supplier_edit' name='supplier_id' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value=''>-</option>
               {% for supplier in suppliers %}
                 <option value='{{ supplier.id }}' {% if edit_movement.supplier and edit_movement.supplier.id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
@@ -414,11 +414,11 @@
             </select>
           </div>
           <div class='md:col-span-2 flex items-center gap-2 pt-6'>
-            <input id='id_mov_realized_edit' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-[#404040] bg-[#0D0D0D]' {% if edit_movement.is_realized %}checked{% endif %} />
-            <label for='id_mov_realized_edit' class='text-sm text-[#A3A3A3]'>Realizado</label>
+            <input id='id_mov_realized_edit' type='checkbox' name='is_realized' class='h-4 w-4 rounded border border-slate-300 bg-white' {% if edit_movement.is_realized %}checked{% endif %} />
+            <label for='id_mov_realized_edit' class='text-sm text-slate-700'>Realizado</label>
           </div>
-          <div class='md:col-span-12 flex justify-end gap-3 border-t border-[#262626] pt-4'>
-            <a href='{{ current_query_no_edit }}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>Cancelar</a>
+          <div class='md:col-span-12 flex justify-end gap-3 border-t border-slate-200 pt-4'>
+            <a href='{{ current_query_no_edit }}' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>Cancelar</a>
             <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-5 py-3 text-sm font-semibold text-[#0D0D0D]'>
               Salvar alterações
             </button>
@@ -429,33 +429,33 @@
   {% endif %}
 
   <div id='modal-categories' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4' data-modal='categories'>
-    <div class='w-full max-w-4xl overflow-hidden rounded-3xl border border-[#262626] bg-[#121212] shadow-2xl'>
-      <div class='flex items-center justify-between gap-3 border-b border-[#262626] bg-gradient-to-r from-[#141414] to-[#1d1d1d] px-5 py-4'>
+    <div class='w-full max-w-4xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl'>
+      <div class='flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4'>
         <div>
-          <div class='text-sm font-semibold text-[#D4AF37]'>Tipos de lançamento</div>
-          <div class='text-xs text-[#A3A3A3]'>Organize entradas e despesas com categorias próprias</div>
+          <div class='text-sm font-semibold text-amber-700'>Tipos de lançamento</div>
+          <div class='text-xs text-slate-500'>Organize entradas e despesas com categorias próprias</div>
         </div>
-        <button type='button' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]' data-close-modal='categories'>Fechar</button>
+        <button type='button' class='rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]' data-close-modal='categories'>Fechar</button>
       </div>
       <div class='p-5'>
-        <form method='post' class='grid grid-cols-1 gap-4 rounded-2xl border border-[#262626] bg-[#171717] p-4 sm:grid-cols-6'>
+        <form method='post' class='grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-6'>
           {% csrf_token %}
           <input type='hidden' name='action' value='create_category' />
           <input type='hidden' name='next' value='{{ current_query }}' />
           <div class='sm:col-span-3'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_cat_name'>Nome</label>
-            <input id='id_cat_name' name='name' type='text' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_cat_name'>Nome</label>
+            <input id='id_cat_name' name='name' type='text' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none' />
           </div>
           <div class='sm:col-span-2'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_cat_dir'>Direção</label>
-            <select id='id_cat_dir' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_cat_dir'>Direção</label>
+            <select id='id_cat_dir' name='direction' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value='OUT' selected>Saída (Despesa)</option>
               <option value='IN'>Entrada</option>
             </select>
           </div>
           <div id='cat-group-block' class='sm:col-span-1'>
-            <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_cat_group'>Grupo</label>
-            <select id='id_cat_group' name='group' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_cat_group'>Grupo</label>
+            <select id='id_cat_group' name='group' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
               <option value=''>-</option>
               {% for value, label in expense_groups %}
                 <option value='{{ value }}'>{{ label }}</option>
@@ -469,9 +469,9 @@
           </div>
         </form>
 
-        <div class='mt-4 overflow-hidden rounded-2xl border border-[#262626]'>
+        <div class='mt-4 overflow-hidden rounded-2xl border border-slate-200'>
           <table class='w-full text-left text-sm'>
-            <thead class='bg-[#141414] text-[#D4AF37]'>
+            <thead class='bg-slate-50 text-amber-700'>
               <tr>
                 <th class='px-4 py-3 font-semibold'>Direção</th>
                 <th class='px-4 py-3 font-semibold'>Grupo</th>
@@ -479,19 +479,19 @@
                 <th class='px-4 py-3 font-semibold text-right'>Ação</th>
               </tr>
             </thead>
-            <tbody class='divide-y divide-[#262626] bg-[#111111]'>
+            <tbody class='divide-y divide-slate-200 bg-white'>
               {% for c in categories %}
-                <tr class='hover:bg-[#171717]'>
-                  <td class='px-4 py-3 text-[#A3A3A3]'>{{ c.get_direction_display }}</td>
-                  <td class='px-4 py-3 text-[#A3A3A3]'>{% if c.direction == 'OUT' and c.group %}{{ c.get_group_display }}{% else %}-{% endif %}</td>
-                  <td class='px-4 py-3'>{{ c.name }}</td>
+                <tr class='hover:bg-slate-50'>
+                  <td class='px-4 py-3 text-slate-500'>{{ c.get_direction_display }}</td>
+                  <td class='px-4 py-3 text-slate-500'>{% if c.direction == 'OUT' and c.group %}{{ c.get_group_display }}{% else %}-{% endif %}</td>
+                  <td class='px-4 py-3 text-slate-900'>{{ c.name }}</td>
                   <td class='px-4 py-3 text-right'>
                     <form method='post' class='inline' data-confirm='Remover este tipo?'>
                       {% csrf_token %}
                       <input type='hidden' name='action' value='delete_category' />
                       <input type='hidden' name='category_id' value='{{ c.id }}' />
                       <input type='hidden' name='next' value='{{ current_query }}' />
-                      <button type='submit' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
+                      <button type='submit' class='rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]'>
                         Remover
                       </button>
                     </form>
@@ -499,7 +499,7 @@
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan='4' class='px-4 py-8 text-center text-sm text-[#A3A3A3]'>Nenhum tipo cadastrado.</td>
+                  <td colspan='4' class='px-4 py-8 text-center text-sm text-slate-500'>Nenhum tipo cadastrado.</td>
                 </tr>
               {% endfor %}
             </tbody>
