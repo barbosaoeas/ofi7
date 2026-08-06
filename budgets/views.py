@@ -4715,3 +4715,119 @@ class XMLImportJobDeleteDuplicateView(LoginRequiredMixin, RoleRequiredMixin, Vie
         if next_url:
             return redirect(next_url)
         return redirect('budgets:import_job_list')
+
+
+class DailyProgrammingReportView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (
+        CustomUser.Role.MANAGER,
+        CustomUser.Role.FINANCE,
+        CustomUser.Role.ESTIMATOR,
+        CustomUser.Role.OPERATIONAL,
+    )
+
+    def get(self, request):
+        today = timezone.localdate()
+        raw = (request.GET.get('date') or '').strip()
+        selected = today
+        if raw:
+            try:
+                selected = date.fromisoformat(raw)
+            except ValueError:
+                selected = today
+
+        tasks = (
+            WorkOrderTask.objects.filter(scheduled_date=selected)
+            .select_related(
+                'collaborator',
+                'service',
+                'work_order',
+                'work_order__budget',
+                'work_order__budget__vehicle',
+                'work_order__budget__customer',
+            )
+            .order_by(
+                'collaborator__name',
+                'order',
+                'work_order__budget__cilia_number',
+                'work_order__budget__id',
+            )
+        )
+
+        unassigned_tasks = []
+        grouped = {}
+        for t in tasks:
+            collab = t.collaborator
+            entry = {
+                'id': t.id,
+                'activity_code': t.activity,
+                'activity_label': t.get_activity_display(),
+                'description': t.description or (t.service.name if t.service else ''),
+                'planned_hours': t.planned_hours or Decimal('0'),
+                'status_code': t.status,
+                'status_label': t.get_status_display(),
+                'work_order_id': t.work_order.id if t.work_order else None,
+                'budget_id': t.work_order.budget.id if t.work_order and t.work_order.budget else None,
+                'budget_display': t.work_order.budget.display_number if t.work_order and t.work_order.budget else '',
+                'plate': t.work_order.budget.vehicle.plate if t.work_order and t.work_order.budget and t.work_order.budget.vehicle else '',
+                'vehicle_model': t.work_order.budget.vehicle.model if t.work_order and t.work_order.budget and t.work_order.budget.vehicle else '',
+                'customer_name': t.work_order.budget.customer.name if t.work_order and t.work_order.budget and t.work_order.budget.customer else '',
+            }
+            if collab is None:
+                unassigned_tasks.append(entry)
+            else:
+                key = collab.id
+                if key not in grouped:
+                    grouped[key] = {
+                        'collaborator_id': collab.id,
+                        'collaborator_name': collab.name,
+                        'collaborator_photo': collab.photo_url,
+                        'collaborator_function': collab.get_function_display(),
+                        'tasks': [],
+                        'total_hours': Decimal('0'),
+                        'budget_count': set(),
+                    }
+                grouped[key]['tasks'].append(entry)
+                grouped[key]['total_hours'] += entry['planned_hours']
+                if entry['budget_id']:
+                    grouped[key]['budget_count'].add(entry['budget_id'])
+
+        collaborator_rows = sorted(
+            (
+                {
+                    'collaborator_id': g['collaborator_id'],
+                    'collaborator_name': g['collaborator_name'],
+                    'collaborator_photo': g['collaborator_photo'],
+                    'collaborator_function': g['collaborator_function'],
+                    'tasks': g['tasks'],
+                    'total_hours': g['total_hours'],
+                    'budget_count': len(g['budget_count']),
+                }
+                for g in grouped.values()
+            ),
+            key=lambda r: r['collaborator_name'],
+        )
+
+        unassigned_hours = sum((Decimal(str(t['planned_hours'])) for t in unassigned_tasks), Decimal('0'))
+        total_hours = sum((r['total_hours'] for r in collaborator_rows), Decimal('0')) + unassigned_hours
+        total_tasks = sum((len(r['tasks']) for r in collaborator_rows), 0) + len(unassigned_tasks)
+        total_budgets = set()
+        for r in collaborator_rows:
+            for t in r['tasks']:
+                if t['budget_id']:
+                    total_budgets.add(t['budget_id'])
+        for t in unassigned_tasks:
+            if t['budget_id']:
+                total_budgets.add(t['budget_id'])
+
+        context = {
+            'today': today,
+            'selected_date': selected,
+            'collaborator_rows': collaborator_rows,
+            'unassigned_tasks': unassigned_tasks,
+            'unassigned_hours': unassigned_hours,
+            'total_hours': total_hours,
+            'total_tasks': total_tasks,
+            'total_budgets': len(total_budgets),
+            'now': timezone.localtime(timezone.now()),
+        }
+        return render(request, 'budgets/report_daily_programming.html', context)
