@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from budgets.models import XMLImportJob
 from budgets.services.cilia_import_service import (
@@ -20,10 +21,23 @@ class Command(BaseCommand):
             default=0,
             help='Limita a quantidade de arquivos processados nesta execução.',
         )
+        parser.add_argument(
+            '--diag',
+            action='store_true',
+            help=(
+                'Modo diagnóstico: exibe estado das credenciais do Dropbox (APP_KEY, '
+                'REFRESH_TOKEN, state file etc.) sem processar arquivos.'
+            ),
+        )
 
     def handle(self, *args, **options):
         limit = max(0, int(options.get('limit') or 0))
+        diag_mode = bool(options.get('diag'))
         service = DropboxService()
+
+        if diag_mode:
+            self._run_diagnostics(service)
+            return
 
         try:
             entries = service.list_input_xml_files()
@@ -108,3 +122,39 @@ class Command(BaseCommand):
                 f'Importados: {imported_count} | Duplicados: {duplicate_count} | Erros: {error_count} | Ignorados: {skipped_count}'
             )
         )
+
+    def _run_diagnostics(self, service):
+        self.stdout.write('')
+        self.stdout.write(self.style.MIGRATE_LABEL('===============  DIAGNÓSTICO DROPBOX  ==============='))
+        self.stdout.write(f'Horário: {timezone.now().isoformat()}')
+        self.stdout.write('')
+        try:
+            info = service.diagnostics()
+        except Exception as exc:
+            raise CommandError(f'Erro ao montar diagnóstico: {exc}') from exc
+        max_label = max(len(str(k)) for k in info.keys())
+        for k, v in info.items():
+            label = str(k).ljust(max_label)
+            sval = str(v)
+            if k == 'modo_auto_refresh':
+                style = self.style.SUCCESS if 'ATIVO' in sval else self.style.WARNING
+                self.stdout.write(f'{label} : {style(sval)}')
+            elif k == 'state.expires_at' and 'EXPIRADO' in sval:
+                self.stdout.write(f'{label} : {self.style.ERROR(sval)}')
+            elif 'AUSENTE' in sval:
+                self.stdout.write(f'{label} : {self.style.WARNING(sval)}')
+            else:
+                self.stdout.write(f'{label} : {self.style.SUCCESS(sval)}')
+        self.stdout.write('')
+        try:
+            service.ensure_configured()
+            self.stdout.write(self.style.SUCCESS('Configuração mínima OK. Tentando uma chamada real de list_folder...'))
+            try:
+                _ = service.list_input_xml_files()
+                self.stdout.write(self.style.SUCCESS('list_folder funcionou: Dropbox conectado com sucesso!'))
+            except DropboxServiceError as exc:
+                self.stdout.write(self.style.ERROR(f'list_folder falhou: {exc}'))
+        except DropboxConfigurationError as exc:
+            self.stdout.write(self.style.ERROR(f'Configuração inválida: {exc}'))
+        self.stdout.write(self.style.MIGRATE_LABEL('============  FIM DO DIAGNÓSTICO  ============'))
+        self.stdout.write('')

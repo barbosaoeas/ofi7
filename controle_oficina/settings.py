@@ -40,6 +40,13 @@ def load_env_file(file_path):
         os.environ.setdefault(key, value)
 
 
+def env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 load_env_file(BASE_DIR / '.env')
 extra_env_file = os.getenv('OFICINA_ENV_FILE', '').strip()
 if extra_env_file:
@@ -50,16 +57,18 @@ if extra_env_file:
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-93e%i7btsid3a6q(_#^s(kw11rqg!o$2*tsoj8qfxb)_nm6t$m'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-93e%i7btsid3a6q(_#^s(kw11rqg!o$2*tsoj8qfxb)_nm6t$m')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('DJANGO_DEBUG', True)
 
 ALLOWED_HOSTS = [
     '127.0.0.1',
     'localhost',
     'ofi7ipojuca.pythonanywhere.com',
 ]
+if os.getenv('DJANGO_ALLOWED_HOSTS', '').strip():
+    ALLOWED_HOSTS += [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS').split(',') if h.strip()]
 
 
 # Application definition
@@ -85,6 +94,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.ForceDefaultPasswordChangeMiddleware',
 ]
 
 ROOT_URLCONF = 'controle_oficina.urls'
@@ -125,7 +135,37 @@ DATABASES = {
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
-AUTH_PASSWORD_VALIDATORS = []
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 8,
+        },
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 
 # Internationalization
@@ -156,18 +196,17 @@ LOGIN_REDIRECT_URL = 'core:dashboard'
 LOGOUT_REDIRECT_URL = 'core:public_index'
 
 
-def env_bool(name, default=False):
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
 DROPBOX_CILIA_ENABLED = env_bool('DROPBOX_CILIA_ENABLED', default=False)
 DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '').strip()
+DROPBOX_REFRESH_TOKEN = os.getenv('DROPBOX_REFRESH_TOKEN', '').strip()
+DROPBOX_APP_KEY = os.getenv('DROPBOX_APP_KEY', '').strip()
+DROPBOX_APP_SECRET = os.getenv('DROPBOX_APP_SECRET', '').strip()
 DROPBOX_CILIA_INPUT_PATH = os.getenv('DROPBOX_CILIA_INPUT_PATH', '/xml-cilia/entrada').strip() or '/xml-cilia/entrada'
 DROPBOX_CILIA_PROCESSED_PATH = os.getenv('DROPBOX_CILIA_PROCESSED_PATH', '/xml-cilia/processados').strip() or '/xml-cilia/processados'
 DROPBOX_CILIA_ERROR_PATH = os.getenv('DROPBOX_CILIA_ERROR_PATH', '/xml-cilia/erro').strip() or '/xml-cilia/erro'
+DROPBOX_TOKEN_STATE_FILE = os.getenv('DROPBOX_TOKEN_STATE_FILE', '').strip()
+if not DROPBOX_TOKEN_STATE_FILE:
+    DROPBOX_TOKEN_STATE_FILE = str(BASE_DIR / 'data' / 'dropbox_token_state.json')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
