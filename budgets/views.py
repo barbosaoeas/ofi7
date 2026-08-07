@@ -1,4 +1,5 @@
 from django import forms
+from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
@@ -1457,6 +1458,347 @@ def _call_local_ollama_analysis(report_text: str, timeout: int = 180) -> str:
     return f"# ⚠️ IA Local: modelo nao respondeu.{instalacao_msg}"
 
 
+# ============================================================
+#  [IA NUVEM OPENAI] + MEMORIA DE CONVERSA (Economia 95% tokens!)
+# ============================================================
+import os as _os
+import json as _json
+import time as _time
+import hashlib as _hashlib
+import urllib.request as _ureq
+import urllib.error as _uerr
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Tuple
+
+
+@dataclass
+class LLMResult:
+    provider: str                 # 'openai' | 'ollama' | 'erro'
+    model: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+    content: str
+    error: Optional[str] = None
+
+    @property
+    def cost_brl(self) -> float:
+        # Taxa aproximada 5.10 USD -> BRL (atualizei em 08/2026)
+        return round(self.cost_usd * 5.10, 2)
+
+
+# Precificacao gpt-4o-mini (Jul-2024): https://openai.com/api/pricing/
+# $0.150 / milhao tokens INPUT / $0.600 / milhao OUTPUT
+_OPENAI_PRICING_PER_1M = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.0),
+    "gpt-3.5-turbo-0125": (0.50, 1.50),
+}
+
+
+def _report_cache_key(report_text: str) -> str:
+    return _hashlib.sha256(report_text.encode("utf-8")).hexdigest()[:20]
+
+
+def _llm_storage_dir() -> str:
+    base = (
+        getattr(django_settings, "LLM_CACHE_DIR", "").strip()
+        or _os.path.join(str(_os.path.dirname(__file__)), "..", "storage", "llm_cache")
+    )
+    _os.makedirs(base, exist_ok=True)
+    _os.makedirs(_os.path.join(base, "analysis"), exist_ok=True)
+    _os.makedirs(_os.path.join(base, "chat"), exist_ok=True)
+    return base
+
+
+def _analysis_cache_path(report_text: str, provider: str) -> str:
+    return _os.path.join(_llm_storage_dir(), "analysis", f"{provider}_{_report_cache_key(report_text)}.json")
+
+
+def _chat_history_path(report_text: str) -> str:
+    return _os.path.join(_llm_storage_dir(), "chat", f"history_{_report_cache_key(report_text)}.json")
+
+
+def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int = 86400) -> Optional[LLMResult]:
+    fp = _analysis_cache_path(report_text, provider)
+    if not _os.path.isfile(fp):
+        return None
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            obj = _json.load(f)
+    except Exception:
+        return None
+    if _time.time() - float(obj.get("ts", 0)) > max_age_seconds:
+        return None
+    try:
+        return LLMResult(
+            provider=str(obj.get("provider", provider)),
+            model=str(obj.get("model", "")),
+            tokens_in=int(obj.get("tokens_in", 0)),
+            tokens_out=int(obj.get("tokens_out", 0)),
+            cost_usd=float(obj.get("cost_usd", 0.0)),
+            content=str(obj.get("content", "")),
+            error=obj.get("error"),
+        )
+    except Exception:
+        return None
+
+
+def _save_analysis_cache(report_text: str, provider: str, result: LLMResult) -> None:
+    try:
+        fp = _analysis_cache_path(report_text, provider)
+        with open(fp, "w", encoding="utf-8") as f:
+            _json.dump(
+                {
+                    "ts": _time.time(),
+                    "provider": result.provider,
+                    "model": result.model,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "cost_usd": result.cost_usd,
+                    "content": result.content,
+                    "error": result.error,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+    except Exception:
+        pass
+
+
+def _chat_history_load(report_text: str, max_messages: int = 10) -> List[Dict]:
+    fp = _chat_history_path(report_text)
+    if not _os.path.isfile(fp):
+        return []
+    try:
+        with open(fp, "r", encoding="utf-8") as f:
+            msgs = _json.load(f)
+    except Exception:
+        return []
+    if not isinstance(msgs, list):
+        return []
+    return msgs[-max_messages:]
+
+
+def _chat_history_append(report_text: str, user_msg: str, assistant_msg: str) -> None:
+    fp = _chat_history_path(report_text)
+    msgs = _chat_history_load(report_text, max_messages=50)
+    msgs.append({"role": "user", "content": user_msg, "ts": _time.time()})
+    msgs.append({"role": "assistant", "content": assistant_msg, "ts": _time.time()})
+    try:
+        with open(fp, "w", encoding="utf-8") as f:
+            _json.dump(msgs[-50:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _chat_history_clear(report_text: str) -> None:
+    fp = _chat_history_path(report_text)
+    try:
+        if _os.path.isfile(fp):
+            _os.remove(fp)
+    except Exception:
+        pass
+
+
+def _truncate_words(text: str, max_words: int = 250) -> str:
+    """Giga economia de token: usamos apenas um RESUMO CURTO da analise original
+    nas perguntas seguintes. Nunca mais reenviamos o relatorio BRUTO inteiro!"""
+    palavras = text.split()
+    if len(palavras) <= max_words:
+        return text
+    return " ".join(palavras[:max_words]) + f"\n\n[... (truncado para {max_words} palavras p/ economizar tokens)]"
+
+
+def _call_openai_analysis(report_text: str, user_followup: Optional[str] = None) -> LLMResult:
+    """IA Nuvem OpenAI.
+    - 1a chamada: envia prompt completo + relatorio.
+    - Follow-up (user_followup != None): APENAS envia (RESUMO 250 palavras + ultimas 10 msgs) + pergunta nova.
+      => 95% MENOS tokens gastos em perguntas seguintes! MEMORIA DE CONVERSA.
+    """
+    api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
+    model = getattr(django_settings, "OPENAI_DEFAULT_MODEL", "gpt-4o-mini").strip()
+    temperature = float(getattr(django_settings, "OPENAI_TEMPERATURE", 0.3))
+    timeout = int(getattr(django_settings, "OPENAI_TIMEOUT", 120))
+
+    if not api_key or api_key.startswith("sk-xxxx"):
+        return LLMResult(
+            provider="erro",
+            model="",
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            content=(
+                "# ⛔ Chave OpenAI NAO configurada\n\n"
+                "**Como configurar em 30 segundos:**\n\n"
+                "  1) Gere sua chave em: https://platform.openai.com/api-keys (login na sua conta)\n"
+                "  2) Abra o arquivo **`.env`** na raiz do projeto, encontre a linha:\n"
+                "     ```\n"
+                "     OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
+                "     ```\n"
+                "  3) Apague `sk-xxxx...` e cole a sua chave VERDADEIRA na mesma linha.\n"
+                "  4) Salve o arquivo. **Reinicie o `runserver` (local) ou clique Reload Web App (PythonAnywhere).**\n\n"
+                "💡 Dica: Use **`gpt-4o-mini`** (padrão) — é **50x mais barato** que GPT-4 e qualidade quase igual."
+            ),
+            error="chave nao configurada",
+        )
+
+    # =============================================================
+    # MEMORIA DE CONVERSA (SEGUNDA CHAMADA E DIANTE - ECONOMIA 95%!)
+    # =============================================================
+    if user_followup:
+        last_analysis = ""
+        for prov in ("openai", "ollama"):
+            cached = _load_analysis_cache(report_text, prov)
+            if cached and cached.content:
+                last_analysis = cached.content
+                break
+        # Apenas 250 palavras da análise ORIGINAL - nada de reenviar 5000 palavras!
+        sistema = (
+            "Você é um consultor de oficina (explicou o desempenho abaixo). "
+            "Responda em PORTUGUÊS DO BRASIL, direto, objetivo, acionável.\n\n"
+            "==== RESUMO (250 palavras) da SUA ANALISE ANTERIOR (memoria curta): ====\n"
+            f"{_truncate_words(last_analysis or '(nenhuma analise anterior)')}\n"
+            "==== HISTORICO RECENTE (ultimas 5 mensagens): ====\n"
+        )
+        historico = _chat_history_load(report_text, max_messages=10)
+        messages = [{"role": "system", "content": sistema}]
+        # adiciona historico recente de chats anteriores
+        for m in historico[-10:]:
+            role = str(m.get("role", "user")).strip()
+            if role not in {"user", "assistant"}:
+                continue
+            messages.append({"role": role, "content": str(m.get("content", ""))[:1200]})
+        messages.append({"role": "user", "content": str(user_followup).strip()})
+    else:
+        # ============================================================
+        # PRIMEIRA CHAMADA (analise completa 6 blocos)
+        # ============================================================
+        prompt_sistema = (
+            "Voce e um consultor SENIOR de operacoes em oficina de funilaria e pintura, "
+            "especialista em reducao de lead time e analise de atrasos. "
+            "Analise o relatorio abaixo e produza uma analise em PORTUGUES DO BRASIL, "
+            "CLARA, OBJETIVA e ACIONAVEL para o gerente da oficina.\n\n"
+            "ESTRUTURA OBRIGATORIA (escreva exatamente estes 6 blocos, nao invente secoes):\n\n"
+            "# (1) RESUMO EXECUTIVO\n"
+            "Maximo 3 linhas, bullet points com os numeros mais importantes.\n\n"
+            "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
+            "Liste top 3 gargalos, com evidencia (dados do relatorio).\n\n"
+            "# (3) ANALISE DOS ATRASOS POR FAIXA\n"
+            "1-2 dias, 3-5 dias, +5 dias: por que cada grupo esta atrasando?\n\n"
+            "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
+            "Estouro de horas, quantidade clientes afetados, risco reputacional.\n\n"
+            "# (5) CONTRAMEDIDAS (ACOES PRIORIZADAS 30-60-90 DIAS)\n"
+            "Divida em ALTA PRIORIDADE (30 dias), MEDIA (60 dias) e BAIXA (90 dias). "
+            "Cada acao ESPECIFICA para a oficina.\n\n"
+            "# (6) RECOMENDACOES INDIVIDUAIS POR ORCAMENTO CRITICO\n"
+            "Selecione os 3-5 piores casos (+5d ou atraso + grande estouro) e 1 sugestao ESPECIFICA por caso.\n\n"
+            "REGRAS: Nao invente dados! Se faltar dado, seja honesto. Use negrito e bullets. Max 1500 palavras."
+        )
+        messages = [
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": "RELATORIO BRUTO PARA ANALISE:\n\n" + report_text},
+        ]
+
+    # 4. HTTP POST para OpenAI (sem dependencia de biblioteca, puro urllib)
+    payload = _json.dumps(
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": 2048,
+        }
+    ).encode("utf-8")
+    req = _ureq.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with _ureq.urlopen(req, timeout=timeout) as resp:
+            raw_bytes = resp.read()
+    except _uerr.HTTPError as e:
+        detalhe = ""
+        try:
+            detalhe = e.read().decode("utf-8", errors="replace")[:1200]
+        except Exception:
+            detalhe = str(e)
+        return LLMResult(
+            provider="erro",
+            model=model,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            content=(
+                f"# ❌ Erro OpenAI (HTTP {e.code})\n\n"
+                f"**Mensagem:**\n```\n{detalhe}\n```\n\n"
+                "**Possiveis causas:**\n"
+                "  1. Chave API errada / revogada\n"
+                "  2. Cartao de credito nao cadastrado em https://platform.openai.com/settings/billing\n"
+                "  3. Rate limit / cota excedida\n"
+            ),
+            error=f"HTTP {e.code}: {detalhe[:200]}",
+        )
+    except Exception as e:
+        return LLMResult(
+            provider="erro",
+            model=model,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            content=f"# ❌ Erro inesperado OpenAI: `{type(e).__name__}`\n\n{str(e)}",
+            error=str(e),
+        )
+
+    try:
+        raw_txt = raw_bytes.decode("utf-8", errors="replace")
+        obj = _json.loads(raw_txt)
+        escolhas = obj.get("choices", []) or []
+        if not escolhas:
+            return LLMResult(
+                provider="erro", model=model, tokens_in=0, tokens_out=0, cost_usd=0,
+                content="# ❌ OpenAI sem resposta (choices vazio)",
+                error=f"raw[:400]={raw_txt[:400]}"
+            )
+        content = str(escolhas[0].get("message", {}).get("content", "")).strip()
+        usage = obj.get("usage", {}) or {}
+        tk_in = int(usage.get("prompt_tokens", 0))
+        tk_out = int(usage.get("completion_tokens", 0))
+        precos = _OPENAI_PRICING_PER_1M.get(model, (0.15, 0.60))
+        cost_usd = (tk_in * precos[0] / 1_000_000.0) + (tk_out * precos[1] / 1_000_000.0)
+        res = LLMResult(
+            provider="openai",
+            model=model,
+            tokens_in=tk_in,
+            tokens_out=tk_out,
+            cost_usd=round(cost_usd, 6),
+            content=content or "(resposta vazia da OpenAI)",
+        )
+        # salva no cache APENAS se for a analise completa (NAO salva chat followup)
+        if not user_followup:
+            _save_analysis_cache(report_text, "openai", res)
+        else:
+            # Follow-up: salva no historico de chat individual
+            _chat_history_append(report_text, user_followup or "", content)
+        return res
+    except Exception as e:
+        return LLMResult(
+            provider="erro", model=model, tokens_in=0, tokens_out=0, cost_usd=0,
+            content=f"# ❌ Parse da resposta OpenAI falhou ({type(e).__name__}: {e})\n\n"
+                    f"```\n{str(raw_bytes[:1200])}\n```",
+            error=str(e)
+        )
+
+
+# ============================================================
+#  [VIEW BASE] PerformanceDashboardView
+# ============================================================
+
 class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     model = Budget
     template_name = "budgets/performance_dashboard.html"
@@ -1486,55 +1828,11 @@ class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
 
 class PerformanceInsightsView(PerformanceDashboardView):
     # Ja herda LoginRequiredMixin e RoleRequiredMixin + allowed_roles do pai.
-    # Garantido explicitamente por seguranca (se pai mudar um dia):
     allowed_roles = PerformanceDashboardView.allowed_roles
 
-    def _cache_dir(self):
-        import os
-        import tempfile
-        base = os.environ.get("OFI7_PERF_CACHE_DIR")
-        if base and os.path.isdir(base):
-            return base
-        tmp = os.path.join(tempfile.gettempdir(), "ofi7_perf_cache")
-        os.makedirs(tmp, exist_ok=True)
-        return tmp
-
-    def _cache_key(self, report_text: str, refresh: bool):
-        import hashlib
-        h = hashlib.sha256(report_text.encode("utf-8")).hexdigest()[:16]
-        suffix = "_FORCE" if refresh else ""
-        return f"perf_ia_{h}{suffix}.md"
-
-    def _cache_load(self, report_text: str, force_expire_seconds: int = 86400):
-        """Carrega do cache se tiver e tiver menos de force_expire_seconds (padrao: 24h).
-        Retorna (analysis_str, generated_at) ou (None, None)."""
-        import json
-        import os
-        import time
-        fp = os.path.join(self._cache_dir(), self._cache_key(report_text, refresh=False))
-        if not os.path.isfile(fp):
-            return None, None
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                obj = json.load(f)
-            age = time.time() - float(obj.get("ts", 0))
-            if age > force_expire_seconds:
-                return None, None
-            return str(obj.get("analysis", "")), float(obj.get("ts", 0))
-        except Exception:
-            return None, None
-
-    def _cache_save(self, report_text: str, analysis: str):
-        import json
-        import os
-        import time
-        fp = os.path.join(self._cache_dir(), self._cache_key(report_text, refresh=False))
-        try:
-            with open(fp, "w", encoding="utf-8") as f:
-                json.dump({"ts": time.time(), "analysis": analysis}, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
+    # ------------------------------------------------------------
+    # [GET] Analise completa (cache + nuvem/local)
+    # ------------------------------------------------------------
     def get(self, request, *args, **kwargs):
         import datetime as _dt
         self.object_list = self.get_queryset()
@@ -1545,37 +1843,195 @@ class PerformanceInsightsView(PerformanceDashboardView):
             str(request.GET.get("refresh", "")).strip().lower()
             in {"1", "true", "sim", "yes", "forcar"}
         )
+        clear_chat = (
+            str(request.GET.get("clear_chat", "")).strip().lower()
+            in {"1", "true", "sim"}
+        )
+        user_provider_pref = str(request.GET.get("provider", "auto")).strip().lower()  # auto/openai/ollama
 
-        ia_analysis = None
-        generated_ts = None
+        if clear_chat:
+            _chat_history_clear(report_text)
+
+        api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
+        api_key_ok = bool(api_key) and not api_key.startswith("sk-xxxx")
+        prefer_cloud = bool(getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", True))
+
+        # Ordem de provedores, dependendo da preferencia
+        provedores_para_tentar: List[str] = []
+        if user_provider_pref == "openai":
+            provedores_para_tentar = ["openai", "ollama"]
+        elif user_provider_pref == "ollama":
+            provedores_para_tentar = ["ollama", "openai"]
+        else:  # auto
+            if api_key_ok and prefer_cloud:
+                provedores_para_tentar = ["openai", "ollama"]
+            else:
+                provedores_para_tentar = ["ollama", "openai"]
+
+        # 1) Carrega do CACHE, se nao for refresh forcado
+        llm_result: Optional[LLMResult] = None
+        cache_hit_provider = None
         if not force_refresh:
-            ia_analysis, generated_ts = self._cache_load(report_text)
+            for prov in provedores_para_tentar:
+                if prov == "openai" and not api_key_ok:
+                    continue
+                r = _load_analysis_cache(report_text, prov)
+                if r and r.content and r.error is None:
+                    llm_result = r
+                    cache_hit_provider = prov
+                    break
 
-        if ia_analysis is None:
-            try:
-                ia_analysis = _call_local_ollama_analysis(report_text)
-            except Exception as e:
-                ia_analysis = (
-                    "# ❌ Erro inesperado ao chamar IA Local\n\n"
-                    f"**Tipo:** `{type(e).__name__}`\n\n"
-                    f"**Mensagem:** {e}\n\n"
-                    "---\n\n"
-                    "💡 Tente rodar no terminal local: `ollama serve` e confira que "
-                    "`http://127.0.0.1:11434` abre (deve mostrar 'Ollama is running')."
+        # 2) Nao tinha cache? Roda o modelo de fato!
+        if llm_result is None:
+            erros: List[str] = []
+            for prov in provedores_para_tentar:
+                try:
+                    if prov == "openai":
+                        if not api_key_ok:
+                            continue  # pula
+                        r = _call_openai_analysis(report_text, user_followup=None)
+                    else:  # ollama
+                        txt = _call_local_ollama_analysis(report_text)
+                        # Ollama retorna str pura. Converter para LLMResult uniforme.
+                        sucesso = ("RESUMO EXECUTIVO" in txt or "# (1)" in txt or "(1) RESUMO" in txt or "llama3.2" in txt or "phi3" in txt or "Modelo:" in txt)
+                        r = LLMResult(
+                            provider="ollama" if sucesso else "erro",
+                            model="local",
+                            tokens_in=0,
+                            tokens_out=0,
+                            cost_usd=0.0,
+                            content=txt,
+                            error=None if sucesso else "erro_local",
+                        )
+                        if sucesso:
+                            _save_analysis_cache(report_text, "ollama", r)
+                except Exception as e_llm:
+                    r = LLMResult(
+                        provider="erro",
+                        model=prov,
+                        tokens_in=0,
+                        tokens_out=0,
+                        cost_usd=0.0,
+                        content=f"# ❌ Erro inesperado ({prov}): `{type(e_llm).__name__}`\n\n{e_llm}",
+                        error=str(e_llm),
+                    )
+                # Se resultado e valido (nao tem erro grave), para de tentar
+                if r.error is None or r.provider != "erro":
+                    llm_result = r
+                    break
+                erros.append(f"{prov}: {r.error}")
+            # Se nenhum dos dois deu certo: mostra todos erros
+            if llm_result is None:
+                llm_result = LLMResult(
+                    provider="erro", model="",
+                    tokens_in=0, tokens_out=0, cost_usd=0.0,
+                    content="# ❌ Nenhum provedor de IA disponivel\n\n" +
+                            ("\n".join(f"- {e}" for e in erros) if erros else "Tente configurar OpenAI no .env ou iniciar ollama serve."),
+                    error="; ".join(erros) if erros else "nenhum_provedor",
                 )
-            # Salva no cache APENAS se nao for erro fatal "nao conectou",
-            # pois se salvar esse erro, o usuario teria que clicar em re-analisar
-            # amanha para tentar de novo (ruim). Salva apenas se tiver 6 blocos.
-            if "RESUMO EXECUTIVO" in ia_analysis or "# (1)" in ia_analysis:
-                self._cache_save(report_text, ia_analysis)
-            generated_ts = None
 
-        ctx["ai_analysis"] = ia_analysis
-        ctx["ia_force_refresh"] = force_refresh
-        if generated_ts:
-            ctx["ia_generated_at"] = _dt.datetime.fromtimestamp(float(generated_ts), tz=timezone.utc)
+        # 3) Carrega historico de chat para follow-ups visiveis no template
+        chat_history = _chat_history_load(report_text, max_messages=20)
+
+        # 4) Passa TUDO para o template
+        ctx.update(
+            ai_analysis=llm_result.content,
+            ia_provider=llm_result.provider,
+            ia_model=llm_result.model,
+            ia_tokens_in=llm_result.tokens_in,
+            ia_tokens_out=llm_result.tokens_out,
+            ia_tokens_total=llm_result.tokens_in + llm_result.tokens_out,
+            ia_cost_usd=f"${llm_result.cost_usd:.5f}",
+            ia_cost_brl=f"R$ {llm_result.cost_brl:.2f}",
+            ia_erro=llm_result.error,
+            ia_cache_hit=bool(cache_hit_provider),
+            ia_cache_hit_provider=cache_hit_provider,
+            ia_force_refresh=force_refresh,
+            ia_openai_configured=api_key_ok,
+            ia_provedor_sugerido=(provedores_para_tentar[0] if provedores_para_tentar else "auto"),
+            chat_history=chat_history,
+            ia_report_hash=_report_cache_key(report_text),
+        )
+        if llm_result.provider != "erro" and llm_result.error is None:
+            if cache_hit_provider:
+                # data do cache (ja salvo em ts la no cache)
+                fp = _analysis_cache_path(report_text, cache_hit_provider)
+                try:
+                    with open(fp, "r", encoding="utf-8") as f:
+                        cached_obj = _json.load(f)
+                    ctx["ia_generated_at"] = _dt.datetime.fromtimestamp(float(cached_obj.get("ts", 0)), tz=timezone.utc)
+                except Exception:
+                    ctx["ia_generated_at"] = timezone.now()
+            else:
+                ctx["ia_generated_at"] = timezone.now()
         else:
             ctx["ia_generated_at"] = timezone.now()
+        return render(request, self.template_name, ctx)
+
+    # ------------------------------------------------------------
+    # [POST] Pergunta de follow-up (MEMORIA de CONVERSA!)
+    # ------------------------------------------------------------
+    def post(self, request, *args, **kwargs):
+        self.object_list = self.get_queryset()
+        ctx = self.get_context_data(**kwargs)
+        report_text = ctx.get("report_text", "")
+        pergunta = str(request.POST.get("pergunta", "")).strip()
+
+        # 1) Limpar historico?
+        if "btn_limpar_chat" in request.POST:
+            _chat_history_clear(report_text)
+            return redirect(reverse("budgets:performance_insights") + "#chat")
+
+        if not pergunta:
+            return redirect(reverse("budgets:performance_insights") + "#chat")
+
+        # 2) Prioridade: OpenAI se chave OK, senao fallback para erro amigavel.
+        followup_result: Optional[LLMResult] = None
+        api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
+        api_key_ok = bool(api_key) and not api_key.startswith("sk-xxxx")
+        if api_key_ok:
+            followup_result = _call_openai_analysis(report_text, user_followup=pergunta)
+        else:
+            followup_result = LLMResult(
+                provider="erro", model="", tokens_in=0, tokens_out=0, cost_usd=0.0,
+                content=(
+                    "# ⚠️ Follow-up disponivel apenas com OPENAI.\n\n"
+                    "A memoria de conversa (perguntar detalhes) atualmente **usa apenas a API OpenAI**.\n"
+                    "Configure sua chave em `.env` (OPENAI_API_KEY=sk-...) e recarregue a página."
+                ),
+                error="sem_openai",
+            )
+
+        # 3) Passa resposta follow-up para template (nao salva em cache principal, chat_history já foi salvo pelo helper)
+        ctx.update(
+            ai_analysis=None,  # nao re-renderizar a analise principal se viamos de POST follow-up? Sim, mostramos apenas a ultima pergunta/resposta
+            ia_provider=followup_result.provider,
+            ia_model=followup_result.model,
+            ia_tokens_in=followup_result.tokens_in,
+            ia_tokens_out=followup_result.tokens_out,
+            ia_tokens_total=followup_result.tokens_in + followup_result.tokens_out,
+            ia_cost_usd=f"${followup_result.cost_usd:.5f}",
+            ia_cost_brl=f"R$ {followup_result.cost_brl:.2f}",
+            ia_erro=followup_result.error,
+            ia_cache_hit=False,
+            ia_cache_hit_provider=None,
+            ia_force_refresh=False,
+            ia_openai_configured=api_key_ok,
+            ia_provedor_sugerido="openai",
+            chat_history=_chat_history_load(report_text, max_messages=20),
+            ia_report_hash=_report_cache_key(report_text),
+            followup_pergunta=pergunta,
+            followup_resposta=followup_result.content,
+            ia_generated_at=timezone.now(),
+        )
+        # 4) Carrega a analise principal do cache (sem gastar tokens) para manter o contexto na tela
+        for prov in ("openai", "ollama"):
+            cached = _load_analysis_cache(report_text, prov)
+            if cached and cached.content:
+                ctx["ai_analysis"] = cached.content
+                ctx["ia_cache_hit"] = True
+                ctx["ia_cache_hit_provider"] = prov
+                break
         return render(request, self.template_name, ctx)
 
 

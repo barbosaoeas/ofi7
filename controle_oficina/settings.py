@@ -71,6 +71,25 @@ if os.getenv('DJANGO_ALLOWED_HOSTS', '').strip():
     ALLOWED_HOSTS += [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS').split(',') if h.strip()]
 
 
+# ============================================================
+#  [IA / LLM] Configuracao Inteligencia Artificial (OpenAI + Local Ollama)
+# ============================================================
+# Obter do OpenAI: https://platform.openai.com/api-keys
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '').strip()
+# Modelo padrao OpenAI (gpt-4o-mini = MELHOR custo-beneficio do mercado ~R$0,03 por 100k tokens de saida)
+OPENAI_DEFAULT_MODEL = os.getenv('OPENAI_DEFAULT_MODEL', 'gpt-4o-mini').strip()
+# Temperatura: 0 = muito serio/sempre mesmo resultado, 1 = criativo/varia mais
+OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.3'))
+# Timeout maximo (segundos) para uma chamada ao OpenAI
+OPENAI_TIMEOUT = int(os.getenv('OPENAI_TIMEOUT', '120'))
+# Priorizar IA nuvem (OpenAI) se a chave existir? True = Sim, False = Tentar Local Ollama primeiro
+LLM_PREFER_CLOUD_IF_KEY = env_bool('LLM_PREFER_CLOUD_IF_KEY', True)
+# Arquivo/diretorio para cache de analises e memoria de conversa
+LLM_CACHE_DIR = os.getenv('LLM_CACHE_DIR', '').strip() or str(BASE_DIR / 'storage' / 'llm_cache')
+os.makedirs(LLM_CACHE_DIR, exist_ok=True)
+# ============================================================
+
+
 # Application definition
 
 INSTALLED_APPS = [
