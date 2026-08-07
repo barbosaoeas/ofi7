@@ -1316,76 +1316,145 @@ class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
 
 def _call_local_ollama_analysis(report_text: str, timeout: int = 180) -> str:
     import json
+    import socket
     import urllib.request
     import urllib.error
 
-    payload = {
-        "model": "llama3.2:3b",
-        "prompt": (
-            "Você é um consultor SÊNIOR de operações em oficina de funilaria e pintura, "
-            "especialista em redução de lead time e análise de atrasos. "
-            "Analise o relatório abaixo e produza uma análise em PORTUGUÊS DO BRASIL, "
-            "CLARA, OBJETIVA e AÇIONÁVEL para o gerente da oficina.\n\n"
-            "ESTRUTURA OBRIGATÓRIA (não invente seção, escreva exatamente estes 6 blocos):\n\n"
-            "# (1) RESUMO EXECUTIVO\n"
-            "3 linhas máximo, em bullet points com os números mais importantes.\n\n"
-            "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
-            "Liste top 3 gargalos, com evidência (dados do relatório).\n\n"
-            "# (3) ANÁLISE DOS ATRASOS POR FAIXA\n"
-            "1-2 dias, 3-5 dias, +5 dias: por que cada grupo está atrasando?\n\n"
-            "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
-            "Estouro de horas, quantidade de clientes afetados, risco reputacional.\n\n"
-            "# (5) CONTRAMEDIDAS (AÇÕES PRIORIZADAS 30-60-90 DIAS)\n"
-            "Divida em ALTA PRIORIDADE (30 dias / ação hoje), MÉDIA (60 dias) e BAIXA (90 dias). "
-            "Cada ação tem que ser ESPECÍFICA para a oficina (ex: 'negociar novo fornecedor de peças SHOP atrasadas', "
-            "'treinar colaborador X em funilaria passo Z', etc).\n\n"
-            "# (6) RECOMENDAÇÕES INDIVIDUAIS POR ORÇAMENTO CRÍTICO\n"
-            "Selecione os 3-5 piores casos (+5d ou atraso + grande estouro de horas) e dê 1 sugestão ESPECÍFICA por caso.\n\n"
-            "REGRAS:\n"
-            "- Não invente dados! Use apenas o que está no relatório abaixo.\n"
-            "- Se faltar dado (ex: 'sem causa óbvia'), seja honesto e peça investigação adicional.\n"
-            "- Use negrito e bullet points para ficar legível.\n"
-            "- Máximo de 1500 palavras (seja objetivo, gerente não tem tempo).\n\n"
-            "RELATÓRIO BRUTO PARA ANÁLISE:\n"
-            "------------------------------------------------------------\n"
-            f"{report_text}\n"
-            "------------------------------------------------------------\n"
-            "ANÁLISE GERENCIAL:\n"
-        ),
-        "stream": False,
-        "options": {"num_ctx": 8192, "temperature": 0.3, "top_p": 0.9},
-    }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "http://localhost:11434/api/generate",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    # Tenta modelo leve primeiro, se nao existir tenta o 3b completo.
+    # O usuario pode instalar QUALQUER um dos dois: ollama pull llama3.2:3b
+    # ou ollama pull phi3:mini (1.8GB, mais rapido).
+    models_para_tentar = ["llama3.2:3b", "phi3:mini", "qwen2.5:1.5b"]
+    base_prompt = (
+        "Voce e um consultor SENIOR de operacoes em oficina de funilaria e pintura, "
+        "especialista em reducao de lead time e analise de atrasos. "
+        "Analise o relatorio abaixo e produza uma analise em PORTUGUES DO BRASIL, "
+        "CLARA, OBJETIVA e ACIONAVEL para o gerente da oficina.\n\n"
+        "ESTRUTURA OBRIGATORIA (nao invente secao, escreva exatamente estes 6 blocos):\n\n"
+        "# (1) RESUMO EXECUTIVO\n"
+        "3 linhas maximo, em bullet points com os numeros mais importantes.\n\n"
+        "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
+        "Liste top 3 gargalos, com evidencia (dados do relatorio).\n\n"
+        "# (3) ANALISE DOS ATRASOS POR FAIXA\n"
+        "1-2 dias, 3-5 dias, +5 dias: por que cada grupo esta atrasando?\n\n"
+        "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
+        "Estouro de horas, quantidade de clientes afetados, risco reputacional.\n\n"
+        "# (5) CONTRAMEDIDAS (ACOES PRIORIZADAS 30-60-90 DIAS)\n"
+        "Divida em ALTA PRIORIDADE (30 dias / acao hoje), MEDIA (60 dias) e BAIXA (90 dias). "
+        "Cada acao tem que ser ESPECIFICA para a oficina (ex: 'negociar novo fornecedor de pecas SHOP atrasadas', "
+        "'treinar colaborador X em funilaria passo Z', etc).\n\n"
+        "# (6) RECOMENDACOES INDIVIDUAIS POR ORCAMENTO CRITICO\n"
+        "Selecione os 3-5 piores casos (+5d ou atraso + grande estouro de horas) e de 1 sugestao ESPECIFICA por caso.\n\n"
+        "REGRAS:\n"
+        "- Nao invente dados! Use apenas o que esta no relatorio abaixo.\n"
+        "- Se faltar dado (ex: 'sem causa obvia'), seja honesto e peca investigacao adicional.\n"
+        "- Use negrito e bullet points para ficar legivel.\n"
+        "- Maximo de 1500 palavras (seja objetivo, gerente nao tem tempo).\n\n"
+        "RELATORIO BRUTO PARA ANALISE:\n"
+        "------------------------------------------------------------\n"
+        f"{report_text}\n"
+        "------------------------------------------------------------\n"
+        "ANALISE GERENCIAL:\n"
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError as e:
-        return (
-            "❌ **Não foi possível conectar à IA LOCAL (Ollama).**\n\n"
-            "**Causa provável:** Ollama não está rodando ou modelo `llama3.2:3b` não baixado.\n\n"
-            "**Como arrumar (PowerShell / CMD):**\n"
-            "  1) Instalar Ollama: https://ollama.com/download\n"
-            "  2) Rodar `ollama pull llama3.2:3b` (baixa ~2GB, 1x só)\n"
-            "  3) Rodar `ollama serve` (deixa terminal aberto)\n"
-            "  4) Volta aqui e clica em 'Gerar Análise IA' de novo.\n\n"
-            f"Erro técnico: {e}"
+
+    import json as _json
+    ultimo_erro = None
+    for model_name in models_para_tentar:
+        payload = {
+            "model": model_name,
+            "prompt": base_prompt,
+            "stream": False,
+            "options": {"num_ctx": 6144, "temperature": 0.3, "top_p": 0.9},
+        }
+        data = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-    except Exception as e:
-        return f"❌ Erro inesperado ao chamar IA local: {type(e).__name__}: {e}"
-    try:
-        obj = json.loads(raw)
-        return str(obj.get("response", "")).strip() or "(resposta vazia da IA)"
-    except Exception as e:
-        return (
-            f"❌ Não conseguiu fazer parse da resposta ({type(e).__name__}: {e}). "
-            f"Resposta bruta (primeiros 1000 chars): {raw[:1000]}"
-        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = resp.getcode()
+                raw = resp.read().decode("utf-8", errors="replace")
+                if 200 <= status < 300:
+                    try:
+                        obj = _json.loads(raw)
+                        saida = str(obj.get("response", "")).strip()
+                        if saida:
+                            return (
+                                f"🤖 Modelo: `{model_name}` · Tempo estimado ~"
+                                f"{max(10, int(len(saida) / 600))}s de processamento local\n\n"
+                                f"{saida}"
+                            )
+                    except Exception as e_json:
+                        ultimo_erro = f"Parse JSON {model_name}: {type(e_json).__name__}: {e_json}. Raw[:500]={raw[:500]}"
+                        continue
+                elif status == 404:
+                    # Modelo nao baixado ainda, tenta proximo
+                    ultimo_erro = f"Modelo {model_name} nao encontrado (404) - puxe com: ollama pull {model_name}"
+                    continue
+                else:
+                    ultimo_erro = f"HTTP {status} para {model_name}: {raw[:500]}"
+                    continue
+        except urllib.error.HTTPError as e_http:
+            if e_http.code == 404:
+                ultimo_erro = (
+                    f"Modelo {model_name} nao baixado ainda. "
+                    f"Rode no terminal: ollama pull {model_name}"
+                )
+                continue
+            ultimo_erro = f"HTTPError {e_http.code} ({model_name}): {str(e_http)}"
+            continue
+        except urllib.error.URLError as e_url:
+            motivo = str(e_url.reason) if hasattr(e_url, 'reason') else str(e_url)
+            if isinstance(getattr(e_url, 'reason', None), (ConnectionRefusedError, socket.error, OSError)):
+                return (
+                    "# ⛔ ERRO: Nao foi possivel conectar a IA LOCAL (Ollama)\n\n"
+                    "**Causa provavel:** O servico Ollama nao esta RODANDO no seu computador local "
+                    "(`127.0.0.1:11434` nao respondeu).\n\n"
+                    "**PASSO-A-PASSO para ligar a IA LOCAL (Windows/Mac/Linux, ~2GB):**\n\n"
+                    "  1) **Baixar e instalar Ollama:** https://ollama.com/download\n\n"
+                    "  2) **Abrir PowerShell (janela separada, DEIXAR ABERTA SEMPRE)** e rodar:\n"
+                    "     ```\n"
+                    "     ollama pull llama3.2:3b\n"
+                    "     ```\n"
+                    "     (Demora ~5min, baixa ~2GB. Pode usar tambem: `phi3:mini` ~1.8GB, mais rapido)\n\n"
+                    "  3) **Na MESMA janela PowerShell, rode:**\n"
+                    "     ```\n"
+                    "     ollama serve\n"
+                    "     ```\n"
+                    "     (Se o servico Ollama ja iniciou automaticamente com a instalacao,\n"
+                    "      ele avisa que a porta 11434 ja esta em uso — tudo bem, e normal.)\n\n"
+                    "  4) **Volte aqui no navegador, aperte F5** e clique em `🤖 Analisar com IA Local` de novo.\n\n"
+                    "---\n"
+                    f"_Detalhe tecnico: URLError. {motivo}_"
+                )
+            ultimo_erro = f"URLError ({model_name}): {motivo}"
+            continue
+        except socket.timeout:
+            ultimo_erro = (
+                f"Timeout ({timeout}s) no modelo {model_name}. "
+                f"Tente aumentar timeout ou usar modelo menor: ollama pull phi3:mini"
+            )
+            continue
+        except Exception as e_geral:
+            ultimo_erro = f"{type(e_geral).__name__} ({model_name}): {e_geral}"
+            continue
+
+    # Se chegamos aqui: nenhum modelo funcionou, retorna o ultimo erro registrado + fallback amigavel.
+    instalacao_msg = (
+        "\n\n---\n\n"
+        "# 💡 Como ativar a IA LOCAL (primeira vez):\n\n"
+        "1. Baixe: https://ollama.com/download e instale.\n"
+        "2. PowerShell: `ollama pull llama3.2:3b` (ou `phi3:mini` ~1.8GB mais leve)\n"
+        "3. PowerShell: `ollama serve` (deixe aberto)\n"
+        "4. Atualize a pagina e clique em Analisar IA novamente.\n\n"
+        "Ou: Cole o **'Relatorio bruto para IA'** (final da pagina, accordion fechado)\n"
+        "diretamente em ChatGPT/Gemini/Claude — o resultado e o mesmo!\n"
+    )
+    if ultimo_erro:
+        return f"# ⚠️ IA Local indisponivel\n\n**Motivo:** {ultimo_erro}{instalacao_msg}"
+    return f"# ⚠️ IA Local: modelo nao respondeu.{instalacao_msg}"
 
 
 class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -1416,11 +1485,29 @@ class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
 
 
 class PerformanceInsightsView(PerformanceDashboardView):
+    # Ja herda LoginRequiredMixin e RoleRequiredMixin + allowed_roles do pai.
+    # Garantido explicitamente por seguranca (se pai mudar um dia):
+    allowed_roles = PerformanceDashboardView.allowed_roles
+
     def get(self, request, *args, **kwargs):
+        # Garantir que LoginRequiredMixin/RoleRequiredMixin rodem (super().get
+        # cuidaria disto, mas vamos chamar object_list para usar fluxo padrao).
+        self.object_list = self.get_queryset()
         ctx = self.get_context_data(**kwargs)
         report_text = ctx.get("report_text", "")
-        ia_analysis = _call_local_ollama_analysis(report_text)
+        try:
+            ia_analysis = _call_local_ollama_analysis(report_text)
+        except Exception as e:
+            ia_analysis = (
+                "# ❌ Erro inesperado ao chamar IA Local\n\n"
+                f"**Tipo:** `{type(e).__name__}`\n\n"
+                f"**Mensagem:** {e}\n\n"
+                "---\n\n"
+                "💡 Tente rodar no terminal local: `ollama serve` e confira que "
+                "`http://127.0.0.1:11434` abre (deve mostrar 'Ollama is running')."
+            )
         ctx["ai_analysis"] = ia_analysis
+        ctx["ia_generated_at"] = timezone.now()
         return render(request, self.template_name, ctx)
 
 
