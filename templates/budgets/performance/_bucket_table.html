@@ -1,0 +1,142 @@
+{% if bucket_rows %}
+<section class='rounded-2xl border-2 {{ accent_class }} p-5 shadow-sm'>
+  <div class='flex flex-wrap items-center justify-between gap-3 mb-3'>
+    <h3 class='text-lg font-bold {{ title_class }}'>
+      {{ title }}
+      <span class='ml-2 inline-flex items-center rounded-full border bg-white/80 px-2.5 py-0.5 text-xs font-bold text-slate-700'>
+        {{ bucket_rows|length }} caso{{ bucket_rows|length|pluralize }}
+      </span>
+    </h3>
+  </div>
+  <div class='overflow-x-auto rounded-xl border border-white/70 bg-white/80'>
+    <table class='w-full min-w-[1350px] text-xs text-left'>
+      <thead class='bg-white/90 text-[11px] uppercase tracking-wider text-slate-600 border-b'>
+        <tr>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>OS</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Cliente</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Veículo</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Aprovação</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Início Reparo</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap text-right'>Parado<br>(apv→início)</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap text-right'>Dias desde<br>aprovação</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Prev. Entrega</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Entregue em</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Atraso</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap text-right'>Horas<br>(real/plano)</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap text-right'>Overrun</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap text-right'>Tarefas</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'>Peças SHOP<br>/ Bypass</th>
+          <th class='px-3 py-2.5 font-semibold whitespace-nowrap'></th>
+        </tr>
+      </thead>
+      <tbody class='divide-y divide-slate-100 text-[12px]'>
+        {% for r in bucket_rows %}
+        <tr class='align-top hover:bg-slate-50/70 transition'>
+          <td class='px-3 py-3 whitespace-nowrap font-semibold text-slate-900'>
+            <a href='{% url "budgets:budget_detail" r.budget_id %}' class='hover:text-amber-700 hover:underline'>#{{ r.display_number }}</a>
+            <a href='{% url "budgets:budget_update" r.budget_id %}' class='ml-1 text-slate-400 hover:text-amber-600' title='Editar orçamento'>✏️</a>
+          </td>
+          <td class='px-3 py-3 text-slate-700'>{{ r.customer_name }}</td>
+          <td class='px-3 py-3 whitespace-nowrap text-slate-600 font-medium'>{{ r.vehicle_plate }}</td>
+          <td class='px-3 py-3 whitespace-nowrap text-slate-700'>
+            {% if r.approved_date %}
+              <span class='font-medium'>{{ r.approved_date|date:"d/m/Y" }}</span>
+            {% else %}
+              <span class='text-slate-400 italic'>— sem data</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-slate-700'>
+            {% if r.repair_start_date %}
+              <span class='font-medium text-emerald-700'>{{ r.repair_start_date|date:"d/m/Y" }}</span>
+            {% else %}
+              <span class='rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-[11px] font-bold text-orange-800'>Não iniciado</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right tabular-nums'>
+            {% if r.idle_before_start_days >= 3 %}
+              <span class='inline-flex items-center rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-800'>
+                {{ r.idle_before_start_days }}d
+              </span>
+            {% elif r.idle_before_start_days > 0 %}
+              <span class='text-amber-700 font-medium'>{{ r.idle_before_start_days }}d</span>
+            {% else %}
+              <span class='text-slate-400 text-[11px]'>—</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right tabular-nums'>
+            <div class='font-semibold text-slate-800'>{{ r.total_days_since_approved }}d</div>
+            {% if r.repair_start_date %}
+              <div class='text-[10px] text-slate-500'>execução: {{ r.process_days_since_start }}d</div>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-slate-600'>
+            {% if r.expected_delivery_date %}{{ r.expected_delivery_date|date:"d/m/Y" }}{% else %}<span class='text-slate-400 italic'>— s/ prazo</span>{% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-slate-600'>
+            {% if r.delivered_at %}{{ r.delivered_at|date:"d/m/Y H:i" }}{% else %}<span class='text-orange-700 font-medium'>AINDA NÃO ENTREGUE</span>{% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap'>
+            {% if r.delivery_days_late > 0 %}
+              <span class='inline-flex items-center rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-800'>
+                {{ r.delivery_days_late }} dia{{ r.delivery_days_late|pluralize }}
+              </span>
+            {% elif r.expected_delivery_date %}
+              <span class='inline-flex items-center rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800'>No prazo</span>
+            {% else %}
+              <span class='text-slate-400 text-[11px]'>—</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right tabular-nums'>
+            <div class='font-semibold text-slate-800'>{{ r.total_actual_hours|floatformat:2 }}h</div>
+            <div class='text-[10px] text-slate-500'>de {{ r.total_planned_hours|floatformat:2 }}h planejado</div>
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right tabular-nums'>
+            {% if r.hours_overrun > 0.09 %}
+              <span class='font-semibold text-red-700'>+{{ r.hours_overrun|floatformat:2 }}h</span>
+            {% elif r.hours_overrun < -0.09 %}
+              <span class='font-semibold text-emerald-700'>{{ r.hours_overrun|floatformat:2 }}h</span>
+            {% else %}
+              <span class='text-slate-500'>0.00h</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right tabular-nums'>
+            <div class='font-semibold text-slate-800'>{{ r.done_tasks_count }}/{{ r.total_tasks_count }}</div>
+            <div class='text-[10px] text-slate-500'>abertas {{ r.open_tasks_count }} · em andamento {{ r.running_tasks_count }}</div>
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap'>
+            {% if r.pending_shop_parts_count > 0 %}
+              <div class='flex flex-col items-end gap-1'>
+                <span class='inline-flex rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10.5px] font-bold text-red-800'>⛔ {{ r.pending_shop_parts_count }} pend.</span>
+                {% if r.allow_repair_without_parts %}
+                  <span class='inline-flex rounded-full border border-orange-400 bg-orange-100 px-2 py-0.5 text-[10.5px] font-bold text-orange-800'>BYPASS</span>
+                {% endif %}
+              </div>
+            {% else %}
+              <span class='text-slate-400 text-[11px]'>—</span>
+            {% endif %}
+          </td>
+          <td class='px-3 py-3 whitespace-nowrap text-right'>
+            <a href='{% url "budgets:budget_detail" r.budget_id %}' class='rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] text-slate-700 hover:border-[#D4AF37] inline-block'>Ver orçamento</a>
+          </td>
+        </tr>
+        {% if r.probable_causes %}
+        <tr class='bg-white/50'>
+          <td colspan='15' class='px-5 pb-3 pt-0'>
+            <details class='group' open>
+              <summary class='cursor-pointer select-none text-[11.5px] font-semibold text-slate-600 hover:text-slate-800 inline-flex items-center gap-2'>
+                <span class='inline-block transition-transform group-open:rotate-90'>▶</span>
+                🔍 Motivos prováveis do atraso / situação (gerado automaticamente)
+              </summary>
+              <ul class='mt-2 ml-4 list-disc space-y-1 pl-4 text-[12px] text-slate-700'>
+                {% for c in r.probable_causes %}<li class='leading-6'>{{ c }}</li>{% endfor %}
+              </ul>
+            </details>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}

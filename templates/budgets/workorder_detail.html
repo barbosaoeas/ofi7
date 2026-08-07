@@ -9,7 +9,12 @@
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-amber-700'>OS #{{ work_order.budget.display_number }}</h1>
+      <h1 class='text-2xl font-semibold text-amber-700'>
+        <a href='{% url "budgets:budget_update" work_order.budget.pk %}' class='hover:underline hover:decoration-[#D4AF37] hover:decoration-2 underline-offset-4 transition-colors' title='Editar orçamento rapidamente'>
+          OS #{{ work_order.budget.display_number }}
+        </a>
+        <a href='{% url "budgets:budget_update" work_order.budget.pk %}' class='ml-2 text-xs font-normal text-slate-500 hover:text-[#D4AF37]'>✏️ editar orçamento</a>
+      </h1>
       <p class='mt-1 text-sm text-slate-500'>Criada em {{ work_order.created_at|date:'d/m/Y H:i' }}</p>
     </div>
     <div class='flex flex-wrap gap-3'>
@@ -22,13 +27,163 @@
     </div>
   </div>
 
+  {% with os=os_status %}
+    {% if os.state_code == 'B' %}
+      <div class='mt-6 rounded-xl border-2 border-red-500 bg-red-50 p-6 shadow-sm'>
+        <div class='flex flex-wrap items-center justify-between gap-3'>
+          <div class='flex items-center gap-3'>
+            <span class='text-3xl'>⛔</span>
+            <div>
+              <div class='text-lg font-bold text-red-800'>
+                Aguardando Peças — {{ os.blocked_parts|length }} peça{{ os.blocked_parts|length|pluralize }} da oficina pendente{{ os.blocked_parts|length|pluralize }}
+              </div>
+              <div class='mt-1 text-sm text-red-700'>
+                Programação e início de novas tarefas estão bloqueados até as peças chegarem ou o gerente liberar o bypass.
+              </div>
+            </div>
+          </div>
+          <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-red-400 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100'>
+            🔓 Abrir Orçamento (liberar bypass)
+          </a>
+        </div>
+        <ul class='mt-4 space-y-2 text-sm text-red-800'>
+          {% for part in os.blocked_parts %}
+            <li class='flex items-start gap-2'>
+              <span>•</span>
+              <span><strong>{{ part.name }}</strong>{% if part.expected_arrival_date %} — Previsão: {{ part.expected_arrival_date|date:'d/m/Y' }}{% else %} — Sem previsão de chegada{% endif %}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% elif os.state_code == 'L' %}
+      <div class='mt-6 rounded-xl border-2 border-orange-400 bg-orange-50 p-6 shadow-sm'>
+        <div class='flex flex-wrap items-center justify-between gap-3'>
+          <div class='flex items-center gap-3'>
+            <span class='text-3xl'>🔓</span>
+            <div>
+              <div class='text-lg font-bold text-orange-800'>
+                Liberado sem peças (autorizado pelo gerente)
+              </div>
+              <div class='mt-1 text-sm text-orange-700'>
+                {{ os.blocked_parts|length }} peça{{ os.blocked_parts|length|pluralize }} ainda pendente{{ os.blocked_parts|length|pluralize }} — colaboradores podem trabalhar.
+              </div>
+            </div>
+          </div>
+        </div>
+        <ul class='mt-4 space-y-1 text-xs text-orange-800 opacity-90'>
+          {% for part in os.blocked_parts %}
+            <li>• {{ part.name }}{% if part.expected_arrival_date %} (prev. {{ part.expected_arrival_date|date:'d/m/Y' }}){% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% elif os.state_code == 'C' %}
+      <div class='mt-6 rounded-xl border-2 border-indigo-400 bg-indigo-50 p-5 shadow-sm'>
+        <div class='flex items-center gap-3'>
+          <span class='text-3xl'>🏁</span>
+          <div>
+            <div class='text-lg font-bold text-indigo-800'>Todas as tarefas concluídas</div>
+            <div class='mt-1 text-sm text-indigo-700'>{{ os.done_tasks }}/{{ os.total_tasks }} tarefas finalizadas.</div>
+          </div>
+        </div>
+      </div>
+    {% elif os.state_code == 'N' %}
+      <div class='mt-6 rounded-xl border-2 border-slate-300 bg-slate-50 p-5 shadow-sm'>
+        <div class='flex items-center gap-3'>
+          <span class='text-3xl'>⚪</span>
+          <div>
+            <div class='text-lg font-bold text-slate-800'>Não iniciado</div>
+            <div class='mt-1 text-sm text-slate-700'>{{ os.total_tasks }} tarefa{{ os.total_tasks|pluralize }} aguardando início{% if os.active_task %} — Próxima atividade: <strong>{{ os.active_task.get_activity_display }}</strong>{% if os.active_task.collaborator %} ({{ os.active_task.collaborator.name }}){% endif %}{% endif %}</div>
+          </div>
+        </div>
+      </div>
+    {% elif os.state_code == 'P' and os.active_task %}
+      <div class='mt-6 rounded-xl border-2 border-amber-400 bg-amber-50 p-5 shadow-sm'>
+        <div class='flex flex-wrap items-center justify-between gap-3'>
+          <div class='flex items-center gap-3'>
+            <span class='text-3xl'>🟡</span>
+            <div>
+              <div class='text-lg font-bold text-amber-900'>
+                Pausado · <span class='uppercase tracking-wide'>{{ os.active_task.get_activity_display }}</span>
+                {% if os.active_task.collaborator %}· {{ os.active_task.collaborator.name }}{% endif %}
+              </div>
+              <div class='mt-1 text-sm text-amber-800'>
+                ⏱️ Tempo gasto: <strong>{{ active_elapsed_hms }}</strong>{% if os.active_task.last_started_at %} · última retomada: {{ os.active_task.last_started_at|date:'d/m/Y H:i' }}{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class='text-right'>
+            <div class='text-xs uppercase tracking-wide text-amber-700'>Progresso OS</div>
+            <div class='text-lg font-semibold text-amber-900'>{{ os.done_tasks }}/{{ os.total_tasks }} ({{ os.progress_percent }}%)</div>
+          </div>
+        </div>
+      </div>
+    {% elif os.state_code == 'A' and os.active_task %}
+      <div class='mt-6 rounded-xl border-2 border-emerald-500 bg-emerald-50 p-5 shadow-sm'>
+        <div class='flex flex-wrap items-center justify-between gap-3'>
+          <div class='flex items-center gap-3'>
+            <span class='text-3xl'>🟢</span>
+            <div>
+              <div class='text-lg font-bold text-emerald-900'>
+                Em andamento · <span class='uppercase tracking-wide'>{{ os.active_task.get_activity_display }}</span>
+                {% if os.active_task.collaborator %}· {{ os.active_task.collaborator.name }}{% endif %}
+              </div>
+              <div class='mt-1 text-sm text-emerald-800'>
+                ⏱️ Tempo gasto: <strong>{{ active_elapsed_hms }}</strong>{% if os.active_task.last_started_at %} · Início atual: {{ os.active_task.last_started_at|date:'d/m/Y H:i' }}{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class='text-right'>
+            <div class='text-xs uppercase tracking-wide text-emerald-700'>Progresso OS</div>
+            <div class='text-lg font-semibold text-emerald-900'>{{ os.done_tasks }}/{{ os.total_tasks }} ({{ os.progress_percent }}%)</div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if os.total_tasks > 0 %}
+      <div class='mt-4'>
+        <div class='flex items-center justify-between text-xs text-slate-600 mb-1'>
+          <span>Progresso total</span>
+          <span>{{ os.done_tasks }}/{{ os.total_tasks }} tarefas concluídas · {{ os.progress_percent }}%</span>
+        </div>
+        <div class='h-2 w-full rounded-full bg-slate-200 overflow-hidden'>
+          <div class='h-full rounded-full {% if os.state_code == "C" %}bg-indigo-600{% elif os.state_code == "B" %}bg-red-500{% elif os.state_code == "L" %}bg-orange-500{% else %}bg-emerald-500{% endif %}' style='width: {{ os.progress_percent }}%'></div>
+        </div>
+      </div>
+    {% endif %}
+  {% endwith %}
+
   <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-3'>
     <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:col-span-2'>
       <h2 class='text-lg font-semibold text-amber-700'>Dados</h2>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
         <div>
           <dt class='text-slate-500'>Status</dt>
-          <dd class='mt-1 text-slate-900'>{{ work_order.get_status_display }}</dd>
+          <dd class='mt-1 flex flex-wrap items-center gap-2'>
+            {% with os=os_status %}
+              {% if os.state_code == 'B' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-red-500 bg-red-100 px-2 py-1 text-xs font-bold text-red-900' title='Bloqueada: faltam peças'>❚ B</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-red-700'>⛔ Aguardando peças</strong></span>
+              {% elif os.state_code == 'L' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-orange-400 bg-orange-100 px-2 py-1 text-xs font-bold text-orange-900' title='Liberado sem peças'>❚ L</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-orange-700'>🔓 Lib. sem peças</strong></span>
+              {% elif os.state_code == 'A' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-emerald-500 bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-900' title='Em andamento'>❚ A</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-emerald-700'>Em andamento</strong> ({{ os.done_tasks }}/{{ os.total_tasks }})</span>
+              {% elif os.state_code == 'P' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-bold text-amber-900' title='Pausado'>❚ P</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-amber-700'>Pausado</strong></span>
+              {% elif os.state_code == 'N' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-slate-400 bg-slate-100 px-2 py-1 text-xs font-bold text-slate-800' title='Não iniciado'>❚ N</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-slate-700'>Não iniciado</strong></span>
+              {% elif os.state_code == 'C' %}
+                <span class='inline-flex items-center gap-1 rounded-md border border-indigo-500 bg-indigo-100 px-2 py-1 text-xs font-bold text-indigo-900' title='Concluída'>❚ C</span>
+                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-indigo-700'>Concluída 100%</strong></span>
+              {% else %}
+                <span class='text-slate-900'>{{ work_order.get_status_display }}</span>
+              {% endif %}
+            {% endwith %}
+          </dd>
         </div>
         <div>
           <dt class='text-slate-500'>Tipo cliente</dt>
@@ -99,18 +254,19 @@
       {{ tasks_open_count }} abertas · {{ tasks_done_count }} concluídas{% if selected_collaborator %} · {{ selected_collaborator.name }}{% endif %}
     </div>
 
-    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 no-print'>
+    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 no-print {% if os_status.is_blocked %}opacity-70{% endif %}'>
       <form method='post' action='{% url "budgets:workorder_task_bulk_assign" work_order.pk %}' class='flex flex-wrap items-end gap-3'>
         {% csrf_token %}
         <input type='hidden' name='next' value='{{ request.get_full_path }}' />
         <input type='hidden' name='task_ids' value='' data-bulk-task-ids='1' />
+        {% if os_status.is_blocked %}<p class='w-full text-xs font-semibold text-red-700'>⚠️ Programação em massa desabilitada: OS bloqueada por peças pendentes.</p>{% endif %}
         <div class='min-w-[150px]'>
           <div class='text-xs uppercase tracking-wide text-slate-500'>Selecionadas</div>
           <div class='mt-1 text-sm text-slate-900'><span data-bulk-selected-count='1'>0</span> tarefa(s)</div>
         </div>
         <div class='min-w-[240px]'>
           <label class='block text-xs uppercase tracking-wide text-slate-500' for='id_bulk_collaborator_id'>Atribuir para</label>
-          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' required>
+          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' required {% if os_status.is_blocked %}disabled{% endif %}>
             <option value=''>Selecione</option>
             {% for c in collaborators_operational %}
               <option value='{{ c.id }}'>{{ c.name }}</option>
@@ -118,13 +274,13 @@
           </select>
         </div>
         <div class='flex flex-wrap gap-2'>
-          <button type='button' data-bulk-select-all='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
+          <button type='button' data-bulk-select-all='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]' {% if os_status.is_blocked %}disabled{% endif %}>
             Selecionar todas
           </button>
-          <button type='button' data-bulk-clear='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
+          <button type='button' data-bulk-clear='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]' {% if os_status.is_blocked %}disabled{% endif %}>
             Limpar
           </button>
-          <button type='submit' data-bulk-submit='1' disabled class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-50'>
+          <button type='submit' data-bulk-submit='1' disabled class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-50' {% if os_status.is_blocked %}disabled{% endif %}>
             Aplicar nos marcados
           </button>
         </div>
@@ -136,7 +292,7 @@
         <thead class='bg-slate-50 text-amber-700'>
           <tr>
             <th class='px-4 py-3 font-semibold bulk-select-col no-print'>
-              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-slate-300 bg-white' />
+              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-slate-300 bg-white' {% if os_status.is_blocked %}disabled{% endif %} />
             </th>
             <th class='px-4 py-3 font-semibold'>Atividade</th>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
@@ -144,13 +300,13 @@
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-40'>Data</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-28'>Horas (prev.)</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Valor (R$)</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Horas (real)</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-36'>Horas (real)</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-44'>Status</th>
             <th class='px-4 py-3 font-semibold'></th>
           </tr>
         </thead>
         <tbody class='divide-y divide-slate-200'>
-          {% for t in tasks_open %}
+          {% for t, t_elapsed, t_elapsed_hms, t_status_label in task_open_summaries %}
             <tr class='hover:bg-slate-50' data-task-row='1'>
               <td class='px-4 py-3 bulk-select-col no-print'>
                 <input
@@ -158,13 +314,13 @@
                   value='{{ t.id }}'
                   data-bulk-task-checkbox='1'
                   class='h-4 w-4 rounded border border-slate-300 bg-white disabled:cursor-not-allowed disabled:opacity-40'
-                  {% if t.collaborator_id %}disabled{% endif %}
+                  {% if t.collaborator_id or os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
               <td class='px-4 py-3 text-slate-900'>{{ t.get_activity_display }}</td>
               <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
               <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
+                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked %}disabled{% endif %}>
                   <option value=''>-</option>
                   {% for c in collaborators_operational %}
                     <option value='{{ c.id }}' {% if t.collaborator_id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -178,6 +334,7 @@
                   type='date'
                   class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}'
+                  {% if os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
               <td class='px-4 py-3 text-slate-600'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
@@ -190,6 +347,7 @@
                   min='0'
                   class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
                   value='{{ t.planned_amount|unlocalize }}'
+                  {% if os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
               <td class='px-4 py-3'>
@@ -205,20 +363,24 @@
                     value='{{ t.actual_hours|unlocalize }}'
                     {% if t.status == 'RUNNING' %}disabled{% endif %}
                   />
+                  {% if t_elapsed > 0 %}
+                    <div class='text-xs text-slate-600'>⏱️ {{ t_elapsed_hms }} (contábil)</div>
+                  {% endif %}
                   <div class='text-xs text-red-700 hidden' data-overrun-text='1'></div>
                 </div>
               </td>
               <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
+                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked and t.status != 'RUNNING' and t.status != 'PAUSED' %}disabled{% endif %} title='{% if os_status.is_blocked and t.status == "SCHEDULED" %}Bloqueado: só inicia após liberação das peças.{% endif %}'>
                   {% for value, label in task_status_choices %}
-                    <option value='{{ value }}' {% if t.status == value %}selected{% endif %}>{{ label }}</option>
+                    <option value='{{ value }}' {% if t.status == value %}selected{% endif %}>{% if value == 'SCHEDULED' %}S · Não iniciado{% elif value == 'RUNNING' %}R · Em andamento{% elif value == 'PAUSED' %}P · Pausado{% elif value == 'DONE' %}C · Concluído{% else %}{{ label }}{% endif %}</option>
                   {% endfor %}
                 </select>
+                <div class='mt-1 text-xs text-slate-500'>{{ t_status_label }}</div>
               </td>
               <td class='px-4 py-3 text-right'>
                 <form id='task-{{ t.id }}' method='post' action='{% url "budgets:workorder_task_schedule" t.id %}'>
                   {% csrf_token %}
-                  <button type='submit' data-save-task='1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
+                  <button type='submit' data-save-task='1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] {% if os_status.is_blocked %}disabled:opacity-50 disabled:cursor-not-allowed{% endif %}' {% if os_status.is_blocked %}disabled{% endif %} title='{% if os_status.is_blocked %}Bloqueado: OS sem liberação das peças.{% endif %}'>
                     Salvar
                   </button>
                 </form>

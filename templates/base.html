@@ -20,7 +20,7 @@
       {% if user.is_authenticated and not user.is_superuser and user.role == 'VISUAL' and request.resolver_match.view_name == 'budgets:kanban_today' %}
       {% else %}
         <header class='sticky top-0 z-50 border-b border-[#262626] bg-[#141414] text-[#F5F5F5]'>
-          <div class='mx-auto flex max-w-6xl items-center justify-between px-4 py-4'>
+          <div class='mx-auto flex max-w-[96%] 2xl:max-w-[1700px] items-center justify-between px-4 py-4 gap-3 flex-wrap'>
             <a href='{% url "core:public_index" %}' class='flex items-center gap-3 text-lg font-semibold tracking-wide'>
               {% if system_settings and system_settings.logo %}
                 <img src='{{ system_settings.logo.url }}' alt='Logo' class='h-9 w-9 rounded-md border border-[#262626] bg-[#0D0D0D] object-contain p-1' />
@@ -41,10 +41,15 @@
                   </a>
                 {% endif %}
 
-                {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' %}
+                {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' or role == 'ESTIMATOR' %}
                   <a href='{% url "budgets:finance_dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
                     Financeiro
                   </a>
+                  <a href='{% url "budgets:performance_dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
+                    Desempenho
+                  </a>
+                {% endif %}
+                {% if user.is_superuser or role != 'OPERATIONAL' and role != 'VISUAL' %}
                   <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
                     OS
                   </a>
@@ -133,7 +138,7 @@
         </header>
       {% endif %}
 
-      <main class='{% block main_class %}mx-auto max-w-6xl px-4 py-8{% endblock %}'>
+      <main class='{% block main_class %}mx-auto max-w-[96%] 2xl:max-w-[1700px] px-4 py-8{% endblock %}'>
         {% if messages %}
           <div id='app-messages' class='mb-6 space-y-2'>
             {% for message in messages %}

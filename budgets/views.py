@@ -28,6 +28,19 @@ from .calendar_utils import (
     KANBAN_CUTOFF_TIME,
     capped_work_delta_seconds,
     next_weekday_including_saturday,
+    budget_has_pending_shop_parts,
+    budget_get_pending_shop_parts,
+    compute_performance_report,
+    compute_work_order_status,
+    get_elapsed_seconds_for_display,
+    performance_report_to_text,
+    seconds_to_hms,
+    simplify_task_status_label,
+    TaskStatus_SCHEDULED,
+    TaskStatus_RUNNING,
+    TaskStatus_PAUSED,
+    TaskStatus_DONE,
+    BudgetStatus_AUTHORIZED,
 )
 from .forms import AdministrativeClosureForm, BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
 from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, XMLImportJob
@@ -125,17 +138,6 @@ def get_task_sequence_block_message(task):
     if len(blockers) == 1:
         return f'Conclua primeiro {blockers[0]}.'
     return 'Conclua primeiro: ' + ', '.join(blockers) + '.'
-
-
-def budget_has_pending_shop_parts(budget):
-    if not budget or not getattr(budget, 'id', None):
-        return False
-    return Piece.objects.filter(
-        budget_id=budget.id,
-        provider_type=Piece.ProviderType.SHOP,
-        arrived=False,
-        arrival_date__isnull=True,
-    ).exists()
 
 
 def task_has_blocking_pending_shop_parts(task):
@@ -1310,6 +1312,116 @@ class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         context['today'] = today
         context['total_open_budgets'] = self.get_queryset().count()
         return context
+
+
+def _call_local_ollama_analysis(report_text: str, timeout: int = 180) -> str:
+    import json
+    import urllib.request
+    import urllib.error
+
+    payload = {
+        "model": "llama3.2:3b",
+        "prompt": (
+            "Você é um consultor SÊNIOR de operações em oficina de funilaria e pintura, "
+            "especialista em redução de lead time e análise de atrasos. "
+            "Analise o relatório abaixo e produza uma análise em PORTUGUÊS DO BRASIL, "
+            "CLARA, OBJETIVA e AÇIONÁVEL para o gerente da oficina.\n\n"
+            "ESTRUTURA OBRIGATÓRIA (não invente seção, escreva exatamente estes 6 blocos):\n\n"
+            "# (1) RESUMO EXECUTIVO\n"
+            "3 linhas máximo, em bullet points com os números mais importantes.\n\n"
+            "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
+            "Liste top 3 gargalos, com evidência (dados do relatório).\n\n"
+            "# (3) ANÁLISE DOS ATRASOS POR FAIXA\n"
+            "1-2 dias, 3-5 dias, +5 dias: por que cada grupo está atrasando?\n\n"
+            "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
+            "Estouro de horas, quantidade de clientes afetados, risco reputacional.\n\n"
+            "# (5) CONTRAMEDIDAS (AÇÕES PRIORIZADAS 30-60-90 DIAS)\n"
+            "Divida em ALTA PRIORIDADE (30 dias / ação hoje), MÉDIA (60 dias) e BAIXA (90 dias). "
+            "Cada ação tem que ser ESPECÍFICA para a oficina (ex: 'negociar novo fornecedor de peças SHOP atrasadas', "
+            "'treinar colaborador X em funilaria passo Z', etc).\n\n"
+            "# (6) RECOMENDAÇÕES INDIVIDUAIS POR ORÇAMENTO CRÍTICO\n"
+            "Selecione os 3-5 piores casos (+5d ou atraso + grande estouro de horas) e dê 1 sugestão ESPECÍFICA por caso.\n\n"
+            "REGRAS:\n"
+            "- Não invente dados! Use apenas o que está no relatório abaixo.\n"
+            "- Se faltar dado (ex: 'sem causa óbvia'), seja honesto e peça investigação adicional.\n"
+            "- Use negrito e bullet points para ficar legível.\n"
+            "- Máximo de 1500 palavras (seja objetivo, gerente não tem tempo).\n\n"
+            "RELATÓRIO BRUTO PARA ANÁLISE:\n"
+            "------------------------------------------------------------\n"
+            f"{report_text}\n"
+            "------------------------------------------------------------\n"
+            "ANÁLISE GERENCIAL:\n"
+        ),
+        "stream": False,
+        "options": {"num_ctx": 8192, "temperature": 0.3, "top_p": 0.9},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "http://localhost:11434/api/generate",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        return (
+            "❌ **Não foi possível conectar à IA LOCAL (Ollama).**\n\n"
+            "**Causa provável:** Ollama não está rodando ou modelo `llama3.2:3b` não baixado.\n\n"
+            "**Como arrumar (PowerShell / CMD):**\n"
+            "  1) Instalar Ollama: https://ollama.com/download\n"
+            "  2) Rodar `ollama pull llama3.2:3b` (baixa ~2GB, 1x só)\n"
+            "  3) Rodar `ollama serve` (deixa terminal aberto)\n"
+            "  4) Volta aqui e clica em 'Gerar Análise IA' de novo.\n\n"
+            f"Erro técnico: {e}"
+        )
+    except Exception as e:
+        return f"❌ Erro inesperado ao chamar IA local: {type(e).__name__}: {e}"
+    try:
+        obj = json.loads(raw)
+        return str(obj.get("response", "")).strip() or "(resposta vazia da IA)"
+    except Exception as e:
+        return (
+            f"❌ Não conseguiu fazer parse da resposta ({type(e).__name__}: {e}). "
+            f"Resposta bruta (primeiros 1000 chars): {raw[:1000]}"
+        )
+
+
+class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+    model = Budget
+    template_name = "budgets/performance_dashboard.html"
+    context_object_name = "budgets"
+    paginate_by = None
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
+
+    def get_queryset(self):
+        q = Q(expected_delivery_date__isnull=False) | Q(delivered_at__isnull=False) | Q(approved_at__isnull=False)
+        return (
+            super()
+            .get_queryset()
+            .select_related("customer", "vehicle")
+            .prefetch_related("pieces")
+            .filter(q)
+            .order_by("-delivered_at", "-expected_delivery_date", "-approved_at", "-created_at")
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        budgets = list(ctx["budgets"])
+        report = compute_performance_report(budgets)
+        report_text = performance_report_to_text(report)
+        ctx.update(report=report, report_text=report_text)
+        return ctx
+
+
+class PerformanceInsightsView(PerformanceDashboardView):
+    def get(self, request, *args, **kwargs):
+        ctx = self.get_context_data(**kwargs)
+        report_text = ctx.get("report_text", "")
+        ia_analysis = _call_local_ollama_analysis(report_text)
+        ctx["ai_analysis"] = ia_analysis
+        return render(request, self.template_name, ctx)
 
 
 class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -2540,7 +2652,21 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
             super()
             .get_queryset()
             .select_related('budget', 'budget__customer', 'budget__vehicle')
+            .prefetch_related(
+                'tasks',
+                'tasks__collaborator',
+                'budget__pieces',
+            )
         )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        now_local = timezone.localtime(timezone.now())
+        paired = []
+        for wo in ctx['work_orders']:
+            paired.append((wo, compute_work_order_status(wo, now=now_local)))
+        ctx['work_orders_with_status'] = paired
+        return ctx
 
 
 class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -2659,6 +2785,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         is_workday = selected.weekday() < 6
         tasks_by_activity = {}
         now = timezone.now()
+        now_local = timezone.localtime(now)
         task_items = list(context.get('tasks', []))
         for task in task_items:
             task.is_patio = False
@@ -2679,6 +2806,13 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 if len(blockers) == 1
                 else ('Conclua primeiro: ' + ', '.join(blockers) + '.') if blockers else ''
             )
+            wo_summary = compute_work_order_status(task.work_order, now=now_local)
+            task.os_state_code = wo_summary.state_code
+            task.os_state_label = wo_summary.state_label
+            task.os_is_blocked = wo_summary.is_blocked
+            task.os_parts_count = len(wo_summary.blocked_parts)
+            task.display_status_label = simplify_task_status_label(task.status)
+            task.display_elapsed_hms = seconds_to_hms(task.display_elapsed_seconds)
             tasks_by_activity.setdefault(task.activity, []).append(task)
 
         busy_work_order_ids = set(
@@ -2724,6 +2858,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         )
         patio_cards = []
         for wo in patio_work_orders:
+            wo_summary = compute_work_order_status(wo, now=now_local)
             patio_cards.append(
                 {
                     'id': f'patio-{wo.id}',
@@ -2741,6 +2876,12 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                     'planned_seconds': 0,
                     'is_overdue': False,
                     'allow_overtime': False,
+                    'os_state_code': wo_summary.state_code,
+                    'os_state_label': wo_summary.state_label,
+                    'os_is_blocked': wo_summary.is_blocked,
+                    'os_parts_count': len(wo_summary.blocked_parts),
+                    'display_status_label': 'S · Não iniciado',
+                    'display_elapsed_hms': '',
                 }
             )
 
@@ -2792,6 +2933,21 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
         task = WorkOrderTask.objects.select_related('collaborator', 'work_order', 'work_order__budget').filter(pk=pk).first()
         if task is None:
             raise Http404('Tarefa não encontrada.')
+
+        budget = getattr(task.work_order, 'budget', None)
+        if budget and getattr(budget, 'status', '') == BudgetStatus_AUTHORIZED:
+            has_pending = budget_has_pending_shop_parts(budget)
+            allow_bypass = bool(getattr(budget, 'allow_repair_without_parts', False))
+            if has_pending and not allow_bypass:
+                messages.error(
+                    request,
+                    'Bloqueado: Orçamento tem peças da oficina pendentes. Não é possível iniciar novas tarefas. '
+                    'Solicite ao gerente que marque "Liberar seguir sem peças" no orçamento.',
+                )
+                next_url = (request.POST.get('next') or '').strip()
+                if next_url:
+                    return redirect(next_url)
+                return redirect('budgets:kanban_today')
 
         today = timezone.localdate()
         entry_date = getattr(getattr(task.work_order, 'budget', None), 'entry_date', None)
@@ -3289,8 +3445,28 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             else:
                 selected_collaborator_id = ''
 
+        now_local = timezone.localtime(timezone.now())
+        os_status = compute_work_order_status(self.object, now=now_local)
+
+        task_open_summaries = []
+        for t in tasks_open:
+            elapsed_secs = get_elapsed_seconds_for_display(t, now=now_local)
+            task_open_summaries.append((t, elapsed_secs, seconds_to_hms(elapsed_secs), simplify_task_status_label(t.status)))
+        task_done_summaries = []
+        for t in tasks_done:
+            elapsed_secs = get_elapsed_seconds_for_display(t, now=now_local)
+            task_done_summaries.append((t, elapsed_secs, seconds_to_hms(elapsed_secs), simplify_task_status_label(t.status)))
+
+        active_elapsed_seconds = 0
+        active_elapsed_hms = ''
+        if os_status.active_task is not None:
+            active_elapsed_seconds = get_elapsed_seconds_for_display(os_status.active_task, now=now_local)
+            active_elapsed_hms = seconds_to_hms(active_elapsed_seconds)
+
         context['tasks_open'] = tasks_open
         context['tasks_done'] = tasks_done
+        context['task_open_summaries'] = task_open_summaries
+        context['task_done_summaries'] = task_done_summaries
         context['tasks_open_count'] = tasks_open.count()
         context['tasks_done_count'] = tasks_done.count()
         context['selected_collaborator_id'] = selected_collaborator_id
@@ -3306,6 +3482,11 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
         context['suppliers_active'] = Supplier.objects.filter(is_active=True).only('id', 'name')
         context['third_party_status_choices'] = ThirdPartyService.Status.choices
         context['today'] = timezone.localdate()
+        context['os_status'] = os_status
+        context['active_elapsed_seconds'] = active_elapsed_seconds
+        context['active_elapsed_hms'] = active_elapsed_hms
+        context['simplify_task_status_label'] = simplify_task_status_label
+        context['now_local'] = now_local
         return context
 
 

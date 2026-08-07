@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Desempenho da Oficina | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-[96%] 2xl:max-w-[1700px] px-4 py-8{% endblock %}
+
+{% block content %}
+<div class='flex flex-wrap items-center justify-between gap-3'>
+  <div>
+    <h1 class='text-2xl font-semibold text-amber-700'>📊 Desempenho — Atrasos de Entrega, Horas & Lead Time</h1>
+    <p class='mt-1 text-sm text-slate-500'>Tudo parte da DATA DE APROVAÇÃO e DATA INÍCIO DO REPARO. Clique em 'Analisar IA' para diagnóstico e contramedidas.</p>
+  </div>
+  <div class='flex flex-wrap gap-3'>
+    <a href='{% url "budgets:performance_insights" %}' class='rounded-lg border border-indigo-400 bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-600 transition'>
+      🤖 Analisar com IA Local
+    </a>
+    <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
+      ← Voltar OS
+    </a>
+  </div>
+</div>
+
+{% with rep=report %}
+  <div class='mt-6 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-9'>
+    <div class='rounded-xl border-2 border-slate-400 bg-slate-50 p-4 text-center shadow-sm lg:col-span-1'>
+      <div class='text-3xl font-bold text-slate-700 leading-tight'>{{ rep.no_promise_date|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-slate-800'>⏸️ Sem prazo</div>
+      <div class='mt-1 text-[11px] text-slate-600/80'>aprovado, sem data entrega</div>
+    </div>
+    <div class='rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-emerald-700 leading-tight'>{{ rep.on_time_count }}</div>
+      <div class='mt-1 text-xs font-semibold text-emerald-800'>✅ No prazo</div>
+      <div class='mt-1 text-[11px] text-emerald-700/80'>{{ rep.kpi_on_time_pct }}% do total</div>
+    </div>
+    <div class='rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-amber-700 leading-tight'>{{ rep.late_1d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-amber-800'>⏱️ 1d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-amber-400 bg-amber-100/70 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-amber-700 leading-tight'>{{ rep.late_2d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-amber-800'>⏱️ 2d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-orange-300 bg-orange-50 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-orange-700 leading-tight'>{{ rep.late_3d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-orange-800'>⏱️ 3d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-orange-400 bg-orange-100/70 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-orange-700 leading-tight'>{{ rep.late_4d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-orange-800'>⏱️ 4d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-red-300 bg-red-50 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-red-700 leading-tight'>{{ rep.late_5d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-red-800'>🔥 5d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-red-500 bg-red-100 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-red-700 leading-tight'>{{ rep.late_plus_5d|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-red-900'>🚨 +5d atraso</div>
+    </div>
+    <div class='rounded-xl border-2 border-sky-300 bg-sky-50 p-4 text-center shadow-sm'>
+      <div class='text-3xl font-bold text-sky-700 leading-tight'>{{ rep.open_with_expected|length }}</div>
+      <div class='mt-1 text-xs font-semibold text-sky-800'>📅 Em aberto</div>
+      <div class='mt-1 text-[11px] text-sky-700/80'>dentro da prev.</div>
+    </div>
+  </div>
+
+  <div class='mt-6 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3'>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>Total analisado</div>
+      <div class='mt-1 text-2xl font-bold text-slate-800'>{{ rep.total }}</div>
+      <div class='mt-1 text-[11px] text-slate-500'>{{ rep.kpi_total_with_approved_date }} com data de aprovação</div>
+    </div>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>% de atraso</div>
+      <div class='mt-1 text-2xl font-bold {% if rep.kpi_late_pct >= 30 %}text-red-700{% elif rep.kpi_late_pct >= 10 %}text-amber-700{% else %}text-emerald-700{% endif %}'>{{ rep.kpi_late_pct }}%</div>
+    </div>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>Média atraso (apenas atrasados)</div>
+      <div class='mt-1 text-2xl font-bold text-slate-800'>{{ rep.kpi_avg_days_late }} <span class='text-sm text-slate-500'>dias</span></div>
+    </div>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>Média parada antes de iniciar</div>
+      <div class='mt-1 text-2xl font-bold {% if rep.kpi_avg_idle_before_start_days >= 3 %}text-red-700{% elif rep.kpi_avg_idle_before_start_days >= 1 %}text-amber-700{% else %}text-emerald-700{% endif %}'>{{ rep.kpi_avg_idle_before_start_days }} <span class='text-sm text-slate-500'>dias</span></div>
+      <div class='mt-1 text-[11px] text-slate-500'>aprovado → início do reparo (lead time entrada)</div>
+    </div>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>Estouro total de horas</div>
+      <div class='mt-1 text-2xl font-bold {% if rep.kpi_total_overrun_hours > 50 %}text-red-700{% else %}text-amber-700{% endif %}'>+{{ rep.kpi_total_overrun_hours|floatformat:2 }}h</div>
+      <div class='mt-1 text-[11px] text-slate-500'>Média (só atrasados): +{{ rep.kpi_avg_overrun_hours_late_only|floatformat:2 }}h</div>
+    </div>
+    <div class='rounded-xl border border-slate-200 bg-white p-4 shadow-sm'>
+      <div class='text-xs uppercase tracking-wider text-slate-500 font-semibold'>Em aberto (crítico oculto)</div>
+      <div class='mt-1 text-2xl font-bold text-slate-800'>{{ rep.no_promise_date|length }} <span class='text-sm text-slate-500'>s/ prazo</span></div>
+      <div class='mt-1 text-[11px] text-slate-500'>defina data entrega para entrar no SLA</div>
+    </div>
+  </div>
+
+  {% if ai_analysis %}
+  <div class='mt-8 rounded-2xl border-2 border-indigo-300 bg-indigo-50 p-6 shadow-md'>
+    <div class='flex flex-wrap items-center justify-between gap-3'>
+      <div class='flex items-center gap-3'>
+        <div class='text-4xl'>🤖</div>
+        <div>
+          <h2 class='text-xl font-bold text-indigo-900'>Análise da IA Local (Ollama llama3.2:3b)</h2>
+          <p class='text-sm text-indigo-800/80'>6 blocos: Resumo, Gargalos, Atrasos x Faixa, Impacto, Contramedidas 30/60/90, Casos Críticos.</p>
+        </div>
+      </div>
+      <a href='{% url "budgets:performance_dashboard" %}' class='rounded-md border border-indigo-300 bg-white px-4 py-2 text-sm text-indigo-800 hover:bg-indigo-100'>
+        🔄 Re-analisar
+      </a>
+    </div>
+    <div class='mt-5 whitespace-pre-wrap rounded-xl border border-indigo-200 bg-white/90 p-5 text-[13.5px] leading-7 text-slate-800'>{{ ai_analysis }}</div>
+  </div>
+  {% endif %}
+
+  <div class='mt-8 space-y-8'>
+    {% with bucket_rows=rep.no_promise_date title="⏸️ Sem prazo contratado (aprovado — risco oculto de atraso!)" accent_class="border-slate-400 bg-slate-50" title_class="text-slate-800" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_plus_5d title="🚨 Mais de 5 dias de atraso (CRÍTICO)" accent_class="border-red-500 bg-red-50" title_class="text-red-800" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_5d title="🔥 Atrasado 5 dias" accent_class="border-red-300 bg-red-50/60" title_class="text-red-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_4d title="⏱️ Atrasado 4 dias" accent_class="border-orange-400 bg-orange-50" title_class="text-orange-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_3d title="⏱️ Atrasado 3 dias" accent_class="border-orange-300 bg-orange-50/60" title_class="text-orange-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_2d title="⏱️ Atrasado 2 dias" accent_class="border-amber-400 bg-amber-50" title_class="text-amber-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.late_1d title="⏱️ Atrasado 1 dia" accent_class="border-amber-300 bg-amber-50/50" title_class="text-amber-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.on_time title="✅ Dentro do prazo (entregues ou vencimento passado e ok)" accent_class="border-emerald-300 bg-emerald-50" title_class="text-emerald-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+    {% with bucket_rows=rep.open_with_expected title="📅 Em aberto (dentro da previsão — ainda não venceu)" accent_class="border-sky-300 bg-sky-50" title_class="text-sky-700" %}
+      {% include "budgets/performance/_bucket_table.html" %}
+    {% endwith %}
+  </div>
+
+  <details class='mt-10 rounded-xl border border-slate-300 bg-white'>
+    <summary class='cursor-pointer select-none px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50'>
+      🧾 Ver relatório bruto (texto que vai para IA — pode copiar e colar no ChatGPT se quiser)
+    </summary>
+    <pre class='max-h-96 overflow-auto bg-[#0D0D0D] text-slate-100 p-5 text-xs leading-6 rounded-b-xl'>{{ report_text }}</pre>
+  </details>
+
+{% endwith %}
+{% endblock %}
