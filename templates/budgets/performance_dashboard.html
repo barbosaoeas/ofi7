@@ -14,6 +14,10 @@
     <a href='{% url "budgets:performance_insights" %}' class='rounded-lg border border-indigo-400 bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-600 transition'>
       🤖 Analisar com IA (Nuvem / Local)
     </a>
+    <a href='{% url "budgets:performance_insights" %}?print=1' target='_blank' rel='noopener'
+       class='rounded-lg border border-slate-700 bg-slate-800 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-900 transition'>
+      🖨️ Relatório p/ Imprimir
+    </a>
     <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
       ← Voltar OS
     </a>
@@ -159,6 +163,13 @@
         <a href='{% url "budgets:performance_insights" %}?refresh=1'
            class='rounded-md border border-orange-400 bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600'>
           🔄 Forçar Re-análise
+        </a>
+
+        <a href='{% url "budgets:performance_insights" %}?print=1'
+           target='_blank' rel='noopener'
+           class='rounded-md border border-indigo-500 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700'
+           title='Abre relatório limpo em nova aba, otimizado para impressão A4 (não gasta tokens — usa cache)'>
+          🖨️ Relatório p/ Imprimir
         </a>
       </div>
     </div>

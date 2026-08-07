@@ -1879,6 +1879,47 @@ class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return ctx
 
 
+def _parse_ia_sections(texto: str) -> List[Dict[str, str]]:
+    """Quebra o texto da analise da IA nas 6 secoes para impressao organizada.
+    Se nao encontrar marcadores, retorna 1 unica secao 'Analise Completa'.
+    """
+    marcadores = [
+        ("RESUMO EXECUTIVO", "📋 Resumo Executivo", ["(1) RESUMO", "# (1) RESUMO", "RESUMO EXECUTIVO", "(1) Resumo"]),
+        ("PRINCIPAIS GARGALOS", "🔧 Principais Gargalos Identificados", ["(2) PRINCIPAIS GARGALOS", "# (2) PRINCIPAIS GARGALOS", "PRINCIPAIS GARGALOS IDENTIFICADOS"]),
+        ("ANALISE DOS ATRASOS POR FAIXA", "⏱️ Análise dos Atrasos por Faixa", ["(3) ANALISE DOS ATRASOS", "# (3) ANALISE DOS ATRASOS", "ANALISE DOS ATRASOS POR FAIXA", "(3) ATRASOS"]),
+        ("IMPACTO FINANCEIRO", "💰 Impacto Financeiro / Operacional", ["(4) IMPACTO", "# (4) IMPACTO", "IMPACTO FINANCEIRO", "IMPACTO OPERACIONAL", "(4) Impacto"]),
+        ("CONTRAMEDIDAS", "🚀 Contramedidas 30/60/90 dias", ["(5) CONTRAMEDIDAS", "# (5) CONTRAMEDIDAS", "CONTRAMEDIDAS", "PLANO DE ACAO", "PLANO DE AÇÃO"]),
+        ("CASOS CRITICOS", "🚨 Casos Críticos (Ação Imediata)", ["(6) CASOS CRITICOS", "# (6) CASOS CRITICOS", "CASOS CRITICOS", "CASOS CRÍTICOS", "(6) Casos"]),
+    ]
+    texto_norm = texto or ""
+    secoes: List[Dict[str, str]] = []
+    last_end = 0
+    # Encontra cada marcador no texto, ordem de ocorrencia (nao forca ordem dos indices)
+    hits = []  # (start_index, key, titulo_bonito)
+    for chave, titulo, padroes in marcadores:
+        for p in padroes:
+            idx = texto_norm.lower().find(p.lower())
+            if idx >= 0:
+                hits.append((idx, chave, titulo))
+                break
+    hits.sort(key=lambda x: x[0])
+    for i, (start, key, titulo) in enumerate(hits):
+        end = hits[i + 1][0] if i + 1 < len(hits) else len(texto_norm)
+        corpo = texto_norm[start:end].strip()
+        # Remove 1a linha (o titulo) para nao repetir
+        linhas = corpo.splitlines()
+        if linhas:
+            primeira_linha_LOW = linhas[0].strip().lower()
+            if any(p.lower() in primeira_linha_LOW for _, _, padroes in marcadores for p in padroes):
+                corpo = "\n".join(linhas[1:]).strip()
+        if corpo:
+            secoes.append({"key": key, "titulo": titulo, "corpo": corpo})
+        last_end = end
+    if not secoes:
+        secoes.append({"key": "COMPLETO", "titulo": "📋 Análise Completa da IA", "corpo": texto_norm.strip()})
+    return secoes
+
+
 class PerformanceInsightsView(PerformanceDashboardView):
     # Ja herda LoginRequiredMixin e RoleRequiredMixin + allowed_roles do pai.
     allowed_roles = PerformanceDashboardView.allowed_roles
@@ -1895,6 +1936,10 @@ class PerformanceInsightsView(PerformanceDashboardView):
         force_refresh = (
             str(request.GET.get("refresh", "")).strip().lower()
             in {"1", "true", "sim", "yes", "forcar"}
+        )
+        print_mode = (
+            str(request.GET.get("print", "")).strip().lower()
+            in {"1", "true", "sim", "yes", "imprimir", "relatorio"}
         )
         clear_chat = (
             str(request.GET.get("clear_chat", "")).strip().lower()
@@ -2023,6 +2068,55 @@ class PerformanceInsightsView(PerformanceDashboardView):
                 ctx["ia_generated_at"] = timezone.now()
         else:
             ctx["ia_generated_at"] = timezone.now()
+
+        if print_mode:
+            # ============================================================
+            # MODO IMPRESSAO: template limpo A4, sem navbar, otimizado.
+            # ECONOMIA TOKENS: se nao tiver cache, mostra aviso e pede para gerar primeiro (NAO gasta tokens na impressao!)
+            # ============================================================
+            ctx["ia_secoes"] = _parse_ia_sections(llm_result.content)
+            ctx["ia_pode_imprimir"] = (
+                llm_result.provider != "erro"
+                and llm_result.error is None
+                and bool(llm_result.content)
+                and "⛔" not in llm_result.content[:200]
+                and "❌" not in llm_result.content[:200]
+                and "sem chave" not in llm_result.content[:300].lower()
+            )
+            # Totalizadores para o topo do relatorio
+            rep = ctx.get("report") or None
+            if rep is not None:
+                buckets = [
+                    ("🚨 +5d (CRÍTICO)", len(getattr(rep, "late_plus_5d", [])), "red"),
+                    ("🔥 5 dias", len(getattr(rep, "late_5d", [])), "orange"),
+                    ("⏱️ 4 dias", len(getattr(rep, "late_4d", [])), "orange"),
+                    ("⏱️ 3 dias", len(getattr(rep, "late_3d", [])), "amber"),
+                    ("⏱️ 2 dias", len(getattr(rep, "late_2d", [])), "amber"),
+                    ("⏱️ 1 dia", len(getattr(rep, "late_1d", [])), "yellow"),
+                    ("✅ No prazo", len(getattr(rep, "on_time", [])), "emerald"),
+                    ("⏸️ S/prazo", len(getattr(rep, "no_promise_date", [])), "slate"),
+                ]
+                total_os = sum(b[1] for b in buckets)
+                total_atrasados = sum(b[1] for b in buckets if b[2] in {"red", "orange", "amber", "yellow"})
+                ctx["print_buckets"] = buckets
+                ctx["print_total_os"] = total_os
+                ctx["print_total_atrasados"] = total_atrasados
+                ctx["print_total_no_prazo"] = len(getattr(rep, "on_time", []))
+                ctx["print_total_sem_prazo"] = len(getattr(rep, "no_promise_date", []))
+                # 5 OS mais criticas (do bucket late_plus_5d)
+                criticas = []
+                for row in list(getattr(rep, "late_plus_5d", []))[:5]:
+                    criticas.append({
+                        "orcamento": getattr(row, "budget_id", ""),
+                        "cliente": getattr(row, "customer_name", "")[:40],
+                        "veiculo": (str(getattr(row, "vehicle_model", "") or "") + " " + str(getattr(row, "vehicle_plate", "") or "")).strip()[:50],
+                        "dias_atraso": getattr(row, "late_days", 0),
+                        "secao_atual": getattr(row, "current_section_label", "-"),
+                        "bloqueio_pecas": "SIM" if getattr(row, "pending_parts_count", 0) > 0 else "não",
+                    })
+                ctx["print_criticas"] = criticas
+            return render(request, "budgets/performance_print_report.html", ctx)
+
         return render(request, self.template_name, ctx)
 
     # ------------------------------------------------------------
