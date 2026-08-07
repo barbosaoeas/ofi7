@@ -1467,6 +1467,7 @@ import time as _time
 import hashlib as _hashlib
 import urllib.request as _ureq
 import urllib.error as _uerr
+from pathlib import Path as _Path
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 
@@ -1494,6 +1495,54 @@ _OPENAI_PRICING_PER_1M = {
     "gpt-4o": (2.50, 10.0),
     "gpt-3.5-turbo-0125": (0.50, 1.50),
 }
+
+
+def _resolve_openai_api_key() -> str:
+    """Fallback TRIPLO para achar a chave OpenAI (evita bug de runserver nao reiniciado).
+    Ordem: 1) django_settings (import-time), 2) os.environ (agora), 3) ler arquivo .env DIRETO (ultimo recurso).
+    Retorna vazio se nao achar em lugar nenhum.
+    """
+    candidatos: List[str] = []
+
+    # (1) settings.OPENAI_API_KEY (carregado no import do settings.py)
+    candidatos.append(getattr(django_settings, "OPENAI_API_KEY", "") or "")
+
+    # (2) os.environ DIRETO (força leitura atualizada do ambiente)
+    candidatos.append(_os.environ.get("OPENAI_API_KEY", "") or "")
+
+    # (3) Ultimo recurso: ler o arquivo .env DIRETAMENTE, linha por linha,
+    #     caso settings.py tenha sido carregado ANTES do .env ser atualizado
+    #     e o usuário não reiniciou o runserver ainda.
+    try:
+        env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
+        if _os.path.isfile(env_path):
+            with open(env_path, "r", encoding="utf-8") as f_env:
+                for linha in f_env:
+                    linha = linha.strip()
+                    if not linha or linha.startswith("#") or "=" not in linha:
+                        continue
+                    chave, valor = linha.split("=", 1)
+                    if chave.strip().upper() == "OPENAI_API_KEY":
+                        candidatos.append(valor.strip().strip('"').strip("'"))
+                        break
+    except Exception:
+        pass
+
+    # Pega o PRIMEIRO candidato que nao for vazio / placeholder
+    for c in candidatos:
+        c = c.strip()
+        if c and c.lower() not in {"", "sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}:
+            return c
+    return ""
+
+
+def _openai_api_key_ok(key: str) -> bool:
+    key = (key or "").strip()
+    if not key:
+        return False
+    if key.startswith("sk-xxxx") or "xxxxxxxx" in key.lower():
+        return False
+    return len(key) > 20  # chaves reais tem ~50+ caracteres
 
 
 def _report_cache_key(report_text: str) -> str:
@@ -1617,12 +1666,16 @@ def _call_openai_analysis(report_text: str, user_followup: Optional[str] = None)
     - Follow-up (user_followup != None): APENAS envia (RESUMO 250 palavras + ultimas 10 msgs) + pergunta nova.
       => 95% MENOS tokens gastos em perguntas seguintes! MEMORIA DE CONVERSA.
     """
-    api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
-    model = getattr(django_settings, "OPENAI_DEFAULT_MODEL", "gpt-4o-mini").strip()
+    api_key = _resolve_openai_api_key()
+    model = (
+        _os.environ.get("OPENAI_DEFAULT_MODEL", "").strip()
+        or getattr(django_settings, "OPENAI_DEFAULT_MODEL", "gpt-4o-mini").strip()
+        or "gpt-4o-mini"
+    )
     temperature = float(getattr(django_settings, "OPENAI_TEMPERATURE", 0.3))
     timeout = int(getattr(django_settings, "OPENAI_TIMEOUT", 120))
 
-    if not api_key or api_key.startswith("sk-xxxx"):
+    if not _openai_api_key_ok(api_key):
         return LLMResult(
             provider="erro",
             model="",
@@ -1852,9 +1905,13 @@ class PerformanceInsightsView(PerformanceDashboardView):
         if clear_chat:
             _chat_history_clear(report_text)
 
-        api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
-        api_key_ok = bool(api_key) and not api_key.startswith("sk-xxxx")
-        prefer_cloud = bool(getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", True))
+        api_key = _resolve_openai_api_key()
+        api_key_ok = _openai_api_key_ok(api_key)
+        prefer_cloud = bool(
+            _os.environ.get("LLM_PREFER_CLOUD_IF_KEY", getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", "true"))
+            not in {False, None, "0", "false", "no", "off", "False"}
+            or bool(getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", True))
+        )
 
         # Ordem de provedores, dependendo da preferencia
         provedores_para_tentar: List[str] = []
@@ -1987,8 +2044,8 @@ class PerformanceInsightsView(PerformanceDashboardView):
 
         # 2) Prioridade: OpenAI se chave OK, senao fallback para erro amigavel.
         followup_result: Optional[LLMResult] = None
-        api_key = getattr(django_settings, "OPENAI_API_KEY", "").strip()
-        api_key_ok = bool(api_key) and not api_key.startswith("sk-xxxx")
+        api_key = _resolve_openai_api_key()
+        api_key_ok = _openai_api_key_ok(api_key)
         if api_key_ok:
             followup_result = _call_openai_analysis(report_text, user_followup=pergunta)
         else:
