@@ -70,6 +70,18 @@ class Command(BaseCommand):
                         f'Ignorado {entry.name}: arquivo já sincronizado anteriormente com status {existing_job.get_status_display()}.'
                     )
                 )
+                try:
+                    service.move_file(
+                        entry.path_display,
+                        service.build_destination_path(service.processed_path, entry.name),
+                    )
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f'  (movido de volta para {service.processed_path} para evitar reprocessamento.'
+                        )
+                    )
+                except DropboxServiceError:
+                    pass
                 continue
 
             job = existing_job
