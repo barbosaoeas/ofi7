@@ -1,34 +1,68 @@
 #!/bin/bash
 # ============================================================================
-#  DEPLOY PYTHONANYWHERE - PASSO 01 (rodar no BASH do PA, dentro de ~/ofi7)
-#  Objetivo: 1 clique para:
-#    1. Ativar venv
-#    2. git pull origin main
-#    3. Django check (0 erros?)
-#    4. makemigrations --check (esperado: 0 migrations novas!)
-#    5. Roda 1 teste rápido do TimeCapping
-#  Depois, manualmente: clique no botao VERDE "Reload" na WEB TAB do PA.
+#  DEPLOY PYTHONANYWHERE - PASSO 01 (rodar no BASH do PA)
+#  COMPATIVEL 100% COM PYTHONANYWHERE (Ubuntu Linux Bash Padrao)
+#
+#  ANTES DE RODAR A PRIMEIRA VEZ: AJUSTE ABAIXO 2 LINHAS (CONFIG):
+#    1. PROJECT_DIR = onde esta o seu projeto (geralmente ~/ofi7 ou ~/ofi7)
+#    2. VENV_PATH   = caminho do activate da sua virtualenv
+#       * DICA: No PythonAnywhere, Aba WEB -> "Virtualenv:" mostra o caminho
+#               Ex: /home/SEU_USUARIO/.virtualenvs/NOME_DA_VENV/bin/activate
 # ============================================================================
+
+# ============================================================
+#  [CONFIG] EDITE AQUI SE PRECISAR (1 vez so!)
+# ============================================================
+PROJECT_DIR="$HOME/ofi7"
+VENV_PATH="$HOME/.virtualenvs/venv/bin/activate"
+# ============================================================
+
 set -e
 echo ""
 echo "========================================================="
 echo "   DEPLOY OFICINA 7 - PYTHONANYWHERE (PASSO 1: GIT PULL)"
 echo "========================================================="
+echo "CONFIG usada:"
+echo "  - PROJECT_DIR: $PROJECT_DIR"
+echo "  - VENV_PATH:   $VENV_PATH"
+echo "---------------------------------------------------------"
 START=$(date +%s)
 
 # 1) Garante que estamos no diretorio do app
-cd "$HOME/ofi7" || { echo "ERRO: diretorio ~/ofi7 nao encontrado! Abortando."; exit 1; }
-echo "[OK] Diretorio: $(pwd)"
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo ""
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "  ERRO: PROJECT_DIR NAO EXISTE -> $PROJECT_DIR"
+  echo "  Verifique editar as 2 linhas de CONFIG no topo deste script."
+  echo "  Lista do seu HOME ($HOME):"
+  ls -la "$HOME"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  exit 1
+fi
+cd "$PROJECT_DIR" || { echo "ERRO: nao consegui entrar em $PROJECT_DIR"; exit 1; }
+echo "[OK] Diretorio projeto: $(pwd)"
+echo ""
 
-# 2) Ativa virtualenv (PythonAnywhere padrao)
-VENV_PATH="$HOME/.virtualenvs/venv/bin/activate"
+# 2) Ativa virtualenv
 if [ -f "$VENV_PATH" ]; then
   # shellcheck disable=SC1090
   source "$VENV_PATH"
   echo "[OK] venv ativada: $(which python)"
 else
-  echo "[AVISO] venv padrão $VENV_PATH NAO ENCONTRADA. Tentando usar python do PATH..."
+  echo ""
+  echo "[AVISO] VENV_PATH NAO ENCONTRADA: $VENV_PATH"
+  echo ""
+  echo "  DICA - Virtualenvs disponiveis em ~/.virtualenvs:"
+  if [ -d "$HOME/.virtualenvs" ]; then
+    ls -la "$HOME/.virtualenvs" | head -n 20
+  else
+    echo "  (pasta ~/.virtualenvs nao existe - provavelmente sua venv esta em outro lugar)"
+  fi
+  echo ""
+  echo "  CONTINUANDO usando python do PATH... (se falhar, edite VENV_PATH no topo)"
+  echo "---------------------------------------------------------"
 fi
+echo ""
 
 # 3) Git status antes
 echo ""
