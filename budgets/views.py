@@ -1489,25 +1489,93 @@ class PerformanceInsightsView(PerformanceDashboardView):
     # Garantido explicitamente por seguranca (se pai mudar um dia):
     allowed_roles = PerformanceDashboardView.allowed_roles
 
+    def _cache_dir(self):
+        import os
+        import tempfile
+        base = os.environ.get("OFI7_PERF_CACHE_DIR")
+        if base and os.path.isdir(base):
+            return base
+        tmp = os.path.join(tempfile.gettempdir(), "ofi7_perf_cache")
+        os.makedirs(tmp, exist_ok=True)
+        return tmp
+
+    def _cache_key(self, report_text: str, refresh: bool):
+        import hashlib
+        h = hashlib.sha256(report_text.encode("utf-8")).hexdigest()[:16]
+        suffix = "_FORCE" if refresh else ""
+        return f"perf_ia_{h}{suffix}.md"
+
+    def _cache_load(self, report_text: str, force_expire_seconds: int = 86400):
+        """Carrega do cache se tiver e tiver menos de force_expire_seconds (padrao: 24h).
+        Retorna (analysis_str, generated_at) ou (None, None)."""
+        import json
+        import os
+        import time
+        fp = os.path.join(self._cache_dir(), self._cache_key(report_text, refresh=False))
+        if not os.path.isfile(fp):
+            return None, None
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                obj = json.load(f)
+            age = time.time() - float(obj.get("ts", 0))
+            if age > force_expire_seconds:
+                return None, None
+            return str(obj.get("analysis", "")), float(obj.get("ts", 0))
+        except Exception:
+            return None, None
+
+    def _cache_save(self, report_text: str, analysis: str):
+        import json
+        import os
+        import time
+        fp = os.path.join(self._cache_dir(), self._cache_key(report_text, refresh=False))
+        try:
+            with open(fp, "w", encoding="utf-8") as f:
+                json.dump({"ts": time.time(), "analysis": analysis}, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def get(self, request, *args, **kwargs):
-        # Garantir que LoginRequiredMixin/RoleRequiredMixin rodem (super().get
-        # cuidaria disto, mas vamos chamar object_list para usar fluxo padrao).
+        import datetime as _dt
         self.object_list = self.get_queryset()
         ctx = self.get_context_data(**kwargs)
         report_text = ctx.get("report_text", "")
-        try:
-            ia_analysis = _call_local_ollama_analysis(report_text)
-        except Exception as e:
-            ia_analysis = (
-                "# ❌ Erro inesperado ao chamar IA Local\n\n"
-                f"**Tipo:** `{type(e).__name__}`\n\n"
-                f"**Mensagem:** {e}\n\n"
-                "---\n\n"
-                "💡 Tente rodar no terminal local: `ollama serve` e confira que "
-                "`http://127.0.0.1:11434` abre (deve mostrar 'Ollama is running')."
-            )
+
+        force_refresh = (
+            str(request.GET.get("refresh", "")).strip().lower()
+            in {"1", "true", "sim", "yes", "forcar"}
+        )
+
+        ia_analysis = None
+        generated_ts = None
+        if not force_refresh:
+            ia_analysis, generated_ts = self._cache_load(report_text)
+
+        if ia_analysis is None:
+            try:
+                ia_analysis = _call_local_ollama_analysis(report_text)
+            except Exception as e:
+                ia_analysis = (
+                    "# ❌ Erro inesperado ao chamar IA Local\n\n"
+                    f"**Tipo:** `{type(e).__name__}`\n\n"
+                    f"**Mensagem:** {e}\n\n"
+                    "---\n\n"
+                    "💡 Tente rodar no terminal local: `ollama serve` e confira que "
+                    "`http://127.0.0.1:11434` abre (deve mostrar 'Ollama is running')."
+                )
+            # Salva no cache APENAS se nao for erro fatal "nao conectou",
+            # pois se salvar esse erro, o usuario teria que clicar em re-analisar
+            # amanha para tentar de novo (ruim). Salva apenas se tiver 6 blocos.
+            if "RESUMO EXECUTIVO" in ia_analysis or "# (1)" in ia_analysis:
+                self._cache_save(report_text, ia_analysis)
+            generated_ts = None
+
         ctx["ai_analysis"] = ia_analysis
-        ctx["ia_generated_at"] = timezone.now()
+        ctx["ia_force_refresh"] = force_refresh
+        if generated_ts:
+            ctx["ia_generated_at"] = _dt.datetime.fromtimestamp(float(generated_ts), tz=timezone.utc)
+        else:
+            ctx["ia_generated_at"] = timezone.now()
         return render(request, self.template_name, ctx)
 
 

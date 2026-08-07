@@ -100,13 +100,22 @@
       <div class='flex items-center gap-3'>
         <div class='text-4xl'>🤖</div>
         <div>
-          <h2 class='text-xl font-bold text-indigo-900'>Análise da IA Local (Ollama llama3.2:3b)</h2>
+          <h2 class='text-xl font-bold text-indigo-900'>Análise da IA Local (Ollama)</h2>
           <p class='text-sm text-indigo-800/80'>6 blocos: Resumo, Gargalos, Atrasos x Faixa, Impacto, Contramedidas 30/60/90, Casos Críticos.</p>
+          {% if ia_force_refresh %}
+            <p class='mt-1 text-xs font-semibold uppercase tracking-wider text-orange-700'>⚙️ Re-análise FORÇADA (cache ignorado)</p>
+          {% elif ia_generated_at %}
+            <p class='mt-1 text-xs font-semibold uppercase tracking-wider text-emerald-700'>
+              ⚡ Análise em CACHE (válida 24h) · gerada em <span class='text-indigo-900'>{{ ia_generated_at|date:"d/m/Y H:i" }}</span>
+            </p>
+          {% endif %}
         </div>
       </div>
-      <a href='{% url "budgets:performance_dashboard" %}' class='rounded-md border border-indigo-300 bg-white px-4 py-2 text-sm text-indigo-800 hover:bg-indigo-100'>
-        🔄 Re-analisar
-      </a>
+      <div class='flex flex-wrap items-center gap-2'>
+        <a href='{% url "budgets:performance_insights" %}?refresh=1' class='rounded-md border border-orange-400 bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600'>
+          🔄 Forçar Re-análise (ignora cache)
+        </a>
+      </div>
     </div>
     <div class='mt-5 whitespace-pre-wrap rounded-xl border border-indigo-200 bg-white/90 p-5 text-[13.5px] leading-7 text-slate-800'>{{ ai_analysis }}</div>
   </div>
