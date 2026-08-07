@@ -306,6 +306,15 @@ class BudgetPerformanceRow:
     total_task_elapsed_seconds: int
     idle_days_since_approved: int
     probable_causes: List[str]
+    # [NOVO - DADOS FINANCEIROS para IA calcular R$ de receita parada / impacto]
+    total_amount: float
+    shop_parts_total: float
+    services_total: float
+    labor_total: float
+    discount_total: float
+    markup_total: float
+    late_days: int
+    vehicle_model: str
 
 
 @dataclass
@@ -328,6 +337,22 @@ class PerformanceReport:
     kpi_avg_overrun_hours_late_only: float
     kpi_avg_idle_before_start_days: float
     kpi_total_with_approved_date: int
+    # [NOVO - KPIs FINANCEIROS para IA calcular R$ de receita parada]
+    kpi_valor_total_carteira: float        # Soma R$ TODOS orcamentos (total_amount)
+    kpi_valor_no_prazo: float               # Soma R$ on_time
+    kpi_valor_atrasado: float               # Soma R$ todos buckets late_1d ate late_plus_5d
+    kpi_valor_atrasado_1d: float
+    kpi_valor_atrasado_2d: float
+    kpi_valor_atrasado_3d: float
+    kpi_valor_atrasado_4d: float
+    kpi_valor_atrasado_5d: float
+    kpi_valor_atrasado_plus_5d: float       # CRITICO - +5 dias
+    kpi_valor_sem_prazo: float              # Soma R$ no_promise_date
+    kpi_mao_obra_total_atrasado: float      # Soma R$ labor_total dos atrasados
+    kpi_pecas_total_atrasado: float         # Soma R$ shop_parts dos atrasados
+    kpi_servicos_total_atrasado: float      # Soma R$ services_total dos atrasados
+    # Helper: atraso ponderado (R$ * dias atrasado = "R$·dia")
+    kpi_valor_dia_atraso_ponderado: float   # soma (total_amount * dias_late) p/ atrasados
 
     @property
     def on_time_count(self):
@@ -488,11 +513,22 @@ def compute_performance_report(
             if cmp:
                 idle_days = max((today - cmp).days, 0)
 
+        # [NOVO - Dados financeiros + modelo veiculo]
+        total_amount_f = float(getattr(b, "total_amount", 0) or 0)
+        shop_parts_f = float(getattr(b, "shop_parts_total", 0) or 0)
+        services_f = float(getattr(b, "services_total", 0) or 0)
+        labor_f = float(getattr(b, "labor_total", 0) or 0)
+        discount_f = float(getattr(b, "discount_total", 0) or 0)
+        markup_f = float(getattr(b, "markup_total", 0) or 0)
+        vehicle_obj = getattr(b, "vehicle", None)
+        vehicle_model_f = str(getattr(vehicle_obj, "model", "") or "") if vehicle_obj else ""
+
         row = BudgetPerformanceRow(
             budget_id=b.pk,
             display_number=str(getattr(b, "display_number", b.pk)),
             customer_name=str(getattr(getattr(b, "customer", None), "name", "-")) if getattr(b, "customer", None) else "-",
-            vehicle_plate=str(getattr(getattr(b, "vehicle", None), "plate", "-")) if getattr(b, "vehicle", None) else "-",
+            vehicle_plate=str(getattr(vehicle_obj, "plate", "-") or "-") if vehicle_obj else "-",
+            vehicle_model=vehicle_model_f,
             approved_at=approved_at,
             approved_date=approved_date,
             repair_start_date=repair_start,
@@ -518,6 +554,14 @@ def compute_performance_report(
             total_task_elapsed_seconds=elapsed_seconds,
             idle_days_since_approved=idle_days,
             probable_causes=[],
+            # [NOVO - financeiro]
+            total_amount=round(total_amount_f, 2),
+            shop_parts_total=round(shop_parts_f, 2),
+            services_total=round(services_f, 2),
+            labor_total=round(labor_f, 2),
+            discount_total=round(discount_f, 2),
+            markup_total=round(markup_f, 2),
+            late_days=days_late,
         )
         row.probable_causes = _calculate_probable_causes(row, now)
 
@@ -568,6 +612,37 @@ def compute_performance_report(
     kpi_avg_overrun_hours_late_only = round(sum_overrun_late_only / count_overrun_late_only, 2) if count_overrun_late_only else 0.0
     kpi_avg_idle_before_start = round(sum_idle_before_start / count_idle_before_start, 1) if count_idle_before_start else 0.0
 
+    # [NOVO - KPIs FINANCEIROS]
+    def _soma_valor(lista: List[BudgetPerformanceRow], campo: str = "total_amount") -> float:
+        return round(sum(float(getattr(r, campo, 0) or 0) for r in lista), 2)
+
+    kpi_valor_no_prazo = _soma_valor(on_time)
+    kpi_valor_atrasado_1d = _soma_valor(late_1d)
+    kpi_valor_atrasado_2d = _soma_valor(late_2d)
+    kpi_valor_atrasado_3d = _soma_valor(late_3d)
+    kpi_valor_atrasado_4d = _soma_valor(late_4d)
+    kpi_valor_atrasado_5d = _soma_valor(late_5d)
+    kpi_valor_atrasado_plus_5d = _soma_valor(late_plus_5d)
+    kpi_valor_sem_prazo = _soma_valor(no_promise_date)
+    kpi_valor_atrasado = round(
+        kpi_valor_atrasado_1d + kpi_valor_atrasado_2d + kpi_valor_atrasado_3d +
+        kpi_valor_atrasado_4d + kpi_valor_atrasado_5d + kpi_valor_atrasado_plus_5d, 2
+    )
+    # Soma total carteira (todos orcamentos analisados)
+    todas_listas = on_time + late_1d + late_2d + late_3d + late_4d + late_5d + late_plus_5d + no_promise_date
+    kpi_valor_total_carteira = _soma_valor(todas_listas)
+    # Soma componentes dos atrasados
+    atrasados_lista = late_1d + late_2d + late_3d + late_4d + late_5d + late_plus_5d
+    kpi_mao_obra_total_atrasado = _soma_valor(atrasados_lista, "labor_total")
+    kpi_pecas_total_atrasado = _soma_valor(atrasados_lista, "shop_parts_total")
+    kpi_servicos_total_atrasado = _soma_valor(atrasados_lista, "services_total")
+    # Métrica PONDERADA (R$·dias): quanto mais caro + mais atrasado = MAIOR impacto
+    valor_dia_ponderado = 0.0
+    for r in atrasados_lista:
+        if r.late_days > 0:
+            valor_dia_ponderado += float(r.total_amount or 0) * float(r.late_days)
+    kpi_valor_dia_atraso_ponderado = round(valor_dia_ponderado, 2)
+
     return PerformanceReport(
         total=total,
         on_time=on_time,
@@ -587,11 +662,36 @@ def compute_performance_report(
         kpi_avg_overrun_hours_late_only=kpi_avg_overrun_hours_late_only,
         kpi_avg_idle_before_start_days=kpi_avg_idle_before_start,
         kpi_total_with_approved_date=total_with_approved,
+        # [NOVO - KPIs FINANCEIROS]
+        kpi_valor_total_carteira=kpi_valor_total_carteira,
+        kpi_valor_no_prazo=kpi_valor_no_prazo,
+        kpi_valor_atrasado=kpi_valor_atrasado,
+        kpi_valor_atrasado_1d=kpi_valor_atrasado_1d,
+        kpi_valor_atrasado_2d=kpi_valor_atrasado_2d,
+        kpi_valor_atrasado_3d=kpi_valor_atrasado_3d,
+        kpi_valor_atrasado_4d=kpi_valor_atrasado_4d,
+        kpi_valor_atrasado_5d=kpi_valor_atrasado_5d,
+        kpi_valor_atrasado_plus_5d=kpi_valor_atrasado_plus_5d,
+        kpi_valor_sem_prazo=kpi_valor_sem_prazo,
+        kpi_mao_obra_total_atrasado=kpi_mao_obra_total_atrasado,
+        kpi_pecas_total_atrasado=kpi_pecas_total_atrasado,
+        kpi_servicos_total_atrasado=kpi_servicos_total_atrasado,
+        kpi_valor_dia_atraso_ponderado=kpi_valor_dia_atraso_ponderado,
     )
 
 
 def performance_report_to_text(rep: PerformanceReport, now: Optional[datetime] = None) -> str:
     now = now or timezone.localtime(timezone.now())
+    def fmt_brl(v: float) -> str:
+        """Formata R$ em BRL, mesmo com valores pequenos. Sempre 2 casas, separador milhar pt-BR."""
+        try:
+            fv = float(v or 0.0)
+        except Exception:
+            fv = 0.0
+        # Formata 2 casas decimais, substitui separador para pt-BR
+        s = f"{fv:,.2f}"
+        return s.replace(",", "_SEP_").replace(".", ",").replace("_SEP_", ".")
+
     lines: List[str] = []
     lines.append("RELATÓRIO DE DESEMPENHO — OFICINA DE FUNILARIA")
     lines.append("Gerado em: " + now.strftime("%d/%m/%Y %H:%M"))
@@ -606,26 +706,46 @@ def performance_report_to_text(rep: PerformanceReport, now: Optional[datetime] =
     if rep.late_count:
         lines.append(f"  - Média de estouro de horas (apenas atrasados): {rep.kpi_avg_overrun_hours_late_only:.2f}h")
     lines.append("")
-    lines.append("DISTRIBUIÇÃO POR FAIXA DE ATRASO:")
-    lines.append(f"  - No prazo........: {rep.on_time_count}")
-    lines.append(f"  - Atrasado 1 dia...: {len(rep.late_1d)}")
-    lines.append(f"  - Atrasado 2 dias..: {len(rep.late_2d)}")
-    lines.append(f"  - Atrasado 3 dias..: {len(rep.late_3d)}")
-    lines.append(f"  - Atrasado 4 dias..: {len(rep.late_4d)}")
-    lines.append(f"  - Atrasado 5 dias..: {len(rep.late_5d)}")
-    lines.append(f"  - Atrasado +5 dias.: {len(rep.late_plus_5d)}")
-    lines.append(f"  - Em aberto/prev...: {len(rep.open_with_expected)}")
-    lines.append(f"  - Sem prazo/aprov..: {len(rep.no_promise_date)}")
+    # ========================================================================
+    # [NOVO - BLOCO FINANCEIRO, a IA NAO tem mais desculpa para NAO saber o R$]
+    # ========================================================================
+    lines.append("-" * 80)
+    lines.append("RESUMO FINANCEIRO (VALORES R$ REAIS DO SISTEMA, NAO ESTIMADOS):")
+    lines.append(f"  * VALOR TOTAL DA CARTEIRA (todos orcamentos): R$ {fmt_brl(rep.kpi_valor_total_carteira)}")
+    lines.append(f"  * VALOR TOTAL NO PRAZO:                 R$ {fmt_brl(rep.kpi_valor_no_prazo)}")
+    lines.append(f"  * VALOR TOTAL ATRASADO (receita imobilizada/parada): R$ {fmt_brl(rep.kpi_valor_atrasado)}  <- ATENCAO: este e o valor que a oficina DEIXOU DE RECEBER (ou esta esperando receber) por atrasos.")
+    lines.append(f"  * VALOR SEM PRAZO DEFINIDO (risco oculto):   R$ {fmt_brl(rep.kpi_valor_sem_prazo)}")
+    lines.append(f"  * IMPACTO PONDERADO (R$·dias):               R$ {fmt_brl(rep.kpi_valor_dia_atraso_ponderado)}  <- (valor_orcamento * dias_atrasado) por cada OS atrasada. Quanto MAIOR, PIOR o impacto financeiro total.")
+    lines.append("")
+    lines.append("COMPOSICAO DOS ATRASADOS (onde esta o dinheiro parado):")
+    lines.append(f"  * Mao de Obra (R$ labor_total atrasado):     R$ {fmt_brl(rep.kpi_mao_obra_total_atrasado)}")
+    lines.append(f"  * PECAS SHOP (R$ shop_parts_total atrasado): R$ {fmt_brl(rep.kpi_pecas_total_atrasado)}")
+    lines.append(f"  * Servicos (R$ services_total atrasado):     R$ {fmt_brl(rep.kpi_servicos_total_atrasado)}")
+    lines.append("")
+    lines.append("DISTRIBUIÇÃO FINANCEIRA POR FAIXA DE ATRASO (R$ atrelados a cada grupo):")
+    lines.append(f"  - No prazo........: {rep.on_time_count} OS | R$ {fmt_brl(rep.kpi_valor_no_prazo)}")
+    lines.append(f"  - Atrasado 1 dia...: {len(rep.late_1d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_1d)}")
+    lines.append(f"  - Atrasado 2 dias..: {len(rep.late_2d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_2d)}")
+    lines.append(f"  - Atrasado 3 dias..: {len(rep.late_3d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_3d)}")
+    lines.append(f"  - Atrasado 4 dias..: {len(rep.late_4d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_4d)}")
+    lines.append(f"  - Atrasado 5 dias..: {len(rep.late_5d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_5d)}")
+    lines.append(f"  - Atrasado +5 dias.: {len(rep.late_plus_5d)} OS | R$ {fmt_brl(rep.kpi_valor_atrasado_plus_5d)}  <- GRUPO MAIS CRITICO DE TODOS.")
+    lines.append(f"  - Em aberto/prev...: {len(rep.open_with_expected)} OS")
+    lines.append(f"  - Sem prazo/aprov..: {len(rep.no_promise_date)} OS | R$ {fmt_brl(rep.kpi_valor_sem_prazo)}")
     lines.append("")
 
     def list_bucket(title: str, rows: List[BudgetPerformanceRow]):
         if not rows:
             return
         lines.append("-" * 80)
-        lines.append(f"[{title.upper()}] — {len(rows)} caso(s):")
+        valor_bucket = fmt_brl(sum(float(r.total_amount or 0) for r in rows))
+        lines.append(f"[{title.upper()}] — {len(rows)} caso(s) · VALOR TOTAL FAIXA R$ {valor_bucket}:")
         for r in rows:
+            modelo_veic = (r.vehicle_model or "").strip()
+            placa_e_modelo = r.vehicle_plate + (f" ({modelo_veic})" if modelo_veic else "")
             lines.append(
-                f"  OS #{r.display_number} | {r.customer_name} | {r.vehicle_plate} | "
+                f"  OS #{r.display_number} | VALOR REPARO: R$ {fmt_brl(r.total_amount)} | "
+                f"{r.customer_name} | {placa_e_modelo} | "
                 f"Aprov: {r.approved_date.strftime('%d/%m/%Y') if r.approved_date else '-'} | "
                 f"Inicio: {r.repair_start_date.strftime('%d/%m/%Y') if r.repair_start_date else '-'} | "
                 f"Prev: {r.expected_delivery_date.strftime('%d/%m/%Y') if r.expected_delivery_date else '-'} | "
@@ -651,5 +771,7 @@ def performance_report_to_text(rep: PerformanceReport, now: Optional[datetime] =
     list_bucket("Atrasado +5 dias", rep.late_plus_5d)
     list_bucket("Em aberto / com entrega prevista", rep.open_with_expected)
     lines.append("=" * 80)
+    # [NOVO - ULTIMA LINHA, instrucao para a IA NAO ERRAR:]
+    lines.append("INSTRUCAO PARA A IA: Use os valores REAIS em BRL acima (R$) para responder perguntas financeiras. Nao invente valores. NAO converta para USD. Mantenha sempre R$ (REAL BRASILEIRO).")
     return "\n".join(lines)
 
