@@ -24,12 +24,16 @@ from core.views import RoleRequiredMixin
 from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
+from .calendar_utils import (
+    KANBAN_CUTOFF_TIME,
+    capped_work_delta_seconds,
+    next_weekday_including_saturday,
+)
 from .forms import AdministrativeClosureForm, BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
 from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, XMLImportJob
 from .services.cilia_import_service import CiliaImportDuplicateError, CiliaImportError, CiliaImportValidationError, import_cilia_xml_bytes
 
 
-KANBAN_CUTOFF_TIME = dt_time(17, 48)
 WORK_ORDER_ACTIVITY_SEQUENCE = [
     WorkOrderTask.Activity.DISMANTLING,
     WorkOrderTask.Activity.BODYWORK,
@@ -1237,28 +1241,7 @@ def add_months(base_date, months):
     return date(year, month, day)
 
 
-def capped_work_delta_seconds(last_started_at, now, allow_overtime):
-    if last_started_at is None:
-        return 0, None
 
-    last_local = timezone.localtime(last_started_at)
-    now_local = timezone.localtime(now)
-
-    if allow_overtime:
-        effective_end = now_local
-    else:
-        tz = timezone.get_current_timezone()
-        started_day = last_local.date()
-        cutoff_dt = timezone.make_aware(datetime.combine(started_day, KANBAN_CUTOFF_TIME), tz)
-        if last_local >= cutoff_dt:
-            effective_end = last_local
-        elif now_local.date() == started_day:
-            effective_end = now_local if now_local <= cutoff_dt else cutoff_dt
-        else:
-            effective_end = cutoff_dt
-
-    delta = int((effective_end - last_local).total_seconds())
-    return max(delta, 0), effective_end
 
 
 class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
