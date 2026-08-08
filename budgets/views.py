@@ -2112,16 +2112,23 @@ class PerformanceInsightsView(PerformanceDashboardView):
         )
 
         # Ordem de provedores, dependendo da preferencia
+        # -----------------------------------------------------------------
+        # REGRAS (atualizadas 08/08 — evita erro Ollama se chave OpenAI existir):
+        #   user=openai :  só tenta OpenAI.  SE FALHAR: mostra erro formatado da OpenAI (chave / billing / rate)
+        #   user=ollama :  só tenta Ollama.  SE FALHAR: mostra erro passo-a-passo instalação local.
+        #   user=auto   :  SE api_key_ok = True -> SÓ USA OPENAI. Nem tenta Ollama.
+        #                  SE api_key_ok = False (sem chave) -> tenta Ollama primeiro.
+        # -----------------------------------------------------------------
         provedores_para_tentar: List[str] = []
         if user_provider_pref == "openai":
-            provedores_para_tentar = ["openai", "ollama"]
+            provedores_para_tentar = ["openai"]          # somente OpenAI (sem fallback local)
         elif user_provider_pref == "ollama":
-            provedores_para_tentar = ["ollama", "openai"]
+            provedores_para_tentar = ["ollama"]          # somente Ollama (sem nuvem)
         else:  # auto
             if api_key_ok and prefer_cloud:
-                provedores_para_tentar = ["openai", "ollama"]
+                provedores_para_tentar = ["openai"]      # CHAVE EXISTE = OPENAI PADRAO. Nao toca Ollama.
             else:
-                provedores_para_tentar = ["ollama", "openai"]
+                provedores_para_tentar = ["ollama", "openai"]  # sem chave: tenta local primeiro
 
         # 1) Carrega do CACHE, se nao for refresh forcado
         llm_result: Optional[LLMResult] = None
@@ -2139,10 +2146,12 @@ class PerformanceInsightsView(PerformanceDashboardView):
         # 2) Nao tinha cache? Roda o modelo de fato!
         if llm_result is None:
             erros: List[str] = []
+            ultimo_resultado_valido: Optional[LLMResult] = None
             for prov in provedores_para_tentar:
                 try:
                     if prov == "openai":
                         if not api_key_ok:
+                            erros.append("openai: CHAVE NAO CONFIGURADA (api_key_ok=False). Verifique OPENAI_API_KEY no .env (depois rode o deploy no PA).")
                             continue  # pula
                         r = _call_openai_analysis(report_text, user_followup=None)
                     else:  # ollama
@@ -2170,20 +2179,27 @@ class PerformanceInsightsView(PerformanceDashboardView):
                         content=f"# ❌ Erro inesperado ({prov}): `{type(e_llm).__name__}`\n\n{e_llm}",
                         error=str(e_llm),
                     )
+                # Guarda sempre o ultimo resultado (mesmo com erro) para mostrar ao usuario
+                ultimo_resultado_valido = r
                 # Se resultado e valido (nao tem erro grave), para de tentar
                 if r.error is None or r.provider != "erro":
                     llm_result = r
                     break
                 erros.append(f"{prov}: {r.error}")
-            # Se nenhum dos dois deu certo: mostra todos erros
+            # Se nenhum dos dois deu certo: mostra o erro do ÚLTIMO provedor tentado (mais relevante)
             if llm_result is None:
-                llm_result = LLMResult(
-                    provider="erro", model="",
-                    tokens_in=0, tokens_out=0, cost_usd=0.0,
-                    content="# ❌ Nenhum provedor de IA disponivel\n\n" +
-                            ("\n".join(f"- {e}" for e in erros) if erros else "Tente configurar OpenAI no .env ou iniciar ollama serve."),
-                    error="; ".join(erros) if erros else "nenhum_provedor",
-                )
+                if ultimo_resultado_valido is not None:
+                    # Usa o erro do ultimo provedor (ex: erro formatado da OpenAI
+                    # com chave/billing/rate limit ou erro do Ollama com passo-a-passo)
+                    llm_result = ultimo_resultado_valido
+                else:
+                    llm_result = LLMResult(
+                        provider="erro", model="",
+                        tokens_in=0, tokens_out=0, cost_usd=0.0,
+                        content="# ❌ Nenhum provedor de IA disponivel\n\n" +
+                                ("\n".join(f"- {e}" for e in erros) if erros else "Tente configurar OpenAI no .env ou iniciar ollama serve."),
+                        error="; ".join(erros) if erros else "nenhum_provedor",
+                    )
 
         # 3) Carrega historico de chat para follow-ups visiveis no template
         chat_history = _chat_history_load(report_text, max_messages=20)
