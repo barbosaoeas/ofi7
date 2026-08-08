@@ -1653,6 +1653,26 @@ def _openai_api_key_ok(key: str) -> bool:
     return len(key) >= 30
 
 
+def _ensure_openai_key_effective() -> bool:
+    """HELPER para ser chamado NO INICIO DE TUDO (get_context_data, get, post).
+    Resolve o bug do PythonAnywhere uWSGI workers c/ settings.OPENAI_API_KEY vazio na memoria.
+    1) Usa fallback completo para encontrar a chave em .env/.secrets/oficina_env.sh.
+    2) Se encontrar, GRAVA de volta em os.environ E em django_settings.OPENAI_API_KEY,
+       para que QUALQUER logica (mesmo a que so use settings) tambem enxergue.
+    Retorna True se a chave esta OK e efetiva apos o helper.
+    """
+    chave = _resolve_openai_api_key()
+    ok = _openai_api_key_ok(chave)
+    if ok and chave:
+        # Escreve de volta em runtime (efetivo APENAS no worker atual).
+        _os.environ["OPENAI_API_KEY"] = chave
+        try:
+            django_settings.OPENAI_API_KEY = chave
+        except Exception:
+            pass
+    return ok
+
+
 def _debug_openai_sources() -> Dict[str, str]:
     """Para DEBUG apenas: retorna INFO NAO SENSIVEL sobre onde a chave foi buscada,
     para ser exibida no template caso a chave nao seja detectada.
@@ -2145,6 +2165,12 @@ class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         )
 
     def get_context_data(self, **kwargs):
+        # ==============================================================================
+        # GARANTE que a CHAVE OPENAI esteja EFETIVA no worker uWSGI (PythonAnywhere).
+        # Sem isto, workers antigos (carregados ANTES do .env ser criado) podem continuar
+        # com django_settings.OPENAI_API_KEY vazio na memoria, mesmo que o arquivo exista.
+        # ==============================================================================
+        _ensure_openai_key_effective()
         ctx = super().get_context_data(**kwargs)
         budgets = list(ctx["budgets"])
         report = compute_performance_report(budgets)
@@ -2224,23 +2250,15 @@ class PerformanceInsightsView(PerformanceDashboardView):
         if clear_chat:
             _chat_history_clear(report_text)
 
+        # ==============================================================================
+        # 1) Efetiva a chave OpenAI em settings/os.environ (se fallback achou ela OK)
+        #    Resolve bug dos workers uWSGI do PythonAnywhere com settings cacheado.
+        #    Nota: get_context_data JA chama _ensure_openai_key_effective(), mas chamamos
+        #    novamente aqui p/ garantir (caso get_context_data nao tenha sido chamado).
+        # ==============================================================================
+        _ensure_openai_key_effective()
         api_key = _resolve_openai_api_key()
         api_key_ok = _openai_api_key_ok(api_key)
-
-        # ==============================================================================
-        # OVERRIDE FORCADO (resolve bug do PythonAnywhere uWSGI workers com settings cacheado)
-        # Se o fallback (arquivo .env / .secrets/oficina_env.sh) ACHOU a chave OK,
-        # GRAVA ELA DE VOLTA no os.environ E no settings.py TAMBEM, para que:
-        #   1) Proximas chamadas a getattr(django_settings, ...) tambem retornem OK
-        #   2) Qualquer logica que use apenas django_settings.OPENAI_API_KEY (sem fallback)
-        #      tambem passe a funcionar SEM PRECISAR de [Reload] ou touch WSGI.
-        # ==============================================================================
-        if api_key_ok and api_key:
-            _os.environ["OPENAI_API_KEY"] = api_key  # sobrescreve variavel de ambiente NO WORKER ATUAL
-            try:
-                django_settings.OPENAI_API_KEY = api_key  # sobrescreve no settings em memoria
-            except Exception:
-                pass
 
         prefer_cloud = bool(
             _os.environ.get("LLM_PREFER_CLOUD_IF_KEY", getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", "true"))
@@ -2500,6 +2518,8 @@ class PerformanceInsightsView(PerformanceDashboardView):
     # [POST] Pergunta de follow-up (MEMORIA de CONVERSA!)
     # ------------------------------------------------------------
     def post(self, request, *args, **kwargs):
+        # Garante que a chave OpenAI esteja EFETIVA no worker uWSGI (PythonAnywhere)
+        _ensure_openai_key_effective()
         self.object_list = self.get_queryset()
         ctx = self.get_context_data(**kwargs)
         report_text = ctx.get("report_text", "")

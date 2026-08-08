@@ -161,17 +161,27 @@
           </a>
         </div>
 
-        <a href='{% url "budgets:performance_insights" %}?refresh=1'
-           class='rounded-md border border-orange-400 bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600'>
-          🔄 Forçar Re-análise
-        </a>
+        <form method='get' action='{% url "budgets:performance_insights" %}' class='inline-flex'>
+          {% if ia_provedor_sugerido == "openai" or ia_provedor_sugerido == "ollama" %}
+            <input type='hidden' name='provider' value='{{ ia_provedor_sugerido }}'>
+          {% endif %}
+          <button type='submit' name='refresh' value='1'
+             class='rounded-md border border-orange-400 bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600'>
+            🔄 Forçar Re-análise
+          </button>
+        </form>
 
-        <a href='{% url "budgets:performance_insights" %}?print=1'
-           target='_blank' rel='noopener'
-           class='rounded-md border border-indigo-500 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700'
-           title='Abre relatório limpo em nova aba, otimizado para impressão A4 (não gasta tokens — usa cache)'>
-          🖨️ Relatório p/ Imprimir
-        </a>
+        <form method='get' action='{% url "budgets:performance_insights" %}' class='inline-flex' target='_blank' rel='noopener'>
+          <input type='hidden' name='print' value='1'>
+          {% if ia_provedor_sugerido == "openai" or ia_provedor_sugerido == "ollama" %}
+            <input type='hidden' name='provider' value='{{ ia_provedor_sugerido }}'>
+          {% endif %}
+          <button type='submit'
+             class='rounded-md border border-indigo-500 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700'
+             title='Abre relatório limpo em nova aba, otimizado para impressão A4 (não gasta tokens — usa cache)'>
+            🖨️ Relatório p/ Imprimir
+          </button>
+        </form>
       </div>
     </div>
 
