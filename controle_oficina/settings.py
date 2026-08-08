@@ -50,6 +50,16 @@ def env_bool(name, default=False):
 load_env_file(BASE_DIR / '.env')
 load_env_file(BASE_DIR / '.env.exemplo')
 load_env_file(BASE_DIR / '.env.example')
+# ------------------------------------------------------------------
+# Fallback SHELL SCRIPT (padrao do usuario no PythonAnywhere):
+#   /home/<USER>/.secrets/oficina_env.sh  OU  {PROJETO}/.secrets/oficina_env.sh
+# Ja carrega TUDO aqui no settings, NAO PRECISA ficar no fallback de views.py
+# (resolve problema de workers uWSGI sem as variaveis no environ, mesmo shell
+# interativo tendo-as).
+# ------------------------------------------------------------------
+_user_home = Path(os.path.expanduser("~"))
+load_env_file(BASE_DIR / '.secrets' / 'oficina_env.sh')
+load_env_file(_user_home / '.secrets' / 'oficina_env.sh')
 extra_env_file = os.getenv('OFICINA_ENV_FILE', '').strip()
 if extra_env_file:
     load_env_file(extra_env_file)
