@@ -155,8 +155,9 @@
             ☁️ OpenAI {% if not ia_openai_configured %}<span class='opacity-50'>(sem chave)</span>{% endif %}
           </a>
           <a href='{% url "budgets:performance_insights" %}?provider=ollama'
-             class='rounded-md px-3 py-1.5 font-semibold {% if ia_provedor_sugerido == "ollama" %}bg-indigo-500 text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}'>
-            🤖 Local
+             class='rounded-md px-3 py-1.5 font-semibold {% if ia_ollama_available %}{% if ia_provedor_sugerido == "ollama" %}bg-indigo-500 text-white{% else %}text-slate-700 hover:bg-slate-100{% endif %}{% else %}cursor-not-allowed opacity-60 bg-slate-200 text-slate-500{% endif %}'
+             title="{% if ia_ollama_available %}IA Local Ollama (127.0.0.1:11434){% else %}🛑 Ollama indisponível em SERVIDOR (PythonAnywhere / Nuvem). Use apenas no seu notebook local, ou ative OpenAI no .env{% endif %}'>
+            🤖 Local {% if not ia_ollama_available %}<span class='text-[10px] uppercase tracking-wider'>(off nuvem)</span>{% endif %}
           </a>
         </div>
 

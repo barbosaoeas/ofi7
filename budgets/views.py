@@ -2110,25 +2110,49 @@ class PerformanceInsightsView(PerformanceDashboardView):
             not in {False, None, "0", "false", "no", "off", "False"}
             or bool(getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", True))
         )
+        ollama_habilitado_neste_ambiente = bool(getattr(django_settings, "LLM_ENABLE_OLLAMA_LOCAL", False))
 
         # Ordem de provedores, dependendo da preferencia
         # -----------------------------------------------------------------
-        # REGRAS (atualizadas 08/08 — evita erro Ollama se chave OpenAI existir):
-        #   user=openai :  só tenta OpenAI.  SE FALHAR: mostra erro formatado da OpenAI (chave / billing / rate)
-        #   user=ollama :  só tenta Ollama.  SE FALHAR: mostra erro passo-a-passo instalação local.
-        #   user=auto   :  SE api_key_ok = True -> SÓ USA OPENAI. Nem tenta Ollama.
-        #                  SE api_key_ok = False (sem chave) -> tenta Ollama primeiro.
+        # REGRAS (atualizadas 08/08 — evita erro Ollama se chave OpenAI existir
+        #                        E BLOQUEIA OLLAMA EM NUVEM (PA) via LLM_ENABLE_OLLAMA_LOCAL):
+        #
+        #   SE ollama_habilitado_neste_ambiente = False (PythonAnywhere / nuvem):
+        #      -> OLLAMA E' DESATIVADO COMPLETAMENTE. MESMO QUE USUARIO CLIQUE em 🤖 Local,
+        #         ele NÃO chama http://127.0.0.1:11434. Cai direto em OpenAI ou mostra
+        #         mensagem amigavel "Ollama so funciona no notebook local."
+        #
+        #   SE ollama_habilitado_neste_ambiente = True (notebook local):
+        #      user=openai :  [openai]            (so OpenAI, erro formatado chave/billing/rate)
+        #      user=ollama :  [ollama]            (so Ollama, erro passo-a-passo instalacao)
+        #      user=auto   :  se api_key_ok  -> [openai]
+        #                      se nao        -> [ollama, openai]  (fallback)]
         # -----------------------------------------------------------------
         provedores_para_tentar: List[str] = []
-        if user_provider_pref == "openai":
-            provedores_para_tentar = ["openai"]          # somente OpenAI (sem fallback local)
-        elif user_provider_pref == "ollama":
-            provedores_para_tentar = ["ollama"]          # somente Ollama (sem nuvem)
-        else:  # auto
-            if api_key_ok and prefer_cloud:
-                provedores_para_tentar = ["openai"]      # CHAVE EXISTE = OPENAI PADRAO. Nao toca Ollama.
+        if not ollama_habilitado_neste_ambiente:
+            # ========= NUVEM (PythonAnywhere / producao): OLLAMA DESATIVADO SEMPRE.
+            # BLOQUEADO: nao adiciona ollama em HIPOTESE ALGUMA.
+            if user_provider_pref == "ollama":
+                # Usuario clicou no botao 🤖 Local na nuvem. Mantemos preferencia de usuario mas convertemos para
+                # openai (explicando o por que) se tiver chave, senao mostramos aviso de configurar OpenAI.
+                if api_key_ok:
+                    provedores_para_tentar = ["openai"]
+                # senao: deixa lista VAZIA para o loop nao tentar nada -> mensagem customizada abaixo
             else:
-                provedores_para_tentar = ["ollama", "openai"]  # sem chave: tenta local primeiro
+                # Modo auto ou openai: usa apenas OpenAI
+                if api_key_ok:
+                    provedores_para_tentar = ["openai"]
+        else:
+            # Ambiente LOCAL (notebook): Ollama existe e' permitido.
+            if user_provider_pref == "openai":
+                provedores_para_tentar = ["openai"]
+            elif user_provider_pref == "ollama":
+                provedores_para_tentar = ["ollama"]
+            else:  # auto
+                if api_key_ok and prefer_cloud:
+                    provedores_para_tentar = ["openai"]
+                else:
+                    provedores_para_tentar = ["ollama", "openai"]
 
         # 1) Carrega do CACHE, se nao for refresh forcado
         llm_result: Optional[LLMResult] = None
@@ -2147,7 +2171,40 @@ class PerformanceInsightsView(PerformanceDashboardView):
         if llm_result is None:
             erros: List[str] = []
             ultimo_resultado_valido: Optional[LLMResult] = None
+            # Se lista esta VAZIA (nuvem + usuario clicou ollama sem chave OpenAI),
+            # cria um resultado amigavel ja de cara sem tentar nada.
+            if not provedores_para_tentar:
+                if not ollama_habilitado_neste_ambiente:
+                    # =========== NUVEM + OLLAMA INDISPONIVEL ===========
+                    msg_user = []
+                    msg_user.append("# 🛑 Ollama Local nao esta disponivel neste servidor (PythonAnywhere / Nuvem).")
+                    msg_user.append("")
+                    msg_user.append("> **Por que?** Ollama roda APENAS no seu notebook local (127.0.0.1:11434).")
+                    msg_user.append("> Ele NAO funciona em hospedagens compartilhadas como PythonAnywhere.")
+                    msg_user.append("")
+                    if not api_key_ok:
+                        msg_user.append("## ⚠️ Para usar IA no servidor, voce TEM que ter a OpenAI configurada.")
+                        msg_user.append("")
+                        msg_user.append("Edite o arquivo `.env` na pasta do projeto no PA e cole sua chave:")
+                        msg_user.append("```")
+                        msg_user.append("OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                        msg_user.append("```")
+                        msg_user.append("Depois clique em [Reload] no painel WEB do PythonAnywhere.")
+                    else:
+                        msg_user.append("## ✅ OpenAI ja esta configurada neste servidor. Usando nuvem ☁️.")
+                        msg_user.append("")
+                        msg_user.append("Clique em **🎯 Auto** ou **☁️ OpenAI** para usar a analise da nuvem.")
+                    llm_result = LLMResult(
+                        provider="aviso", model="", tokens_in=0, tokens_out=0, cost_usd=0.0,
+                        content="\n".join(msg_user),
+                        error="ollama_desativado_nuvem",
+                    )
+                ultimo_resultado_valido = llm_result
             for prov in provedores_para_tentar:
+                # ===== PROTECAO EXTRA: CHAMADA BLOQUEADA se Ollama desativado =====
+                if prov == "ollama" and not ollama_habilitado_neste_ambiente:
+                    erros.append("ollama: BLOQUEADO (LLM_ENABLE_OLLAMA_LOCAL = False em settings.py). Ollama NAO roda em nuvem.")
+                    continue
                 try:
                     if prov == "openai":
                         if not api_key_ok:
@@ -2222,6 +2279,7 @@ class PerformanceInsightsView(PerformanceDashboardView):
             ia_provedor_sugerido=(provedores_para_tentar[0] if provedores_para_tentar else "auto"),
             chat_history=chat_history,
             ia_report_hash=_report_cache_key(report_text),
+            ia_ollama_available=ollama_habilitado_neste_ambiente,  # False = nuvem (PA) / True = notebook local
         )
         if llm_result.provider != "erro" and llm_result.error is None:
             if cache_hit_provider:

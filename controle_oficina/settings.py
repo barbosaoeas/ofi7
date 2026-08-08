@@ -84,6 +84,17 @@ OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.3'))
 OPENAI_TIMEOUT = int(os.getenv('OPENAI_TIMEOUT', '120'))
 # Priorizar IA nuvem (OpenAI) se a chave existir? True = Sim, False = Tentar Local Ollama primeiro
 LLM_PREFER_CLOUD_IF_KEY = env_bool('LLM_PREFER_CLOUD_IF_KEY', True)
+# Ativar Ollama (IA LOCAL)?
+#   - Notebook (local/WSL/Windows): DEIXE True (funciona em 127.0.0.1:11434).
+#   - PythonAnywhere / HEROKU / NUVEM QUALQUER: SEMPRE False (Ollama NAO roda em nuvem).
+# Detecta automaticamente PythonAnywhere: se a pasta '/home' existir e o hostname tiver
+# 'pythonanywhere' OU a env var 'PYTHONANYWHERE_DOMAIN' existir -> desliga Ollama.
+_auto_pa = (
+    bool(os.getenv('PYTHONANYWHERE_DOMAIN', '')) or
+    '.pythonanywhere.' in str(os.getenv('HOSTNAME', '')) or
+    (os.path.exists('/home') and 'ofi7ipojuca' in str(os.listdir('/home')))  # seu user PA
+)
+LLM_ENABLE_OLLAMA_LOCAL = env_bool('LLM_ENABLE_OLLAMA_LOCAL', False if _auto_pa else True)
 # Arquivo/diretorio para cache de analises e memoria de conversa
 LLM_CACHE_DIR = os.getenv('LLM_CACHE_DIR', '').strip() or str(BASE_DIR / 'storage' / 'llm_cache')
 os.makedirs(LLM_CACHE_DIR, exist_ok=True)
