@@ -1770,6 +1770,12 @@ def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int =
 
 
 def _save_analysis_cache(report_text: str, provider: str, result: LLMResult) -> None:
+    # ✅ CORREÇÃO: NUNCA SALVAR CACHE DE ERRO.
+    #    - Se error != None (falhou), salva NADA -> proxima chamada tenta de novo.
+    #    - Se model vazio ou provider = 'erro', tambem NAO SALVA.
+    #    Impede que cache de "chave nao configurada" fique servido por 24h.
+    if result.error or not result.model or provider == "erro" or result.provider == "erro":
+        return
     try:
         fp = _analysis_cache_path(report_text, provider)
         with open(fp, "w", encoding="utf-8") as f:
@@ -2220,6 +2226,22 @@ class PerformanceInsightsView(PerformanceDashboardView):
 
         api_key = _resolve_openai_api_key()
         api_key_ok = _openai_api_key_ok(api_key)
+
+        # ==============================================================================
+        # OVERRIDE FORCADO (resolve bug do PythonAnywhere uWSGI workers com settings cacheado)
+        # Se o fallback (arquivo .env / .secrets/oficina_env.sh) ACHOU a chave OK,
+        # GRAVA ELA DE VOLTA no os.environ E no settings.py TAMBEM, para que:
+        #   1) Proximas chamadas a getattr(django_settings, ...) tambem retornem OK
+        #   2) Qualquer logica que use apenas django_settings.OPENAI_API_KEY (sem fallback)
+        #      tambem passe a funcionar SEM PRECISAR de [Reload] ou touch WSGI.
+        # ==============================================================================
+        if api_key_ok and api_key:
+            _os.environ["OPENAI_API_KEY"] = api_key  # sobrescreve variavel de ambiente NO WORKER ATUAL
+            try:
+                django_settings.OPENAI_API_KEY = api_key  # sobrescreve no settings em memoria
+            except Exception:
+                pass
+
         prefer_cloud = bool(
             _os.environ.get("LLM_PREFER_CLOUD_IF_KEY", getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", "true"))
             not in {False, None, "0", "false", "no", "off", "False"}
@@ -2272,6 +2294,18 @@ class PerformanceInsightsView(PerformanceDashboardView):
         # 1) Carrega do CACHE, se nao for refresh forcado
         llm_result: Optional[LLMResult] = None
         cache_hit_provider = None
+        # ==========================================================================
+        # ✅ CORREÇÃO 3: Se force_refresh=True, ANTES DE QUALQUER COISA, APAGA o cache antigo
+        #    dos provedores. Garante que nao leia um JSON velho de erro (ex: 12:17 de 3h atras)
+        # ==========================================================================
+        if force_refresh:
+            for prov in ("openai", "ollama"):
+                try:
+                    fp_del = _analysis_cache_path(report_text, prov)
+                    if _os.path.isfile(fp_del):
+                        _os.remove(fp_del)
+                except Exception:
+                    pass
         if not force_refresh:
             for prov in provedores_para_tentar:
                 if prov == "openai" and not api_key_ok:
