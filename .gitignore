@@ -19,6 +19,9 @@ media/
 
 staticfiles/
 
+storage/
+storage/llm_cache/
+
 .pytest_cache/
 .coverage
 htmlcov/

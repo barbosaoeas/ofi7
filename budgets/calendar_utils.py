@@ -72,6 +72,44 @@ class PartSummary:
 
 
 @dataclass
+class SectionHours:
+    """Horas por SEÇÃO (atividade): Funilaria, Pintura, etc."""
+    activity_code: str          # ex: 'BODYWORK'
+    activity_label: str         # ex: 'Funilaria'
+    planned_hours: float        # horas programadas total para esta seção
+    actual_hours: float         # horas reais apontadas (actual_hours + elapsed_seconds/3600)
+    elapsed_seconds: int        # tempo decorrido do timer
+    task_count: int             # qtd de tarefas nesta seção
+    done_count: int             # qtd de tarefas CONCLUÍDAS nesta seção
+    running_count: int          # qtd EM ANDAMENTO
+    open_not_started: int       # qtd NÃO INICIADAS (SCHEDULED / PAUSED sem elapsed)
+
+    @property
+    def overrun(self) -> float:
+        """Positivo = gastou mais que o planejado (ESTOURO). Negativo = mais rápido que previsto."""
+        if self.planned_hours <= 0:
+            return 0.0
+        return round(self.actual_hours - self.planned_hours, 2)
+
+    @property
+    def progress_pct(self) -> int:
+        if self.task_count == 0:
+            return 0
+        return int(100 * self.done_count / self.task_count)
+
+
+SECTION_ACTIVITY_LABELS: Dict[str, str] = {
+    "DISMANTLING": "Desmontagem",
+    "BODYWORK": "Funilaria",
+    "PREPARATION": "Preparação",
+    "PAINTING": "Pintura",
+    "ASSEMBLY": "Montagem",
+    "POLISHING": "Polimento",
+    "DELIVERY_PREP": "Prep. Entrega",
+}
+
+
+@dataclass
 class WorkOrderStatusSummary:
     is_blocked: bool
     has_pending_shop_parts: bool
@@ -315,6 +353,24 @@ class BudgetPerformanceRow:
     markup_total: float
     late_days: int
     vehicle_model: str
+    # [NOVO - DEMORA DE APROVACAO + SCM PEÇAS]
+    approval_delay_days: int               # dias entre created_at e approved_at
+    # Pecas SHOP (que a oficina compra) - estatisticas detalhadas
+    pieces_total: int
+    pieces_not_purchased: int              # purchase_date vazio ainda
+    pieces_purchased_not_arrived: int      # compradas mas ainda nao chegaram
+    pieces_arrived_late: int               # chegaram MAS atrasadas do expected_arrival
+    pieces_expected_not_arrived_days_ago: int  # dias acumulados atraso das nao chegadas
+    pieces_not_purchased_days_since_approved: int  # dias que estas pecas estao NAO COMPRADAS desde aprovacao
+    pieces_with_long_leadtime: int         # prazo previsto de entrega > 7 dias (fornecedor lento / importada)
+    pieces_notes_list: List[str]           # texto legivel humano da IA: ["Parachoque nao comprado ha 14d", "Lanterna chegou 6d atrasada", ...]
+    # [NOVO - HORAS POR SEÇÃO (atividade)]
+    sections_hours: List[SectionHours]     # uma SectionHours p/ cada atividade com tarefas
+    sections_worst_overrun_code: Optional[str]  # codigo da secao com MAIOR estouro de horas (ex 'BODYWORK')
+    sections_worst_overrun_hours: float         # valor em horas do MAIOR estouro
+    sections_total_planned: float               # total horas programadas todas secoes
+    sections_total_actual: float                # total horas reais todas secoes
+    sections_bottleneck_summary: List[str]      # texto humano p/ IA: ["Funilaria: +3.5h estouro (4.0h planej / 7.5h real)"]
 
 
 @dataclass
@@ -353,6 +409,29 @@ class PerformanceReport:
     kpi_servicos_total_atrasado: float      # Soma R$ services_total dos atrasados
     # Helper: atraso ponderado (R$ * dias atrasado = "R$·dia")
     kpi_valor_dia_atraso_ponderado: float   # soma (total_amount * dias_late) p/ atrasados
+    # [NOVO - KPIs SCM Supply Chain (Pecas) + Aprovacao]
+    kpi_approval_delay_avg_days: float      # media dias parado aguardando aprovacao (criado -> aprovado)
+    kpi_approval_delay_os_count: int        # qtd OS c/ atraso >=3d na aprovacao (gargalo comercial)
+    kpi_total_pieces_shop: int              # total pecas SHOP na carteira analisada
+    kpi_pieces_not_purchased_count: int     # total de pecas NAO COMPRADAS (urgencia alta)
+    kpi_pieces_not_purchased_os_count: int  # qtd OS com PELO MENOS 1 peca nao comprada (bloqueio potencial)
+    kpi_pieces_purchased_not_arrived_count: int  # pecas compradas mas que NAO chegaram ainda
+    kpi_pieces_arrived_late_count: int      # pecas que chegaram MAS atrasaram a data prevista
+    kpi_pieces_with_long_leadtime_count: int   # pecas com prazo entrega > 7 dias (fornecedor/importacao lenta)
+    kpi_pieces_notes_total: int             # total alertas SCM gerados
+    kpi_wrong_or_suspect_pieces_count: int  # pecas SUSPEITAS de erro/extravio/troca (>=10d atrasadas e nao chegaram)
+    kpi_pieces_not_purchased_days_worst: int      # pior caso: ha quantos dias a peca NAO eh comprada desde aprovacao
+    kpi_pieces_expected_not_arrived_days_accum: int  # dias de atraso ACUMULADOS de todas pecas compradas nao chegadas
+    # [NOVO - KPIs HORAS POR SEÇÃO (GARGALOS DE PRODUÇÃO)]
+    # Secao com MAIOR estouro TOTAL na carteira inteira
+    kpi_sections_worst_code: Optional[str]   # ex 'BODYWORK'
+    kpi_sections_worst_label: Optional[str]  # ex 'Funilaria'
+    kpi_sections_worst_total_overrun: float  # soma de horas estouradas em toda a carteira p/ esta secao
+    kpi_sections_total_planned: float        # horas planejadas TOTAL carteira
+    kpi_sections_total_actual: float         # horas reais TOTAL carteira
+    kpi_sections_total_overrun: float        # TOTAL estouro (actual - planned) toda carteira
+    # Resumo texto p/ IA: 1 linha por secao (7 seções fixas)
+    kpi_sections_summary_lines: List[str]    # ["FUNILARIA: plan=120h / real=145h / estouro +25h", ...]
 
     @property
     def on_time_count(self):
@@ -392,13 +471,14 @@ def compute_performance_report(
     budgets: Iterable,
     now: Optional[datetime] = None,
 ) -> PerformanceReport:
-    from .models import WorkOrder  # noqa: avoid circular import top-level
+    from .models import WorkOrder, Piece  # noqa: avoid circular import top-level
 
     now = now or timezone.localtime(timezone.now())
     today = now.date()
 
     budget_ids = [b.pk for b in budgets if getattr(b, "pk", None)]
     work_orders_by_budget: Dict[int, List] = {}
+    pieces_by_budget: Dict[int, List] = {}
     if budget_ids:
         for wo in (
             WorkOrder.objects.filter(budget_id__in=budget_ids)
@@ -406,6 +486,14 @@ def compute_performance_report(
             .select_related("budget")
         ):
             work_orders_by_budget.setdefault(wo.budget_id, []).append(wo)
+        for p in (
+            Piece.objects.filter(budget_id__in=budget_ids)
+            .only("budget_id", "name", "cost_price", "provider_type",
+                  "purchase_date", "expected_arrival_date", "arrived",
+                  "arrival_date", "created_at", "updated_at")
+            .order_by("budget_id", "name")
+        ):
+            pieces_by_budget.setdefault(p.budget_id, []).append(p)
 
     on_time: List[BudgetPerformanceRow] = []
     late_1d: List[BudgetPerformanceRow] = []
@@ -426,6 +514,24 @@ def compute_performance_report(
     count_overrun_late_only = 0
     sum_idle_before_start = 0
     count_idle_before_start = 0
+    # [NOVO - Acumuladores SCM (pecas) + Aprovacao]
+    sum_approval_delay_days = 0
+    count_with_approval_delay = 0
+    kpi_approval_delay_os_count = 0
+    kpi_total_pieces_shop = 0
+    kpi_pieces_not_purchased_count = 0
+    kpi_pieces_not_purchased_os_count = 0
+    kpi_pieces_purchased_not_arrived_count = 0
+    kpi_pieces_arrived_late_count = 0
+    kpi_pieces_with_long_leadtime_count = 0
+    kpi_pieces_notes_total = 0
+    kpi_wrong_or_suspect_pieces_count = 0
+    kpi_pieces_not_purchased_days_worst = 0
+    kpi_pieces_expected_not_arrived_days_accum = 0
+    # [NOVO - Acumuladores HORAS POR SEÇÃO (global toda a carteira)]
+    sec_global_planned: Dict[str, float] = {k: 0.0 for k in SECTION_ACTIVITY_LABELS.keys()}
+    sec_global_actual: Dict[str, float] = {k: 0.0 for k in SECTION_ACTIVITY_LABELS.keys()}
+    sec_global_task_count: Dict[str, int] = {k: 0 for k in SECTION_ACTIVITY_LABELS.keys()}
 
     for b in budgets:
         expected = getattr(b, "expected_delivery_date", None)
@@ -523,6 +629,186 @@ def compute_performance_report(
         vehicle_obj = getattr(b, "vehicle", None)
         vehicle_model_f = str(getattr(vehicle_obj, "model", "") or "") if vehicle_obj else ""
 
+        # =========================================================
+        # [NOVO - DEMORA DE APROVACAO + SCM PECAS SHOP]
+        # =========================================================
+        created_at_dt = getattr(b, "created_at", None)
+        created_date = timezone.localtime(created_at_dt).date() if created_at_dt else None
+        approval_delay_days = 0
+        if approved_date and created_date and approved_date >= created_date:
+            approval_delay_days = (approved_date - created_date).days
+
+        pieces_list = pieces_by_budget.get(b.pk, []) or []
+        shop_pieces = [p for p in pieces_list if getattr(p, "provider_type", None) == "SHOP"]
+        pieces_total = len(shop_pieces)
+        pieces_not_purchased = 0
+        pieces_purchased_not_arrived = 0
+        pieces_arrived_late = 0
+        pieces_expected_not_arrived_days_ago = 0
+        pieces_not_purchased_days_since_approved = 0
+        pieces_with_long_leadtime = 0
+        pieces_notes_list: List[str] = []
+
+        if shop_pieces:
+            max_days_no_purchase_since_apv = 0
+            for pc in shop_pieces:
+                p_name = str(getattr(pc, "name", "peca"))
+                p_purchase = getattr(pc, "purchase_date", None)
+                p_expected = getattr(pc, "expected_arrival_date", None)
+                p_arrived = bool(getattr(pc, "arrived", False))
+                p_arrival = getattr(pc, "arrival_date", None)
+
+                if not p_purchase:
+                    pieces_not_purchased += 1
+                    if approved_date:
+                        d = (today - approved_date).days
+                        if d > max_days_no_purchase_since_apv:
+                            max_days_no_purchase_since_apv = d
+                        if d > 0:
+                            pieces_notes_list.append(
+                                f"Peça '{p_name}': NÃO COMPRADA há {d} dias desde aprovação "
+                                f"(orcamento aprovado em {approved_date.strftime('%d/%m/%Y')}). "
+                                f"Custo previsto: R$ {float(getattr(pc,'cost_price',0) or 0):,.2f}"
+                            )
+                        else:
+                            pieces_notes_list.append(
+                                f"Peça '{p_name}': NÃO COMPRADA (aprovado hoje/ontem)"
+                            )
+                    else:
+                        pieces_notes_list.append(
+                            f"Peça '{p_name}': NÃO COMPRADA (orcamento ainda sem data de aprovação)"
+                        )
+                    continue
+
+                if p_purchase and not (p_arrived and p_arrival):
+                    pieces_purchased_not_arrived += 1
+                    if p_expected and today > p_expected:
+                        atraso = (today - p_expected).days
+                        pieces_expected_not_arrived_days_ago += atraso
+                        if atraso >= 10:
+                            pieces_notes_list.append(
+                                f"Peça '{p_name}': COMPRADA em {p_purchase.strftime('%d/%m/%Y')}, "
+                                f"PREVISTA em {p_expected.strftime('%d/%m/%Y')} — NÃO CHEGOU ainda. "
+                                f"ATRASADA {atraso} dias. SINAL DE ALERTA: atraso >= 10 dias pode indicar "
+                                f"PEÇA CHEGOU ERRADA / EXTRAVIO / TROCA PENDENTE."
+                            )
+                        else:
+                            pieces_notes_list.append(
+                                f"Peça '{p_name}': COMPRADA em {p_purchase.strftime('%d/%m/%Y')}, "
+                                f"PREVISTA em {p_expected.strftime('%d/%m/%Y')} — ainda NÃO CHEGOU "
+                                f"(atraso atual {atraso} dias)."
+                            )
+                    elif p_expected:
+                        pieces_notes_list.append(
+                            f"Peça '{p_name}': COMPRADA em {p_purchase.strftime('%d/%m/%Y')}, "
+                            f"PREVISTA para {p_expected.strftime('%d/%m/%Y')} — AGUARDANDO (dentro do prazo)."
+                        )
+                    else:
+                        pieces_notes_list.append(
+                            f"Peça '{p_name}': COMPRADA em {p_purchase.strftime('%d/%m/%Y')} mas SEM PREVISÃO DE CHEGADA cadastrada."
+                        )
+
+                if p_purchase and p_expected:
+                    leadtime = (p_expected - p_purchase).days
+                    if leadtime > 7:
+                        pieces_with_long_leadtime += 1
+                        pieces_notes_list.append(
+                            f"Peça '{p_name}': LEAD TIME MUITO LONGO = {leadtime} dias "
+                            f"(compra {p_purchase.strftime('%d/%m')} → chegada prev {p_expected.strftime('%d/%m')}). "
+                            f"Fornecedor/importação lenta — risco de atraso na entrega do cliente."
+                        )
+
+                if p_arrived and p_arrival and p_expected and p_arrival > p_expected:
+                    dias_atraso_chegada = (p_arrival - p_expected).days
+                    pieces_arrived_late += 1
+                    pieces_notes_list.append(
+                        f"Peça '{p_name}': CHEGOU ATRASADA em {dias_atraso_chegada} dias "
+                        f"(prev. {p_expected.strftime('%d/%m/%Y')} / real {p_arrival.strftime('%d/%m/%Y')})."
+                    )
+
+            pieces_not_purchased_days_since_approved = max_days_no_purchase_since_apv
+
+        # =========================================================
+        # [NOVO - HORAS POR SEÇÃO (atividade)]
+        # Agrupa tarefas da WorkOrder por activity -> 7 seções fixas
+        # =========================================================
+        sections_map: Dict[str, SectionHours] = {}
+        for sec_code in SECTION_ACTIVITY_LABELS:
+            sections_map[sec_code] = SectionHours(
+                activity_code=sec_code,
+                activity_label=SECTION_ACTIVITY_LABELS[sec_code],
+                planned_hours=0.0,
+                actual_hours=0.0,
+                elapsed_seconds=0,
+                task_count=0,
+                done_count=0,
+                running_count=0,
+                open_not_started=0,
+            )
+
+        sec_total_planned = 0.0
+        sec_total_actual = 0.0
+        for wo in work_orders_by_budget.get(b.pk, []):
+            for t in wo.tasks.all():
+                t_act = getattr(t, "activity", None)
+                if not t_act or t_act not in sections_map:
+                    continue
+                sec = sections_map[t_act]
+                t_plan = float(getattr(t, "planned_hours", 0) or 0)
+                t_act_h = float(getattr(t, "actual_hours", 0) or 0)
+                t_elapsed_sec = int(getattr(t, "elapsed_seconds", 0) or 0)
+                t_elapsed_h = t_elapsed_sec / 3600.0
+                t_effective_h = max(t_act_h, t_elapsed_h)
+                t_status = getattr(t, "status", None)
+
+                sec.planned_hours += t_plan
+                sec.actual_hours += t_effective_h
+                sec.elapsed_seconds += t_elapsed_sec
+                sec.task_count += 1
+                if t_status == "DONE":
+                    sec.done_count += 1
+                elif t_status == "RUNNING":
+                    sec.running_count += 1
+                else:
+                    if t_elapsed_sec <= 0:
+                        sec.open_not_started += 1
+
+                # Acumula global (toda a carteira)
+                sec_global_planned[t_act] += t_plan
+                sec_global_actual[t_act] += t_effective_h
+                sec_global_task_count[t_act] += 1
+
+        # Constrói lista apenas das seções que têm tarefas neste orçamento
+        sections_hours_active: List[SectionHours] = []
+        for code, sec in sections_map.items():
+            if sec.task_count > 0 or sec.planned_hours > 0 or sec.actual_hours > 0.01:
+                sec.planned_hours = round(sec.planned_hours, 2)
+                sec.actual_hours = round(sec.actual_hours, 2)
+                sections_hours_active.append(sec)
+                sec_total_planned += sec.planned_hours
+                sec_total_actual += sec.actual_hours
+
+        # Identifica a PIOR seção (maior estouro) desta OS
+        worst_sec_code: Optional[str] = None
+        worst_sec_overrun: float = 0.0
+        sections_bottleneck: List[str] = []
+        for sec in sections_hours_active:
+            ov = sec.overrun
+            label = sec.activity_label
+            if ov >= 0.25:
+                sections_bottleneck.append(
+                    f"{label}: +{ov:.2f}h ESTOURO (plan {sec.planned_hours:.2f}h / real {sec.actual_hours:.2f}h) "
+                    f"- {sec.done_count}/{sec.task_count} tarefas concluídas"
+                )
+            elif ov <= -0.25:
+                sections_bottleneck.append(
+                    f"{label}: {-ov:.2f}h MAIS RÁPIDO que planejado "
+                    f"(plan {sec.planned_hours:.2f}h / real {sec.actual_hours:.2f}h)"
+                )
+            if worst_sec_code is None or ov > worst_sec_overrun:
+                worst_sec_code = sec.activity_code
+                worst_sec_overrun = ov
+
         row = BudgetPerformanceRow(
             budget_id=b.pk,
             display_number=str(getattr(b, "display_number", b.pk)),
@@ -562,8 +848,48 @@ def compute_performance_report(
             discount_total=round(discount_f, 2),
             markup_total=round(markup_f, 2),
             late_days=days_late,
+            # [NOVO - aprovacao + pecas]
+            approval_delay_days=approval_delay_days,
+            pieces_total=pieces_total,
+            pieces_not_purchased=pieces_not_purchased,
+            pieces_purchased_not_arrived=pieces_purchased_not_arrived,
+            pieces_arrived_late=pieces_arrived_late,
+            pieces_expected_not_arrived_days_ago=pieces_expected_not_arrived_days_ago,
+            pieces_not_purchased_days_since_approved=pieces_not_purchased_days_since_approved,
+            pieces_with_long_leadtime=pieces_with_long_leadtime,
+            pieces_notes_list=pieces_notes_list,
+            # [NOVO - horas por secao (atividade)]
+            sections_hours=sections_hours_active,
+            sections_worst_overrun_code=worst_sec_code,
+            sections_worst_overrun_hours=round(worst_sec_overrun, 2),
+            sections_total_planned=round(sec_total_planned, 2),
+            sections_total_actual=round(sec_total_actual, 2),
+            sections_bottleneck_summary=sections_bottleneck,
         )
         row.probable_causes = _calculate_probable_causes(row, now)
+
+        # [NOVO - Acumula SCM + Aprovacao KPIs]
+        if row.approval_delay_days > 0:
+            sum_approval_delay_days += row.approval_delay_days
+            count_with_approval_delay += 1
+        if row.approval_delay_days >= 3:
+            kpi_approval_delay_os_count += 1
+        kpi_total_pieces_shop += row.pieces_total
+        kpi_pieces_not_purchased_count += row.pieces_not_purchased
+        if row.pieces_not_purchased > 0:
+            kpi_pieces_not_purchased_os_count += 1
+        kpi_pieces_purchased_not_arrived_count += row.pieces_purchased_not_arrived
+        kpi_pieces_arrived_late_count += row.pieces_arrived_late
+        kpi_pieces_with_long_leadtime_count += row.pieces_with_long_leadtime
+        kpi_pieces_notes_total += len(row.pieces_notes_list)
+        kpi_pieces_not_purchased_days_worst = max(
+            kpi_pieces_not_purchased_days_worst,
+            row.pieces_not_purchased_days_since_approved,
+        )
+        kpi_pieces_expected_not_arrived_days_accum += row.pieces_expected_not_arrived_days_ago
+        for note in row.pieces_notes_list:
+            if "SINAL DE ALERTA" in note:
+                kpi_wrong_or_suspect_pieces_count += 1
 
         if not expected and approved_date and not is_delivered:
             row.delivery_bucket_code = "NO_PROMISE"
@@ -643,6 +969,35 @@ def compute_performance_report(
             valor_dia_ponderado += float(r.total_amount or 0) * float(r.late_days)
     kpi_valor_dia_atraso_ponderado = round(valor_dia_ponderado, 2)
 
+    # ============================================================
+    # [NOVO - KPIs de HORAS POR SEÇÃO (total carteira)]
+    # ============================================================
+    kpi_sections_total_planned = round(sum(sec_global_planned.values()), 2)
+    kpi_sections_total_actual = round(sum(sec_global_actual.values()), 2)
+    kpi_sections_total_overrun = round(kpi_sections_total_actual - kpi_sections_total_planned, 2)
+    # Pior seção (maior estouro de horas, em valor absoluto de horas)
+    kpi_sections_worst_code: Optional[str] = None
+    kpi_sections_worst_label: Optional[str] = None
+    kpi_sections_worst_total_overrun: float = 0.0
+    kpi_sections_summary_lines: List[str] = []
+    for code in SECTION_ACTIVITY_LABELS:
+        lab = SECTION_ACTIVITY_LABELS[code]
+        plan = round(sec_global_planned[code], 2)
+        real = round(sec_global_actual[code], 2)
+        ov = round(real - plan, 2)
+        qtd = sec_global_task_count[code]
+        if plan <= 0 and real <= 0.01 and qtd == 0:
+            continue  # secao sem uso nesta carteira, omite
+        sinal = "+" if ov >= 0 else "-"
+        kpi_sections_summary_lines.append(
+            f"[{lab.upper()} (code={code})] tarefas={qtd} | plan={plan:.2f}h | real={real:.2f}h | "
+            f"dif={sinal}{abs(ov):.2f}h ({'%+d' % round(100*ov/plan, 0) if plan>0 else '0%'} vs planejado)"
+        )
+        if kpi_sections_worst_code is None or ov > kpi_sections_worst_total_overrun:
+            kpi_sections_worst_code = code
+            kpi_sections_worst_label = lab
+            kpi_sections_worst_total_overrun = ov
+
     return PerformanceReport(
         total=total,
         on_time=on_time,
@@ -677,6 +1032,29 @@ def compute_performance_report(
         kpi_pecas_total_atrasado=kpi_pecas_total_atrasado,
         kpi_servicos_total_atrasado=kpi_servicos_total_atrasado,
         kpi_valor_dia_atraso_ponderado=kpi_valor_dia_atraso_ponderado,
+        # [NOVO - KPIs SCM + APROVACAO]
+        kpi_approval_delay_avg_days=round(
+            sum_approval_delay_days / count_with_approval_delay, 1
+        ) if count_with_approval_delay else 0.0,
+        kpi_approval_delay_os_count=kpi_approval_delay_os_count,
+        kpi_total_pieces_shop=kpi_total_pieces_shop,
+        kpi_pieces_not_purchased_count=kpi_pieces_not_purchased_count,
+        kpi_pieces_not_purchased_os_count=kpi_pieces_not_purchased_os_count,
+        kpi_pieces_purchased_not_arrived_count=kpi_pieces_purchased_not_arrived_count,
+        kpi_pieces_arrived_late_count=kpi_pieces_arrived_late_count,
+        kpi_pieces_with_long_leadtime_count=kpi_pieces_with_long_leadtime_count,
+        kpi_pieces_notes_total=kpi_pieces_notes_total,
+        kpi_wrong_or_suspect_pieces_count=kpi_wrong_or_suspect_pieces_count,
+        kpi_pieces_not_purchased_days_worst=kpi_pieces_not_purchased_days_worst,
+        kpi_pieces_expected_not_arrived_days_accum=kpi_pieces_expected_not_arrived_days_accum,
+        # [NOVO - KPIs SECOES (gargalos producao)]
+        kpi_sections_worst_code=kpi_sections_worst_code,
+        kpi_sections_worst_label=kpi_sections_worst_label,
+        kpi_sections_worst_total_overrun=round(kpi_sections_worst_total_overrun, 2),
+        kpi_sections_total_planned=kpi_sections_total_planned,
+        kpi_sections_total_actual=kpi_sections_total_actual,
+        kpi_sections_total_overrun=kpi_sections_total_overrun,
+        kpi_sections_summary_lines=kpi_sections_summary_lines,
     )
 
 
@@ -733,6 +1111,46 @@ def performance_report_to_text(rep: PerformanceReport, now: Optional[datetime] =
     lines.append(f"  - Em aberto/prev...: {len(rep.open_with_expected)} OS")
     lines.append(f"  - Sem prazo/aprov..: {len(rep.no_promise_date)} OS | R$ {fmt_brl(rep.kpi_valor_sem_prazo)}")
     lines.append("")
+    # ========================================================================
+    # [NOVO - BLOCO SCM (SUPPLY CHAIN DE PECAS) + DEMORA APROVACAO]
+    # ========================================================================
+    lines.append("-" * 80)
+    lines.append("RESUMO SCM (PEÇAS SHOP) + DEMORA NA APROVAÇÃO COMERCIAL:")
+    lines.append(f"  * MÉDIA de dias PARADO aguardando APROVAÇÃO (criado→aprovado): {rep.kpi_approval_delay_avg_days} dias")
+    lines.append(f"  * Qtd. ORÇAMENTOS com atraso >= 3d NA APROVAÇÃO: {rep.kpi_approval_delay_os_count} OS")
+    lines.append(f"  * TOTAL PEÇAS SHOP (oficina compra) na carteira: {rep.kpi_total_pieces_shop} peças")
+    lines.append(f"  * PEÇAS NÃO COMPRADAS (risco IMEDIATO de atraso: {rep.kpi_pieces_not_purchased_count} peça(s) em {rep.kpi_pieces_not_purchased_os_count} OS")
+    if rep.kpi_pieces_not_purchased_days_worst > 0:
+        lines.append(f"    -> PIOR CASO: peça sem compra há {rep.kpi_pieces_not_purchased_days_worst} dias desde aprovação (urgência máxima)")
+    lines.append(f"  * PEÇAS COMPRADAS que NÃO CHEGARAM AINDA: {rep.kpi_pieces_purchased_not_arrived_count} peça(s)")
+    if rep.kpi_pieces_expected_not_arrived_days_accum > 0:
+        lines.append(f"    -> ATRASO ACUMULADO dessas peças: {rep.kpi_pieces_expected_not_arrived_days_accum} dias (soma de todas as não chegadas)")
+    lines.append(f"  * PEÇAS que CHEGARAM ATRASADAS (passou da data prevista): {rep.kpi_pieces_arrived_late_count} peça(s)")
+    lines.append(f"  * PEÇAS com LEAD TIME LONGO (>7 dias, fornecedor/importação lenta): {rep.kpi_pieces_with_long_leadtime_count} peça(s)")
+    lines.append(f"  * PEÇAS SUSPEITAS (provável ERRO / EXTRAVIO / TROCA PENDENTE / CHEGOU ERRADA — atraso >= 10 dias e não chegou): {rep.kpi_wrong_or_suspect_pieces_count} peça(s)")
+    lines.append(f"  * TOTAL DE ALERTAS SCM GERADOS: {rep.kpi_pieces_notes_total} (abaixo, cada OS tem sua lista detalhada)")
+    lines.append("")
+    # ========================================================================
+    # [NOVO - BLOCO HORAS POR SEÇÃO (GARGALOS DE PRODUÇÃO)]
+    # ========================================================================
+    lines.append("-" * 80)
+    lines.append("HORAS POR SEÇÃO — PRODUÇÃO (planejado vs REAL):")
+    lines.append(f"  * TOTAL PLANEJADO (todas seções, toda carteira): {rep.kpi_sections_total_planned:.2f}h")
+    lines.append(f"  * TOTAL REAL     (todas seções, toda carteira): {rep.kpi_sections_total_actual:.2f}h")
+    sinal_geral = "+" if rep.kpi_sections_total_overrun >= 0 else ""
+    lines.append(f"  * DIFERENÇA (ESTOURO GERAL): {sinal_geral}{rep.kpi_sections_total_overrun:.2f}h  "
+                 f"({'MAIS TEMPO GASTO' if rep.kpi_sections_total_overrun >=0 else 'MAIS RÁPIDO QUE O PLANEJADO'})")
+    if rep.kpi_sections_worst_label:
+        lines.append(f"  * SEÇÃO COM MAIOR ESTOURO (GARGALO PRINCIPAL): {rep.kpi_sections_worst_label.upper()} "
+                     f"(estouro {rep.kpi_sections_worst_total_overrun:+.2f}h)")
+    lines.append("")
+    lines.append("DETALHE POR SEÇÃO (7 seções fixas da oficina):")
+    if rep.kpi_sections_summary_lines:
+        for ln in rep.kpi_sections_summary_lines:
+            lines.append(f"  - {ln}")
+    else:
+        lines.append("  (nenhuma seção com tarefas nesta carteira)")
+    lines.append("")
 
     def list_bucket(title: str, rows: List[BudgetPerformanceRow]):
         if not rows:
@@ -756,10 +1174,64 @@ def performance_report_to_text(rep: PerformanceReport, now: Optional[datetime] =
                 f"Tarefas: {r.done_tasks_count}/{r.total_tasks_count} | "
                 f"Peças pend SHOP: {r.pending_shop_parts_count} (bypass={'SIM' if r.allow_repair_without_parts else 'NÃO'})"
             )
+            # [NOVO - Linha extra: demora aprovacao + resumo SCM desta OS]
+            scm_bits = []
+            if r.approval_delay_days > 0:
+                scm_bits.append(f"Atraso aprovação: {r.approval_delay_days}d")
+            if r.pieces_total > 0:
+                    scm_bits.append(
+                        f"Peças SHOP: {r.pieces_total} total | "
+                        f"{r.pieces_not_purchased} não compradas | "
+                        f"{r.pieces_purchased_not_arrived} compradas/não chegou | "
+                        f"{r.pieces_arrived_late} chegaram atrasadas | "
+                        f"{r.pieces_with_long_leadtime} lead longo"
+                    )
+            if scm_bits:
+                lines.append(f"    -> SCM / Aprov.: " + " | ".join(scm_bits))
             if r.probable_causes:
                 lines.append(f"    -> Causas prováveis:")
                 for c in r.probable_causes:
                     lines.append(f"       * {c}")
+            # [NOVO - Lista DETALHADA de notas de peças (texto humano para IA)]
+            if r.pieces_notes_list:
+                lines.append(f"    -> DETALHES DE PEÇAS (para inspeção IA / ação):")
+                for note in r.pieces_notes_list:
+                    lines.append(f"       🔹 {note}")
+            # [NOVO - Resumo de HORAS POR SEÇÃO desta OS + pior gargalo interno]
+            if r.sections_hours:
+                lines.append(f"    -> HORAS POR SEÇÃO (plan vs real / gargalo interno):")
+                lines.append(
+                    f"       TOTAL: plan {r.sections_total_planned:.2f}h / real {r.sections_total_actual:.2f}h "
+                    f"(dif {'+' if (r.sections_total_actual - r.sections_total_planned)>=0 else ''}"
+                    f"{(r.sections_total_actual - r.sections_total_planned):.2f}h)"
+                )
+                for sec in r.sections_hours:
+                    ov = sec.overrun
+                    if ov >= 0:
+                        tag = f"ESTOURO +{ov:.2f}h" if ov >= 0.25 else f"ok (+{ov:.2f}h)"
+                    else:
+                        tag = f"RÁPIDO {-ov:.2f}h" if ov <= -0.25 else f"ok ({ov:.2f}h)"
+                    sinal_o = "+" if ov >= 0 else ""
+                    lines.append(
+                        f"       ⚙️ [{sec.activity_label.upper()}] "
+                        f"plan={sec.planned_hours:.2f}h · real={sec.actual_hours:.2f}h · "
+                        f"dif={sinal_o}{ov:.2f}h [{tag}] · "
+                        f"tarefas={sec.done_count}/{sec.task_count} "
+                        f"(prog={sec.progress_pct}%)"
+                    )
+            if r.sections_bottleneck_summary:
+                lines.append(f"    -> GARGALOS DE PRODUÇÃO por seção:")
+                for bn in r.sections_bottleneck_summary:
+                    lines.append(f"       ⚠️ {bn}")
+            # Contexto IA sobre influência de peças nas seções:
+            if r.has_pending_shop_parts and not r.allow_repair_without_parts:
+                not_done_total = max(r.total_tasks_count - r.done_tasks_count, 0)
+                if not_done_total > 0:
+                    lines.append(
+                        f"    -> NOTA IMPACTANTE (IA): OS BLOQUEADA por {r.pending_shop_parts_count} peça(s) "
+                        f"PENDENTES. Se MONTAGEM/FUNILARIA estão atrasadas, isto PODE ser a causa raiz "
+                        f"(não pode avançar sem as peças)."
+                    )
 
     list_bucket("Sem prazo contratado (aprovado / análise tempo parado)", rep.no_promise_date)
     list_bucket("No prazo", rep.on_time)
