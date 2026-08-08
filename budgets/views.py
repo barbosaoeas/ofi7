@@ -1775,6 +1775,25 @@ def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int =
         return None
     if _time.time() - float(obj.get("ts", 0)) > max_age_seconds:
         return None
+    # ==============================================================================
+    #  ✅ CORREÇÃO DURA (CAMADA 2): NUNCA RETORNAR CACHE DE ERRO, MESMO QUE O ARQUIVO EXISTA.
+    #     (blindagem dupla — salva erro + também nao carrega erro.)
+    # ==============================================================================
+    if obj.get("error") or not obj.get("model") or obj.get("provider") == "erro" or provider == "erro":
+        return None
+    content = str(obj.get("content", "") or "")
+    if len(content.strip()) < 200:
+        return None
+    # Palavras proibidas no content:
+    norm = content.lower().replace(" ", "").replace("\n", "")
+    _proibidas = (
+        "errodeconfiguracao", "chaveopenainao", "chaveopenainãoconfigurada",
+        "⛔", "naoconfiguradoem", "chavenãoconfigurada", "chavenaoconfigurada",
+        "semchave", "errobilling", "ratelimit", "nenhumprovedordeiadisponivel",
+    )
+    for p in _proibidas:
+        if p in norm:
+            return None
     try:
         return LLMResult(
             provider=str(obj.get("provider", provider)),
@@ -1782,7 +1801,7 @@ def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int =
             tokens_in=int(obj.get("tokens_in", 0)),
             tokens_out=int(obj.get("tokens_out", 0)),
             cost_usd=float(obj.get("cost_usd", 0.0)),
-            content=str(obj.get("content", "")),
+            content=content,
             error=obj.get("error"),
         )
     except Exception:
@@ -1790,12 +1809,29 @@ def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int =
 
 
 def _save_analysis_cache(report_text: str, provider: str, result: LLMResult) -> None:
-    # ✅ CORREÇÃO: NUNCA SALVAR CACHE DE ERRO.
-    #    - Se error != None (falhou), salva NADA -> proxima chamada tenta de novo.
-    #    - Se model vazio ou provider = 'erro', tambem NAO SALVA.
-    #    Impede que cache de "chave nao configurada" fique servido por 24h.
+    # ==============================================================================
+    #  ✅ CORREÇÃO DURA (CAMADA 1): NUNCA SALVAR CACHE DE ERRO — NENHUM CASO.
+    #     Impede que cache de "chave nao configurada" / "erro billing" / etc
+    #     fique servido por 24h.
+    # ==============================================================================
+    # Condicoes OBVIAS:
     if result.error or not result.model or provider == "erro" or result.provider == "erro":
         return
+    # Condicoes EXTRA (evita salvar resultado vazio):
+    if not result.content or len(result.content.strip()) < 200:
+        return
+    # Condicoes PALAVRAS PROIBIDAS no content (mesmo que result.error seja None,
+    # pode ser que a view montou um content "erro configuracao" sem setar o .error):
+    content_norm = (result.content or "").lower().replace(" ", "").replace("\n", "")
+    _proibidas = (
+        "errodeconfiguracao", "chaveopenainao", "chaveopenai_nao",
+        "chaveopenainãoconfigurada", "⛔", "naoconfiguradoem",
+        "chavenãoconfigurada", "chavenaoconfigurada", "semchave",
+        "errobilling", "ratelimit",
+    )
+    for p in _proibidas:
+        if p in content_norm:
+            return
     try:
         fp = _analysis_cache_path(report_text, provider)
         with open(fp, "w", encoding="utf-8") as f:
