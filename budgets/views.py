@@ -1572,7 +1572,8 @@ def _resolve_openai_api_key() -> str:
     # (2) os.environ DIRETO (força leitura atualizada do ambiente)
     candidatos.append(_os.environ.get("OPENAI_API_KEY", "") or "")
 
-    # (3) Ultimo recurso: ler arquivo .env DIRETAMENTE
+    # (3) Ultimo recurso: ler ARQUIVOS de environment DIRETAMENTE (até 3 nomes possíveis)
+    #     Ordem de prioridade:  .env  >>>  .env.exemplo  >>>  .env.example
     def _extrai_key_de_arquivo(caminho: str, separador: str = "=") -> Optional[str]:
         try:
             if not _os.path.isfile(caminho):
@@ -1595,10 +1596,14 @@ def _resolve_openai_api_key() -> str:
             return None
         return None
 
-    env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
-    chave_env = _extrai_key_de_arquivo(env_path, "=")
-    if chave_env:
-        candidatos.append(chave_env)
+    _PASTA_RAIZ = str(_Path(__file__).resolve().parent.parent)
+    NOMES_ARQUIVOS_ENV = [".env", ".env.exemplo", ".env.example"]
+    for _nome_arquivo in NOMES_ARQUIVOS_ENV:
+        caminho = _os.path.join(_PASTA_RAIZ, _nome_arquivo)
+        chave_env = _extrai_key_de_arquivo(caminho, "=")
+        if chave_env:
+            candidatos.append(chave_env)
+            break  # já achou em um, para
 
     # (4) Padrão PythonAnywhere: .secrets/oficina_env.sh (comandos `export VAR=valor`)
     #     Isso resolve o bug de "chave existe mas está no .secrets e não no .env"
@@ -1674,21 +1679,24 @@ def _debug_openai_sources() -> Dict[str, str]:
     info["settings.OPENAI_API_KEY"] = _status(getattr(django_settings, "OPENAI_API_KEY", "") or "")
     # Fonte 2
     info["os.environ[OPENAI_API_KEY]"] = _status(_os.environ.get("OPENAI_API_KEY", "") or "")
-    # Fonte 3
-    env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
-    try:
-        v3: Optional[str] = None
-        if _os.path.isfile(env_path):
-            with open(env_path, "r", encoding="utf-8", errors="replace") as f:
-                for ln in f:
-                    ln = ln.strip()
-                    if not ln.startswith("OPENAI_API_KEY="):
-                        continue
-                    v3 = ln.split("=", 1)[1].strip().strip('"').strip("'")
-                    break
-        info[f"arquivo .env ({env_path})"] = _status(v3)
-    except Exception as e3:
-        info[f"arquivo .env ({env_path})"] = f"ERRO leitura: {e3}"
+    # Fonte 3 — ARQUIVOS DE ENV (agora aceita 3 nomes: .env, .env.exemplo, .env.example)
+    _pasta_raiz_debug = str(_Path(__file__).resolve().parent.parent)
+    NOMES_ARQUIVOS_ENV_DEBUG = [".env", ".env.exemplo", ".env.example"]
+    for _nome_debug in NOMES_ARQUIVOS_ENV_DEBUG:
+        caminho_arquivo = _os.path.join(_pasta_raiz_debug, _nome_debug)
+        try:
+            v3b: Optional[str] = None
+            if _os.path.isfile(caminho_arquivo):
+                with open(caminho_arquivo, "r", encoding="utf-8", errors="replace") as f:
+                    for ln in f:
+                        ln = ln.strip()
+                        if not ln.startswith("OPENAI_API_KEY="):
+                            continue
+                        v3b = ln.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            info[f"arquivo {_nome_debug} ({caminho_arquivo})"] = _status(v3b) if _os.path.isfile(caminho_arquivo) else "(arquivo não existe)"
+        except Exception as e3b:
+            info[f"arquivo {_nome_debug} ({caminho_arquivo})"] = f"ERRO leitura: {e3b}"
     # Fonte 4
     caminhos_extra = [
         _os.path.join(str(_Path(__file__).resolve().parent.parent), ".secrets", "oficina_env.sh"),
