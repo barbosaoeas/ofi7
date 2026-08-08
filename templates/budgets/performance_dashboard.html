@@ -175,6 +175,46 @@
       </div>
     </div>
 
+    {% if ia_openai_debug %}
+    <div class='mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-4 shadow-sm'>
+      <div class='mb-2 flex flex-wrap items-center justify-between gap-2'>
+        <div class='text-sm font-bold uppercase tracking-wider text-amber-800'>
+          🕵️ Diagnóstico — chave OpenAI não detectada (ainda)
+        </div>
+        <div class='text-[11px] text-amber-700'>
+          Nenhuma informação sensível é exibida abaixo (apenas status + qtd caracteres).
+        </div>
+      </div>
+      <div class='overflow-hidden rounded-lg bg-white ring-1 ring-amber-200'>
+        <table class='w-full border-collapse text-[12.5px]'>
+          <thead class='bg-amber-100 text-amber-900'>
+            <tr>
+              <th class='px-3 py-2 text-left font-semibold w-1/2'>Fonte onde a chave foi procurada</th>
+              <th class='px-3 py-2 text-left font-semibold'>Status / Resultado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for fonte, status in ia_openai_debug.items %}
+            <tr class='border-t border-amber-100'>
+              <td class='px-3 py-2 align-top font-mono text-[11px] text-slate-700 break-all'>{{ fonte }}</td>
+              <td class='px-3 py-2 align-top font-semibold
+                {% if "OK?" in status %}text-emerald-700{% elif status == "(vazio)" or "PLACEHOLDER" in status or "não existe" in status or "ERRO" in status %}text-rose-700{% else %}text-slate-700{% endif %}'>
+                {{ status }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class='mt-3 space-y-1 rounded-lg bg-white p-3 text-[12.5px] leading-6 text-slate-700 ring-1 ring-amber-200'>
+        <div class='font-bold text-amber-800'>🎯 Como resolver:</div>
+        <div>1. <b>Local (notebook):</b> adicione no seu <code class='rounded bg-slate-100 px-1 font-mono'>.env</code> da pasta do projeto a linha <code class='rounded bg-slate-100 px-1 font-mono'>OPENAI_API_KEY=sk-proj-xxxxxx</code>, feche o <code class='rounded bg-slate-100 px-1 font-mono'>runserver</code> e abra novamente.</div>
+        <div>2. <b>PythonAnywhere (servidor):</b> cole a chave no arquivo <code class='rounded bg-slate-100 px-1 font-mono'>.secrets/oficina_env.sh</code> como <code class='rounded bg-slate-100 px-1 font-mono'>export OPENAI_API_KEY="sk-proj-xxxxxx"</code> e também no <code class='rounded bg-slate-100 px-1 font-mono'>.env</code> do projeto, depois clique em <b>[Reload]</b> no painel WEB do PA.</div>
+        <div>3. <b>Se a tabela acima mostrar <span class='text-emerald-700 font-bold'>OK? sk-***abcd (164 chars)</span> em alguma linha mas ainda assim diz "sem chave",</b> clique em 🔄 <b>Forçar Re-análise</b> para limpar o cache de 24h.</div>
+      </div>
+    </div>
+    {% endif %}
+
     {% if ai_analysis %}
     <div class='mt-5 whitespace-pre-wrap rounded-xl border border-indigo-200 bg-white/95 p-5 text-[13.5px] leading-7 text-slate-800 shadow-sm'>{{ ai_analysis }}</div>
     {% endif %}

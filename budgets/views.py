@@ -1559,8 +1559,9 @@ _OPENAI_PRICING_PER_1M = {
 
 
 def _resolve_openai_api_key() -> str:
-    """Fallback TRIPLO para achar a chave OpenAI (evita bug de runserver nao reiniciado).
-    Ordem: 1) django_settings (import-time), 2) os.environ (agora), 3) ler arquivo .env DIRETO (ultimo recurso).
+    """Fallback TRIPLO (agora QUADRUPLO) para achar a chave OpenAI.
+    Ordem: 1) django_settings (import-time), 2) os.environ atual,
+           3) arquivo .env (raiz projeto), 4) .secrets/oficina_env.sh (padrao PA)
     Retorna vazio se nao achar em lugar nenhum.
     """
     candidatos: List[str] = []
@@ -1571,29 +1572,60 @@ def _resolve_openai_api_key() -> str:
     # (2) os.environ DIRETO (força leitura atualizada do ambiente)
     candidatos.append(_os.environ.get("OPENAI_API_KEY", "") or "")
 
-    # (3) Ultimo recurso: ler o arquivo .env DIRETAMENTE, linha por linha,
-    #     caso settings.py tenha sido carregado ANTES do .env ser atualizado
-    #     e o usuário não reiniciou o runserver ainda.
-    try:
-        env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
-        if _os.path.isfile(env_path):
-            with open(env_path, "r", encoding="utf-8") as f_env:
+    # (3) Ultimo recurso: ler arquivo .env DIRETAMENTE
+    def _extrai_key_de_arquivo(caminho: str, separador: str = "=") -> Optional[str]:
+        try:
+            if not _os.path.isfile(caminho):
+                return None
+            with open(caminho, "r", encoding="utf-8", errors="replace") as f_env:
                 for linha in f_env:
                     linha = linha.strip()
-                    if not linha or linha.startswith("#") or "=" not in linha:
+                    if not linha or linha.startswith("#") or separador not in linha:
                         continue
-                    chave, valor = linha.split("=", 1)
-                    if chave.strip().upper() == "OPENAI_API_KEY":
-                        candidatos.append(valor.strip().strip('"').strip("'"))
-                        break
-    except Exception:
-        pass
+                    if separador == "=" and linha.upper().startswith("EXPORT "):
+                        linha = linha[len("EXPORT "):].lstrip()  # tira 'export ' do shell script
+                    partes = linha.split(separador, 1)
+                    if len(partes) != 2:
+                        continue
+                    chave = partes[0].strip().strip('"\'').upper()
+                    valor = partes[1].strip().strip('"\'')
+                    if chave == "OPENAI_API_KEY":
+                        return valor
+        except Exception:
+            return None
+        return None
+
+    env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
+    chave_env = _extrai_key_de_arquivo(env_path, "=")
+    if chave_env:
+        candidatos.append(chave_env)
+
+    # (4) Padrão PythonAnywhere: .secrets/oficina_env.sh (comandos `export VAR=valor`)
+    #     Isso resolve o bug de "chave existe mas está no .secrets e não no .env"
+    caminhos_secret_extra = [
+        _os.path.join(str(_Path(__file__).resolve().parent.parent), ".secrets", "oficina_env.sh"),
+        "/home/ofi7ipojuca/.secrets/oficina_env.sh",  # seu user PA hardcoded
+    ]
+    for p in caminhos_secret_extra:
+        chave_sh = _extrai_key_de_arquivo(p, "=")
+        if chave_sh:
+            candidatos.append(chave_sh)
+            break
 
     # Pega o PRIMEIRO candidato que nao for vazio / placeholder
     for c in candidatos:
-        c = c.strip()
-        if c and c.lower() not in {"", "sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}:
-            return c
+        c = (c or "").strip()
+        # Remove aspas que podem ter ficado (ex: OPENAI_API_KEY="sk-abc..." -> tira aspas duplas)
+        if len(c) >= 2 and ((c[0] == '"' and c[-1] == '"') or (c[0] == "'" and c[-1] == "'")):
+            c = c[1:-1].strip()
+        if not c:
+            continue
+        # Placeholders conhecidos do .env.example
+        if c.lower() in {"sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}:
+            continue
+        if "xxxxxxxx" in c.lower():
+            continue
+        return c
     return ""
 
 
@@ -1601,9 +1633,84 @@ def _openai_api_key_ok(key: str) -> bool:
     key = (key or "").strip()
     if not key:
         return False
+    # Remove aspas se vierem com
+    if len(key) >= 2 and ((key[0] == '"' and key[-1] == '"') or (key[0] == "'" and key[-1] == "'")):
+        key = key[1:-1].strip()
+    # Placeholders
     if key.startswith("sk-xxxx") or "xxxxxxxx" in key.lower():
         return False
-    return len(key) > 20  # chaves reais tem ~50+ caracteres
+    # Chaves reais:
+    #   Antigas sk-... > 30 caracteres
+    #   Novas sk-proj-... > 50 caracteres
+    #   Ollama-like strings (nao sao da OpenAI): nao comecam com sk-
+    if not key.startswith("sk-"):
+        return False
+    return len(key) >= 30
+
+
+def _debug_openai_sources() -> Dict[str, str]:
+    """Para DEBUG apenas: retorna INFO NAO SENSIVEL sobre onde a chave foi buscada,
+    para ser exibida no template caso a chave nao seja detectada.
+    NAO retorna a chave REAL, apenas qtd de caracteres / 'achou / nao achou'.
+    """
+    info: Dict[str, str] = {}
+
+    def _status(chave: Optional[str]) -> str:
+        if not chave:
+            return "(vazio)"
+        c = (chave or "").strip()
+        if len(c) >= 2 and ((c[0] == '"' and c[-1] == '"') or (c[0] == "'" and c[-1] == "'")):
+            c = c[1:-1].strip()
+        if not c:
+            return "(vazio)"
+        if c.lower() in {"sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"} or "xxxxxxxx" in c.lower():
+            return f"PLACEHOLDER ({len(c)} chars)"
+        # mascara: sk-****ultimos4
+        if c.startswith("sk-") and len(c) > 8:
+            return f"OK? sk-***{c[-4:]} ({len(c)} chars)"
+        return f"({len(c)} chars prefixo inválido '{c[:6]}...')"
+
+    # Fonte 1
+    info["settings.OPENAI_API_KEY"] = _status(getattr(django_settings, "OPENAI_API_KEY", "") or "")
+    # Fonte 2
+    info["os.environ[OPENAI_API_KEY]"] = _status(_os.environ.get("OPENAI_API_KEY", "") or "")
+    # Fonte 3
+    env_path = _os.path.join(str(_Path(__file__).resolve().parent.parent), ".env")
+    try:
+        v3: Optional[str] = None
+        if _os.path.isfile(env_path):
+            with open(env_path, "r", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln.startswith("OPENAI_API_KEY="):
+                        continue
+                    v3 = ln.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+        info[f"arquivo .env ({env_path})"] = _status(v3)
+    except Exception as e3:
+        info[f"arquivo .env ({env_path})"] = f"ERRO leitura: {e3}"
+    # Fonte 4
+    caminhos_extra = [
+        _os.path.join(str(_Path(__file__).resolve().parent.parent), ".secrets", "oficina_env.sh"),
+        "/home/ofi7ipojuca/.secrets/oficina_env.sh",
+    ]
+    for p in caminhos_extra:
+        try:
+            v4: Optional[str] = None
+            if _os.path.isfile(p):
+                with open(p, "r", encoding="utf-8", errors="replace") as f:
+                    for ln in f:
+                        ln2 = ln.strip()
+                        if ln2.upper().startswith("EXPORT "):
+                            ln2 = ln2[len("EXPORT "):]
+                        if not ln2.startswith("OPENAI_API_KEY="):
+                            continue
+                        v4 = ln2.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            info[f"secret: {p}"] = _status(v4) if _os.path.isfile(p) else "(arquivo não existe)"
+        except Exception as e4:
+            info[f"secret: {p}"] = f"ERRO leitura: {e4}"
+    return info
 
 
 def _report_cache_key(report_text: str) -> str:
@@ -2280,6 +2387,7 @@ class PerformanceInsightsView(PerformanceDashboardView):
             chat_history=chat_history,
             ia_report_hash=_report_cache_key(report_text),
             ia_ollama_available=ollama_habilitado_neste_ambiente,  # False = nuvem (PA) / True = notebook local
+            ia_openai_debug=_debug_openai_sources() if not api_key_ok else None,  # Card diagnostico so aparece se nao detectou a chave
         )
         if llm_result.provider != "erro" and llm_result.error is None:
             if cache_hit_provider:
