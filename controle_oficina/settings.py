@@ -48,6 +48,8 @@ def env_bool(name, default=False):
 
 
 load_env_file(BASE_DIR / '.env')
+load_env_file(BASE_DIR / '.env.exemplo')
+load_env_file(BASE_DIR / '.env.example')
 extra_env_file = os.getenv('OFICINA_ENV_FILE', '').strip()
 if extra_env_file:
     load_env_file(extra_env_file)
