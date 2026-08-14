@@ -32,7 +32,7 @@ Precisão Financeira : Automatizar o cálculo de comissões por tarefa concluíd
 
 3. Requisitos Funcionais (RF)
 
-Status de Implementação (25/07/2026)
+Status de Implementação (14/08/2026)
 
 - [x] RF01 - Autenticação Customizada e Nível de Acesso (login por e-mail ativo; cards de acessos recentes com seleção rápida e foco direto na senha)
 - [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; aprovação com modal financeiro; controle de entrega, finalização administrativa e filtro entre aprovados e entregues; ajustes finos ainda podem surgir)
@@ -56,9 +56,12 @@ Incrementos recentes já entregues
 - Entrega permitida com valores em aberto apenas para seguradoras com vencimento futuro; particular continua exigindo quitação.
 - Orçamentos entregues ocultos da listagem principal, com filtro dedicado entre Aprovados e Entregues.
 - Aviso de pendência financeira na entrega com link direto para o lançamento correspondente no financeiro.
-- Finalização administrativa disponível no detalhe do orçamento para gerente, apenas em orçamentos autorizados, com OS não iniciada e sem geração de comissão.
-- A finalização administrativa registra data/usuário da entrega, motivo da ação, auditoria do fechamento e encerra a OS para apoiar a implantação de veículos já entregues.
-- A finalização administrativa reutiliza a mesma coerência financeira da entrega: exige financeiro já registrado, exceto recebíveis futuros de seguradora compatíveis com a data de entrega.
+- Finalização administrativa disponível no detalhe do orçamento para gerente, apenas em orçamentos autorizados, com OS criada e ainda não iniciada no operacional, sem geração de comissão.
+- A finalização administrativa registra data/usuário da entrega, motivo da ação (500 chars), auditoria permanente do fechamento e encerra a OS (WorkOrder.status=CLOSED) para apoiar a implantação de veículos já entregues.
+- Regra financeira da FINALIZAÇÃO ADMINISTRATIVA: NÃO BLOQUEIA por financeiro. Mostra pendências/atrasos como aviso (âmbar), mas permite concluir, pois esta rotina só trata das tarefas/OS da implantação. A exigência de financeiro 100% ok continua valendo apenas na ENTREGA NORMAL do veículo.
+- Bloqueio operacional estrito: NÃO permite uso da finalização administrativa se a OS já tiver QUALQUER tarefa RUNNING, PAUSED ou DONE. (Protege uso indevido no dia-a-dia após implantação.)
+- Modal de finalização administrativa com confirmação dupla (onsubmit confirm()) e checkbox obrigatório "Confirmo que este fechamento não deve gerar comissão." antes de submit.
+- Blindagem transacional extra: dentro do transaction.atomic() da finalização administrativa, qualquer tarefa PENDING remanescente é automaticamente marcada DONE (sem horas) com completed_at/completed_by, evitando inconsistência de OS CLOSED com tarefas abertas no histórico.
 
 RF01 - Autenticação Customizada e Nível de Acesso
 
@@ -84,9 +87,9 @@ O orçamento deve permitir marcação de entrega do veículo, registrando usuár
 
 A listagem principal de orçamentos deve priorizar os aprovados ainda não entregues e oferecer filtro separado para consultar os já entregues.
 
-Para apoiar implantação de veículos já entregues, o detalhe do orçamento deve permitir finalização administrativa exclusiva para gerente, disponível apenas quando o orçamento estiver autorizado, com OS existente e ainda não iniciada.
+Para apoiar implantação de veículos já entregues, o detalhe do orçamento deve permitir finalização administrativa exclusiva para gerente, disponível apenas quando o orçamento estiver autorizado, com OS existente e ainda não iniciada no operacional (nenhuma tarefa RUNNING / PAUSED / DONE).
 
-A finalização administrativa deve registrar data de entrega, motivo, usuário responsável e marcar o orçamento como entregue sem passar pelo Kanban e sem gerar comissão.
+A finalização administrativa deve registrar data de entrega customizável, motivo obrigatório (máx 500 caracteres), usuário responsável e marcar o orçamento como entregue sem passar pelo Kanban e sem gerar comissão. O formulário exige confirmação dupla (confirm() no submit + checkbox obrigatório ciente de não geração de comissão) e, de forma transacional, fecha a OS e marca quaisquer tarefas PENDING remanescentes como DONE, garantindo consistência histórica. Pendências financeiras NÃO bloqueiam esta etapa — aparecem como aviso âmbar no modal, mas a entrega normal do veículo continua exigindo financeiro 100% consistente antes de liberar a chave.
 
 RF03 - Importação de XML Cilia
 
@@ -130,7 +133,11 @@ Serviços marcados com o checkbox Oficina devem ser tratados como atividades int
 
 Serviços efetivamente terceirizados devem gerar despesa no financeiro ao serem concluídos.
 
-Deve existir um fluxo excepcional de finalização administrativa para implantação, capaz de encerrar a OS sem execução operacional quando o veículo já tiver sido entregue anteriormente.
+Deve existir um fluxo excepcional de finalização administrativa para implantação, capaz de encerrar a OS sem execução operacional quando o veículo já tiver sido entregue anteriormente. Este fluxo:
+(a) exige perfil GERENTE (ou superusuário);
+(b) bloqueia se qualquer tarefa da OS já estiver RUNNING, PAUSED ou DONE (garante uso só para implantação);
+(c) pede data de entrega, motivo (500 chars obrigatórios) e confirmação explícita do gerente ciente que NÃO gera comissão;
+(d) fecha WorkOrder.status=CLOSED e marca tarefas PENDING como DONE transacionalmente, mantendo histórico consistente.
 
 RF07 - Kanban Produtivo Dinâmico
 

@@ -617,7 +617,7 @@
             Fechar
           </button>
         </div>
-        <form method='post' action='{% url "budgets:budget_administrative_close" budget.pk %}' class='space-y-5 px-6 py-5'>
+        <form method='post' action='{% url "budgets:budget_administrative_close" budget.pk %}' class='space-y-5 px-6 py-5' onsubmit='return confirm("Confirmação OBRIGATÓRIA:\n\n1. Este orçamento será MARCADO COMO ENTREGUE e a OS será FECHADA.\n2. NENHUMA comissão será gerada para nenhum colaborador.\n3. A data de entrega, o motivo e o seu usuário ficarão registrados permanentemente.\n\nDeseja REALMENTE continuar?");'>
           {% csrf_token %}
           <div class='rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800'>
             Este fluxo é exclusivo para implantação e não gera comissão.
@@ -635,15 +635,24 @@
                 />
               </div>
             </div>
-            <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>
-              <div class='text-xs uppercase tracking-wide text-slate-500'>Financeiro</div>
-              <div class='mt-2 text-sm text-slate-900'>
+            <div class='rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm'>
+              <div class='text-xs uppercase tracking-wide text-amber-700'>Financeiro</div>
+              <div class='mt-2 text-sm text-amber-900'>
                 {% if administrative_closure_status.finance_registered %}
                   Lançamentos financeiros já localizados para este orçamento.
                 {% else %}
                   Ainda será necessário lançar o financeiro antes da conclusão definitiva.
                 {% endif %}
               </div>
+              {% if administrative_closure_status.finance_blockers %}
+                <div class='mt-2 space-y-1'>
+                  {% for fb in administrative_closure_status.finance_blockers %}
+                    <div class='rounded-md border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800'>
+                    ⚠️ {{ fb }}
+                  </div>
+                  {% endfor %}
+                </div>
+              {% endif %}
               {% if administrative_closure_status.finance_open_amount > 0 %}
                 <div class='mt-2 flex flex-wrap items-center gap-2 text-xs'>
                   <span class='text-amber-700 font-medium'>
@@ -661,6 +670,9 @@
                   Recebimento futuro de seguradora permitido para esta finalização.
                 </div>
               {% endif %}
+              <div class='mt-2 text-[11px] text-amber-800'>
+                A finalização administrativa resolve apenas as tarefas/OS. Bloqueio por pendência financeira só vale apenas na entrega normal do veículo.
+              </div>
             </div>
           </div>
           <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 shadow-sm'>

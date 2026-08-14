@@ -830,10 +830,11 @@ def budget_administrative_closure_status(budget, user=None):
         blockers.append('A OS ainda não foi criada.')
     elif has_started_tasks:
         blockers.append('A OS já foi iniciada no operacional.')
+    finance_blockers = []
     if not CashMovement.objects.filter(budget=budget, direction=CashMovement.Direction.IN).exists():
-        blockers.append('O financeiro do orçamento ainda não foi registrado.')
+        finance_blockers.append('O financeiro do orçamento ainda não foi registrado.')
     elif open_amount > Decimal('0') and not allows_future_insurer_receivables:
-        blockers.append('Existem pendências financeiras em aberto.')
+        finance_blockers.append('Existem pendências financeiras em aberto.')
 
     return {
         'work_order': work_order,
@@ -849,6 +850,7 @@ def budget_administrative_closure_status(budget, user=None):
         'finance_overdue_amount': overdue_amount,
         'finance_oldest_overdue_date': oldest_overdue_date,
         'allows_future_insurer_receivables': allows_future_insurer_receivables,
+        'finance_blockers': finance_blockers,
         'can_administratively_close': len(blockers) == 0,
         'suggested_delivery_date': budget.expected_delivery_date or timezone.localdate(),
         'blockers': blockers,
@@ -5253,9 +5255,28 @@ class BudgetAdministrativeCloseView(LoginRequiredMixin, RoleRequiredMixin, View)
                     'administrative_closure_reason',
                 ]
             )
-            if work_order is not None and work_order.status != WorkOrder.Status.CLOSED:
-                work_order.status = WorkOrder.Status.CLOSED
-                work_order.save(update_fields=['status'])
+            if work_order is not None:
+                if work_order.status != WorkOrder.Status.CLOSED:
+                    work_order.status = WorkOrder.Status.CLOSED
+                    work_order.save(update_fields=['status'])
+                # Blindagem: fecha TODAS as tarefas PENDING da OS como DONE (sem horas extras).
+                # Garante que, mesmo que o Blocker #6 seja alterado no futuro,
+                # nenhuma tarefa fique como PENDING em uma OS CLOSED.
+                pending_tasks = list(
+                    work_order.tasks
+                    .exclude(status=WorkOrderTask.Status.DONE)
+                    .only('id', 'status', 'completed_at', 'completed_by')
+                )
+                if pending_tasks:
+                    now = timezone.now()
+                    for task in pending_tasks:
+                        task.status = WorkOrderTask.Status.DONE
+                        task.completed_at = task.completed_at or now
+                        task.completed_by = task.completed_by or request.user
+                    WorkOrderTask.objects.bulk_update(
+                        pending_tasks,
+                        ['status', 'completed_at', 'completed_by'],
+                    )
 
         messages.success(request, 'Finalização administrativa registrada com sucesso. Comissão não foi gerada.')
         return redirect('budgets:budget_detail', pk=budget.pk)
