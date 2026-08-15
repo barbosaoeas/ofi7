@@ -1,4 +1,5 @@
 from django.db import models
+from decimal import Decimal
 
 from customers.models import Customer, Vehicle
 
