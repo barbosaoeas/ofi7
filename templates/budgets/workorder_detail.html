@@ -878,12 +878,29 @@
           }
           if (batchCreateTaskIdsInput) batchCreateTaskIdsInput.value = selected.join(',');
           if (batchCreateBtn) {
+            var originalBaseText = '🔗 Criar Lote das Selecionadas';
             var valid = validateBatchSelection(selected);
             batchCreateBtn.disabled = !valid.ok;
+            var counterHtml = '';
+            if (selected.length > 0) {
+              counterHtml = ' <span class="ml-2 inline-flex items-center gap-1 rounded-full ' +
+                (valid.ok ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white') +
+                ' px-2 py-0.5 text-xs font-bold">(' + String(selected.length) + ')</span>';
+            }
+            batchCreateBtn.innerHTML = originalBaseText + counterHtml;
+
             if (valid.ok) {
               batchCreateBtn.removeAttribute('title');
+              batchCreateBtn.classList.remove('from-indigo-500', 'to-indigo-700', 'opacity-40');
+              batchCreateBtn.classList.add('from-emerald-500', 'to-emerald-700', 'brightness-110');
             } else {
-              batchCreateBtn.setAttribute('title', valid.reason);
+              if (selected.length === 0) {
+                batchCreateBtn.setAttribute('title', 'Marque 2+ tarefas da MESMA etapa + MESMO colaborador');
+              } else {
+                batchCreateBtn.setAttribute('title', valid.reason);
+              }
+              batchCreateBtn.classList.add('from-indigo-500', 'to-indigo-700');
+              batchCreateBtn.classList.remove('from-emerald-500', 'to-emerald-700', 'brightness-110');
             }
           }
         }
@@ -899,16 +916,23 @@
         }
 
         bulkCheckboxes.forEach(function (checkbox) {
-          checkbox.addEventListener('change', updateBulkState);
+          checkbox.addEventListener('change', function () {
+            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
+            updateBulkState();
+          });
         });
 
         var collabSelects = document.querySelectorAll('select[data-task-collaborator-select]');
         collabSelects.forEach(function (sel) {
-          sel.addEventListener('change', updateBulkState);
+          sel.addEventListener('change', function () {
+            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
+            updateBulkState();
+          });
         });
 
         if (bulkCheckAll) {
           bulkCheckAll.addEventListener('change', function () {
+            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
             bulkCheckboxes.forEach(function (checkbox) {
               if (checkbox.disabled) return;
               checkbox.checked = bulkCheckAll.checked;
@@ -919,6 +943,7 @@
 
         if (bulkSelectAll) {
           bulkSelectAll.addEventListener('click', function () {
+            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
             bulkCheckboxes.forEach(function (checkbox) {
               if (checkbox.disabled) return;
               checkbox.checked = true;
@@ -929,6 +954,7 @@
 
         if (bulkClear) {
           bulkClear.addEventListener('click', function () {
+            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
             bulkCheckboxes.forEach(function (checkbox) {
               if (checkbox.disabled) return;
               checkbox.checked = false;
@@ -936,6 +962,23 @@
             if (bulkCheckAll) bulkCheckAll.checked = false;
             updateBulkState();
           });
+        }
+
+        if (batchCreateBtn) {
+          var batchForm = batchCreateBtn.closest('form');
+          if (batchForm) {
+            batchForm.addEventListener('submit', function () {
+              if (typeof window.__unpauseOSRefresh === 'function') window.__unpauseOSRefresh();
+            });
+          }
+        }
+        if (bulkSubmit) {
+          var bulkFormSubmit = bulkSubmit.closest('form');
+          if (bulkFormSubmit) {
+            bulkFormSubmit.addEventListener('submit', function () {
+              if (typeof window.__unpauseOSRefresh === 'function') window.__unpauseOSRefresh();
+            });
+          }
         }
 
         bulkColumns.forEach(function (element) {
@@ -964,44 +1007,74 @@
 
     (function () {
       var banner = document.querySelector("[data-auto-refresh-banner='1']");
-      if (!banner) return;
+      if (!banner) {
+        window.__pauseOSRefresh = function () {};
+        window.__unpauseOSRefresh = function () {};
+        return;
+      }
       var countdownEl = banner.querySelector("[data-countdown='1']");
       var toggleBtn = banner.querySelector("[data-toggle-refresh='1']");
       var pausedKey = 'os_detail_refresh_paused_' + String(window.location.pathname || '').replace(/[^0-9]/g, '');
       var secondsLeft = 6;
       var paused = sessionStorage.getItem(pausedKey) === '1';
+      var pausedByEditingKey = 'os_detail_refresh_pausedbyedit_' + String(window.location.pathname || '').replace(/[^0-9]/g, '');
+      var pausedByEditing = sessionStorage.getItem(pausedByEditingKey) === '1';
+
+      function savePaused() {
+        sessionStorage.setItem(pausedKey, (paused || pausedByEditing) ? '1' : '0');
+      }
 
       function applyPausedUI() {
         if (!countdownEl) return;
-        if (paused) {
+        var totalPaused = paused || pausedByEditing;
+        if (totalPaused) {
           countdownEl.textContent = '-';
           if (toggleBtn) {
-            toggleBtn.innerHTML = '▶ Retomar auto-refresh';
+            toggleBtn.innerHTML = (pausedByEditing ? '🔒 Modo edição (clique aqui para retomar)' : '▶ Retomar auto-refresh');
             toggleBtn.classList.remove('border-sky-400', 'text-sky-800', 'hover:bg-sky-100');
-            toggleBtn.classList.add('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100');
+            if (pausedByEditing) {
+              toggleBtn.classList.add('border-amber-500', 'bg-amber-50', 'text-amber-800', 'hover:bg-amber-100');
+            } else {
+              toggleBtn.classList.add('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100');
+            }
           }
         } else {
           if (toggleBtn) {
             toggleBtn.innerHTML = '⏸ Pausar auto-refresh';
             toggleBtn.classList.add('border-sky-400', 'text-sky-800', 'hover:bg-sky-100');
-            toggleBtn.classList.remove('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100');
+            toggleBtn.classList.remove('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100', 'border-amber-500', 'bg-amber-50', 'text-amber-800', 'hover:bg-amber-100');
           }
         }
       }
+
+      window.__pauseOSRefresh = function () {
+        pausedByEditing = true;
+        sessionStorage.setItem(pausedByEditingKey, '1');
+        savePaused();
+        applyPausedUI();
+      };
+      window.__unpauseOSRefresh = function () {
+        pausedByEditing = false;
+        sessionStorage.setItem(pausedByEditingKey, '0');
+        secondsLeft = 6;
+        savePaused();
+        applyPausedUI();
+      };
 
       applyPausedUI();
 
       if (toggleBtn) {
         toggleBtn.addEventListener('click', function () {
           paused = !paused;
-          sessionStorage.setItem(pausedKey, paused ? '1' : '0');
           if (!paused) secondsLeft = 6;
+          savePaused();
           applyPausedUI();
         });
       }
 
       setInterval(function () {
-        if (paused) return;
+        var totalPaused = paused || pausedByEditing;
+        if (totalPaused) return;
         secondsLeft -= 1;
         if (countdownEl) countdownEl.textContent = String(Math.max(0, secondsLeft));
         if (secondsLeft <= 0) {
