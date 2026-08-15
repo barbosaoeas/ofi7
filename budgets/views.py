@@ -5216,11 +5216,10 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
         batches_exist = self.object.batches.exists()
         if batches_exist:
-            running_batches = WorkOrderTaskBatch.objects.filter(
+            all_batches = WorkOrderTaskBatch.objects.filter(
                 work_order=self.object,
-                status=WorkOrderTaskBatch.Status.RUNNING,
             ).prefetch_related('tasks')
-            for b in running_batches:
+            for b in all_batches:
                 apply_batch_time_allocation(b, now=timezone.now())
 
         os_status = compute_work_order_status(self.object, now=now_local)
@@ -5411,34 +5410,76 @@ def apply_batch_time_allocation(batch, now=None):
     if batch is None or not getattr(batch, 'pk', None):
         return False, {}
     now = now or timezone.now()
-    if batch.status != WorkOrderTaskBatch.Status.RUNNING:
+
+    batch_status = getattr(batch, 'status', WorkOrderTaskBatch.Status.SCHEDULED)
+    if batch_status == WorkOrderTaskBatch.Status.DONE:
         return False, {}
 
     started_at_batch = getattr(batch, 'started_at', None)
     batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
-    # 🔧 FALLBACK para lotes criados no FASE1 (antes do rateio) que nao tinham batch.started_at gravado:
-    #    se houver tarefa RUNNING com last_started_at OU qualquer tarefa da batch tiver
-    #    started_at, usa a MINIMA delas como inicio global do lote. Atualiza o batch no banco.
-    if not started_at_batch:
-        if batch_tasks:
-            candidates = []
-            for t in batch_tasks:
-                lst = getattr(t, 'last_started_at', None)
-                cmp_t = getattr(t, 'completed_at', None)
-                if lst is not None:
-                    candidates.append(lst)
-                if cmp_t is not None:
-                    candidates.append(cmp_t)
-            if candidates:
-                started_at_batch = min(candidates)
-                try:
-                    batch.started_at = started_at_batch
-                    batch.save(update_fields=['started_at'])
-                except Exception:
-                    pass
-    if not started_at_batch:
-        return False, {}
     if not batch_tasks:
+        return False, {}
+
+    # 🔧 COLETA TODAS DATAS INDIVIDUAIS DAS PECAS (para fallback ou autostart):
+    task_candidates = []
+    any_task_running_or_done = False
+    any_task_actual = False
+    for t in batch_tasks:
+        lst = getattr(t, 'last_started_at', None)
+        cmp_t = getattr(t, 'completed_at', None)
+        actual_h = float(getattr(t, 'actual_hours', 0) or 0) or 0.0
+        if actual_h > 0:
+            any_task_actual = True
+        if lst is not None:
+            task_candidates.append(lst)
+            any_task_running_or_done = True
+        if cmp_t is not None:
+            task_candidates.append(cmp_t)
+            any_task_running_or_done = True
+        if getattr(t, 'status', '') in (WorkOrderTask.Status.RUNNING, WorkOrderTask.Status.DONE, WorkOrderTask.Status.PAUSED):
+            any_task_running_or_done = True
+
+    # 🔧 CASO ESPECIAL: batch.status ainda SCHEDULED ou PAUSED, mas PEÇAS já foram
+    #    iniciadas individualmente (modo antigo FASE1 / Leo clicou no card individual).
+    #    NESSE CASO, atualizamos o status do BATCH para RUNNING e started_at = MIN datas
+    #    das tarefas (para rateio continuar contando do 1º clique).
+    if batch_status == WorkOrderTaskBatch.Status.SCHEDULED or batch_status == WorkOrderTaskBatch.Status.PAUSED:
+        if any_task_running_or_done or any_task_actual:
+            if not started_at_batch and task_candidates:
+                started_at_batch = min(task_candidates)
+            elif not started_at_batch and batch_status != WorkOrderTaskBatch.Status.SCHEDULED:
+                started_at_batch = now
+            try:
+                changed_fields = []
+                if batch_status != WorkOrderTaskBatch.Status.RUNNING:
+                    batch.status = WorkOrderTaskBatch.Status.RUNNING
+                    changed_fields.append('status')
+                if getattr(batch, 'started_at', None) != started_at_batch and started_at_batch is not None:
+                    batch.started_at = started_at_batch
+                    if 'status' not in changed_fields:
+                        changed_fields.append('started_at')
+                    else:
+                        changed_fields.append('started_at')
+                if changed_fields:
+                    changed_fields.append('updated_at')
+                    batch.save(update_fields=changed_fields)
+            except Exception:
+                pass
+
+    batch_status = getattr(batch, 'status', WorkOrderTaskBatch.Status.SCHEDULED)
+    if batch_status != WorkOrderTaskBatch.Status.RUNNING:
+        return False, {}
+
+    # 🔧 FALLBACK (caso started_at ainda None em batch RUNNING recente, usar min tarefas):
+    if not started_at_batch:
+        if task_candidates:
+            started_at_batch = min(task_candidates)
+            try:
+                batch.started_at = started_at_batch
+                batch.save(update_fields=['started_at'])
+            except Exception:
+                pass
+    if not started_at_batch:
         return False, {}
 
     sorted_tasks = sorted(batch_tasks, key=lambda t: (getattr(t, 'order', 0) or 0, t.pk or 0))
