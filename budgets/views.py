@@ -10,6 +10,7 @@ from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from django.utils.text import slugify
 from django.views import View
 from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, UpdateView
@@ -5641,6 +5642,40 @@ class WorkOrderTaskBatchCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if len(selected_task_ids) < 2:
             messages.error(request, 'Para criar um lote, selecione ao menos 2 tarefas.')
             return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+
+        # 🔧 SYNC colaborador/datas das tarefas selecionadas (vindas dos selects/dates
+        # alterados NA TELA sem o usuario clicar em Salvar individual para cada tarefa).
+        # O JS do submit do form cria inputs hidden task_collab_NNN / task_date_NNN para
+        # cada checkbox marcada. Aplicamos no banco ANTES de validar as regras do lote,
+        # para validacao pegar colaborador ATUAL (nao do banco antigo).
+        for tid in selected_task_ids:
+            collab_raw = (request.POST.get(f'task_collab_{tid}') or '').strip()
+            date_raw = (request.POST.get(f'task_date_{tid}') or '').strip()
+            if not collab_raw and not date_raw:
+                continue
+            updates = {}
+            if collab_raw.isdigit():
+                try:
+                    cid = int(collab_raw)
+                    if Collaborator.objects.filter(pk=cid).exists():
+                        updates['collaborator_id'] = cid
+                except Exception:
+                    pass
+            if date_raw:
+                try:
+                    parsed_date = parse_date(date_raw)
+                    if parsed_date is not None:
+                        updates['scheduled_date'] = parsed_date
+                except Exception:
+                    pass
+            if updates:
+                try:
+                    WorkOrderTask.objects.filter(
+                        pk=tid,
+                        work_order_id=work_order.pk,
+                    ).update(**updates)
+                except Exception:
+                    pass
 
         tasks = list(
             WorkOrderTask.objects.filter(

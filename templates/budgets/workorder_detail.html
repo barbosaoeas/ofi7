@@ -320,7 +320,7 @@
         </div>
       </form>
 
-      <form method='post' action='{% url "budgets:workorder_batch_create" work_order.pk %}' class='mt-3 flex flex-wrap items-end gap-3 border-t border-slate-200 pt-3'>
+      <form method='post' action='{% url "budgets:workorder_batch_create" work_order.pk %}' data-batch-create-form='1' class='mt-3 flex flex-wrap items-end gap-3 border-t border-slate-200 pt-3'>
         {% csrf_token %}
         <input type='hidden' name='next' value='{{ request.get_full_path }}' />
         <input type='hidden' name='task_ids' value='' data-batch-create-task-ids='1' />
@@ -967,8 +967,43 @@
         if (batchCreateBtn) {
           var batchForm = batchCreateBtn.closest('form');
           if (batchForm) {
-            batchForm.addEventListener('submit', function () {
+            batchForm.addEventListener('submit', function (ev) {
+              // 🔧 Garante que os selects de colaborador e datas alteradas NA TELA
+              // sao enviados no POST do lote, MESMO SEM TER CLICADO em Salvar individual
+              // para cada tarefa selecionada (sincronizacao JS -> hidden inputs).
               if (typeof window.__unpauseOSRefresh === 'function') window.__unpauseOSRefresh();
+
+              // Remove inputs hidden de colaborador/date adicionados em submit anterior para evitar duplicatas
+              batchForm.querySelectorAll('input[data-batch-sync-collab], input[data-batch-sync-date]').forEach(function (x) { x.remove(); });
+
+              bulkCheckboxes.forEach(function (cb) {
+                if (!cb.checked) return;
+                var tr = cb.closest('tr[data-task-row="1"]');
+                if (!tr) return;
+                var taskId = String(cb.value || '').trim();
+                if (!taskId) return;
+                var sel = tr.querySelector('select[data-task-collaborator-select="' + taskId + '"]');
+                var collabValue = sel ? String(sel.value || '').trim() : '';
+                var dateInput = tr.querySelector('input[type="date"][name="scheduled_date"]');
+                var dateValue = dateInput ? String(dateInput.value || '').trim() : '';
+                if (collabValue) {
+                  var hid1 = document.createElement('input');
+                  hid1.type = 'hidden';
+                  hid1.name = 'task_collab_' + taskId;
+                  hid1.value = collabValue;
+                  hid1.setAttribute('data-batch-sync-collab', '1');
+                  batchForm.appendChild(hid1);
+                }
+                if (dateValue) {
+                  var hid2 = document.createElement('input');
+                  hid2.type = 'hidden';
+                  hid2.name = 'task_date_' + taskId;
+                  hid2.value = dateValue;
+                  hid2.setAttribute('data-batch-sync-date', '1');
+                  batchForm.appendChild(hid2);
+                }
+              });
+              // Nao previne submit - envia normalmente apos adicionar os sync inputs
             });
           }
         }
