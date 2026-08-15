@@ -45,7 +45,7 @@ from .calendar_utils import (
     BudgetStatus_AUTHORIZED,
 )
 from .forms import AdministrativeClosureForm, BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, XMLImportJob
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, WorkOrderTaskBatch, XMLImportJob
 from .services.cilia_import_service import CiliaImportDuplicateError, CiliaImportError, CiliaImportValidationError, import_cilia_xml_bytes
 
 
