@@ -435,6 +435,11 @@ def sync_office_managed_service_tasks(work_order):
             )
             continue
 
+        # PROTECAO ANTI-RESET (OS #592): Se a tarefa JA FOI INICIADA/PAUSADA/CONCLUIDA
+        # (status != SCHEDULED), NAO ALTERA status/completed/collaborator/REAL HOURS.
+        # Apenas atualiza metadados (description / planned_amount / scheduled_date).
+        task_is_scheduled_only = task.status == WorkOrderTask.Status.SCHEDULED
+
         if task.description != description:
             task.description = description
             update_fields.append('description')
@@ -445,13 +450,14 @@ def sync_office_managed_service_tasks(work_order):
             if task.scheduled_date != linked_service.scheduled_date:
                 task.scheduled_date = linked_service.scheduled_date
                 update_fields.append('scheduled_date')
-            mapped_status = map_third_party_status_to_task_status(linked_service.status)
-            if task.status == WorkOrderTask.Status.SCHEDULED and mapped_status != task.status:
-                task.status = mapped_status
-                update_fields.append('status')
-            if linked_service.status == ThirdPartyService.Status.DONE and task.completed_at != linked_service.completed_at:
-                task.completed_at = linked_service.completed_at
-                update_fields.append('completed_at')
+            if task_is_scheduled_only:
+                mapped_status = map_third_party_status_to_task_status(linked_service.status)
+                if mapped_status != task.status:
+                    task.status = mapped_status
+                    update_fields.append('status')
+                if linked_service.status == ThirdPartyService.Status.DONE and task.completed_at != linked_service.completed_at:
+                    task.completed_at = linked_service.completed_at
+                    update_fields.append('completed_at')
         if update_fields:
             task.save(update_fields=sorted(set(update_fields)))
 
@@ -5045,7 +5051,6 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         sync_xml_third_party_services(self.object.budget)
-        sync_office_managed_service_tasks(self.object)
         tasks_open = self.object.tasks.exclude(status=WorkOrderTask.Status.DONE).select_related('collaborator')
         tasks_done = self.object.tasks.filter(status=WorkOrderTask.Status.DONE).select_related('collaborator')
         visible_third_party = get_visible_third_party_services(self.object.budget)
@@ -5525,7 +5530,6 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
         work_order = get_budget_work_order(self.object)
         if work_order is not None:
             sync_xml_third_party_services(self.object)
-            sync_office_managed_service_tasks(work_order)
         context['pieces_parts'] = self.object.pieces.all()
         context['photos'] = self.object.photos.all()
         context['third_party_form'] = ThirdPartyServiceForm()
