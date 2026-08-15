@@ -5413,17 +5413,38 @@ def apply_batch_time_allocation(batch, now=None):
     now = now or timezone.now()
     if batch.status != WorkOrderTaskBatch.Status.RUNNING:
         return False, {}
-    if not getattr(batch, 'started_at', None):
-        return False, {}
 
+    started_at_batch = getattr(batch, 'started_at', None)
     batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
+    # 🔧 FALLBACK para lotes criados no FASE1 (antes do rateio) que nao tinham batch.started_at gravado:
+    #    se houver tarefa RUNNING com last_started_at OU qualquer tarefa da batch tiver
+    #    started_at, usa a MINIMA delas como inicio global do lote. Atualiza o batch no banco.
+    if not started_at_batch:
+        if batch_tasks:
+            candidates = []
+            for t in batch_tasks:
+                lst = getattr(t, 'last_started_at', None)
+                cmp_t = getattr(t, 'completed_at', None)
+                if lst is not None:
+                    candidates.append(lst)
+                if cmp_t is not None:
+                    candidates.append(cmp_t)
+            if candidates:
+                started_at_batch = min(candidates)
+                try:
+                    batch.started_at = started_at_batch
+                    batch.save(update_fields=['started_at'])
+                except Exception:
+                    pass
+    if not started_at_batch:
+        return False, {}
     if not batch_tasks:
         return False, {}
 
     sorted_tasks = sorted(batch_tasks, key=lambda t: (getattr(t, 'order', 0) or 0, t.pk or 0))
 
     allow_overtime_batch = bool(getattr(batch, 'collaborator', None))
-    delta_total_s, _eff_end = capped_work_delta_seconds(batch.started_at, now, allow_overtime_batch)
+    delta_total_s, _eff_end = capped_work_delta_seconds(started_at_batch, now, allow_overtime_batch)
     elapsed_total_s = max(int(delta_total_s or 0), 0)
 
     total_done = 0
@@ -5467,14 +5488,14 @@ def apply_batch_time_allocation(batch, now=None):
                 # Marca ela como RUNNING (ainda que estivesse SCHEDULED)
                 if t.status != WorkOrderTask.Status.RUNNING:
                     t.status = WorkOrderTask.Status.RUNNING
-                    t.last_started_at = batch.started_at
+                    t.last_started_at = started_at_batch
                     t.elapsed_seconds = int(getattr(t, 'elapsed_seconds', 0) or 0)
                     tasks_to_save.append(t)
                 else:
                     # Ja esta RUNNING, so confirma last_started_at = started_at do batch
                     # se nao tiver (mantem individual do clique)
                     if not getattr(t, 'last_started_at', None):
-                        t.last_started_at = batch.started_at
+                        t.last_started_at = started_at_batch
                         tasks_to_save.append(t)
                 cumulative_s = planned_end_s
             else:
