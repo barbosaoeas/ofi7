@@ -125,6 +125,7 @@ class WorkOrderStatusSummary:
     state_priority: int
     section_label: str
     start_display: Optional[str]
+    should_auto_refresh: bool = False
 
 
 def budget_has_pending_shop_parts(budget) -> bool:
@@ -193,6 +194,16 @@ def compute_work_order_status(work_order, now: Optional[datetime] = None) -> Wor
     running_tasks = [t for t in tasks if getattr(t, "status", None) == TaskStatus_RUNNING]
     paused_tasks = [t for t in tasks if getattr(t, "status", None) == TaskStatus_PAUSED]
     scheduled_tasks = [t for t in tasks if getattr(t, "status", None) == TaskStatus_SCHEDULED]
+
+    has_batches = False
+    if work_order and work_order.pk:
+        batches_rel = getattr(work_order, "batches", None)
+        if batches_rel is not None:
+            try:
+                has_batches = batches_rel.exists()
+            except Exception:
+                has_batches = False
+    should_auto_refresh = bool(has_batches or running_tasks)
 
     active_task = None
     if running_tasks:
@@ -276,6 +287,7 @@ def compute_work_order_status(work_order, now: Optional[datetime] = None) -> Wor
         state_priority=state_priority,
         section_label=section_label,
         start_display=start_display,
+        should_auto_refresh=should_auto_refresh,
     )
 
 
