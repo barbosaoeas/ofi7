@@ -3,7 +3,7 @@ from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
-from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Sum, Value, When
+from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
@@ -3867,6 +3867,61 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return ctx
 
 
+def close_work_order_if_all_done(work_order):
+    """
+    Fecha automaticamente a WorkOrder (OS) se, e somente se,
+    a ULTIMA tarefa existente na OS (maior order) estiver DONE
+    E alem disso NAO HA NENHUMA tarefa pendente.
+
+    Regra conforme o usuario (sistema de producao - OS #592):
+        "A OS so pode ser finalizada apos a ultima tarefa QUE ESTIVER NELA for concluida.
+         Nao importa a etapa: se o cliente so contratou Desmontagem (1 etapa = order=1, a ultima
+         da OS), entao quando ela ficar DONE fecha e inativa a OS imediatamente."
+
+    Retorna True se a OS foi FECHADA agora; False caso contrario.
+    """
+    if work_order is None:
+        return False
+    if work_order.status == WorkOrder.Status.CLOSED:
+        return False
+
+    # PASSO 1: Achar a ORDER MÁXIMA existente DENTRO das tarefas da OS
+    max_order = (
+        WorkOrderTask.objects
+        .filter(work_order_id=work_order.pk)
+        .aggregate(max_order=Max('order'))
+        ['max_order']
+    )
+    if max_order is None:
+        return False
+
+    # PASSO 2: Pegar a tarefa da order MÁXIMA (a "última" da OS existente)
+    last_task = (
+        WorkOrderTask.objects
+        .filter(work_order_id=work_order.pk, order=max_order)
+        .only('status')
+        .first()
+    )
+    if last_task is None or last_task.status != WorkOrderTask.Status.DONE:
+        # Ultima tarefa da os NAO FOI CONCLUIDA ainda -> nao fecha nunca!
+        return False
+
+    # PASSO 3 (Blindagem): Garantir que NAO EXISTA nenhuma tarefa aberta
+    # (seguranca extra para nao fechar OS com tarefa pending ainda existente)
+    pending = (
+        WorkOrderTask.objects
+        .filter(work_order_id=work_order.pk)
+        .exclude(status=WorkOrderTask.Status.DONE)
+        .exists()
+    )
+    if pending:
+        return False
+
+    work_order.status = WorkOrder.Status.CLOSED
+    work_order.save(update_fields=['status', 'updated_at'])
+    return True
+
+
 def resolve_collaborator_from_user(user) -> Collaborator | None:
     """
     Resolve o objeto Collaborator associado a um CustomUser.
@@ -4702,7 +4757,12 @@ class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
                     base_amount=base_amount,
                     commission_amount=commission_amount,
                 )
-        messages.success(request, 'Tarefa finalizada.')
+        # ============= FECHA A OS AUTOMATICAMENTE SE TODAS TAREFAS FOREM DONE =============
+        closed = close_work_order_if_all_done(task.work_order)
+        if closed:
+            messages.success(request, f'Tarefa finalizada. OS #{task.work_order.budget.display_number} foi FECHADA (todas etapas concluídas).')
+        else:
+            messages.success(request, 'Tarefa finalizada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
             return redirect(next_url)
