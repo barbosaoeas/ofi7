@@ -32,15 +32,15 @@ Precisão Financeira : Automatizar o cálculo de comissões por tarefa concluíd
 
 3. Requisitos Funcionais (RF)
 
-Status de Implementação (14/08/2026)
+Status de Implementação (15/08/2026)
 
-- [x] RF01 - Autenticação Customizada e Nível de Acesso (login por e-mail ativo; cards de acessos recentes com seleção rápida e foco direto na senha)
+- [x] RF01 - Autenticação Customizada e Nível de Acesso (login por e-mail ativo; cards de acessos recentes com seleção rápida e foco direto na senha; role EXTRA VISUAL para Smart TV com exceção de senha fraca permitida)
 - [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; aprovação com modal financeiro; controle de entrega, finalização administrativa e filtro entre aprovados e entregues; ajustes finos ainda podem surgir)
 - [x] RF03 - Importação de XML Cilia
 - [x] RF04 - Gestão de Peças (CRUD + compra/prev. chegada/chegada/atraso + relatório/impressão)
 - [~] RF05 - Cadastro de Atividades e Comissões (cadastro de serviços + comissão por serviço e relatório; correlação automática por nome + seleção manual na OS)
 - [~] RF06 - Ordem de Serviço (O.S.) e Escalonamento Operacional (OS com agendamento por tarefa/colaborador/data/status; seção de terceiros integrada à OS; checkbox Oficina e sincronização com tarefas internas; fechamento administrativo para implantação já disponível; falta agendamento sequencial por hora e algumas regras avançadas)
-- [~] RF07 - Kanban Produtivo Dinâmico (por data; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh; bloqueio por predecessora da mesma peça/item)
+- [~] RF07 - Kanban Produtivo Dinâmico (2 telas OFICIAIS separadas: (1) Kanban do DIA por data `/kanban/` → running + scheduled para HOJE = usado dia-a-dia dos operadores; (2) Kanban VISUAL Pipeline `/kanban/tv/` → running + scheduled_até_hoje + não-agendados = mostra TODO pipeline da oficina e fica na Smart TV; botão 📺 "Abrir Tela TV" no header do Kanban Normal abre a tela 2 em nova aba; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh; bloqueio por predecessora da mesma peça/item; perfil VISUAL exclusivo para Smart TV com fullscreen auto, botões de trocar senha/sair e sem interação dos operadores)
 - [~] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais) (modal de aprovação financeira implementado; entrega com validação financeira implementada; falta o modal final de quitação/previsão no ato da entrega)
 - [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard financeiro com filtros e links de pendência; demais relatórios e consolidações ainda pendentes)
 
@@ -62,6 +62,19 @@ Incrementos recentes já entregues
 - Bloqueio operacional estrito: NÃO permite uso da finalização administrativa se a OS já tiver QUALQUER tarefa RUNNING, PAUSED ou DONE. (Protege uso indevido no dia-a-dia após implantação.)
 - Modal de finalização administrativa com confirmação dupla (onsubmit confirm()) e checkbox obrigatório "Confirmo que este fechamento não deve gerar comissão." antes de submit.
 - Blindagem transacional extra: dentro do transaction.atomic() da finalização administrativa, qualquer tarefa PENDING remanescente é automaticamente marcada DONE (sem horas) com completed_at/completed_by, evitando inconsistência de OS CLOSED com tarefas abertas no histórico.
+- Role VISUAL (Smart TV): Perfil exclusivo para exibir o Kanban do dia na TV do pátio sem ações de edição/iniciar/pausar. Permite exceção de senha fraca (ex: `123456` / `tv1234`) para facilitar login rápido na TV. SENHA FRACA NUNCA permitida para SUPERUSUÁRIOS (mesmo com role=VISUAL), por segurança.
+- Header Perfil VISUAL (no `/kanban/`): Botões de "Trocar senha", "Tela cheia" e "Sair (Logout)" + Relógio em tempo real (HH:MM:SS). Ao abrir a página, automaticamente tenta entrar em fullscreen (ou no 1º clique/toque se a política do navegador exigir interação).
+- Regra estrita do KANBAN DO DIA (tela principal `/kanban/` — DIA-A-DIA dos operadores):
+  - (a) Sempre mostra tarefas com status=RUNNING (independente de data, estão em andamento mesmo se começaram ontem);
+  - (b) Mostra tarefas SCHEDULED / PAUSED SOMENTE SE scheduled_date = dia selecionado (HOJE por padrão). Não mostra atrasados agendados para datas passadas, não mostra tarefas SEM scheduled_date (essas ficam na tela da TV);
+  - (c) Sábado (weekday=5) é considerado dia útil para exibição do Kanban (Domingo fica só RUNNING).
+- TELA 2 DO KANBAN — OFICIALMENTE IMPLEMENTADA: `/kanban/tv/` → Nome: "Kanban Visual (Pipeline completo)". Esta é a tela para colocar NA SMART TV do pátio, e mostra:
+  - (a) TUDO RUNNING (igual Kanban normal);
+  - (b) Tarefas SCHEDULED / PAUSED agendadas para qualquer data ≤ hoje (incluindo atrasados);
+  - (c) Tarefas SCHEDULED / PAUSED COM scheduled_date NULO (nunca agendadas, todas as 114 O.S. pipeline, gargalos etc);
+  - Usa o mesmo template do Kanban normal, mas força `is_visual_mode=True` (botões de Trocar Senha/Sair/Tela Cheia + Fullscreen automático + relógio + botão "← Kanban Normal" para voltar).
+  - Qualquer usuário logado (MANAGER/OPERATIONAL/VISUAL) pode acessar. Um botão 📺 "Abrir Tela TV" no header do Kanban Normal linka para `/kanban/tv/` em aba nova (target=_blank).
+- TELA FUTURA (backlog, não implementada ainda): `/kanban/geral/` → visão de diagnóstico adicional se necessário.
 
 RF01 - Autenticação Customizada e Nível de Acesso
 
@@ -69,9 +82,11 @@ O sistema deve usar o motor nativo do Django, utilizando o E-mail como identific
 
 Cadastro público inicial de usuários com direcionamento para a tela de login.
 
-Níveis de acesso baseados em grupos/funções nativas do Django: Gerente, Financeiro, Orçamentista, Operacional.
+Níveis de acesso baseados em grupos/funções nativas do Django: Gerente, Financeiro, Orçamentista, Operacional, VISUAL (Smart TV).
 
 A tela de login deve exibir cards de acessos recentes salvos no navegador, permitindo selecionar rapidamente o usuário e informar apenas a senha.
+
+Perfil exclusivo VISUAL (Smart TV): Permite exceção de senha fraca para facilitar login rápido em TV. O validador de senha deve aplicar todas as regras de senha forte (mínimo 8 caracteres, não numérica, similaridade de atributos, senhas comuns) para TODOS os perfis, EXCETO quando user.role=VISUAL (e user.is_superuser=False). Superusuários NUNCA podem ter senha fraca, mesmo com role=VISUAL.
 
 RF02 - Agenda e Gestão de Orçamentos
 
@@ -140,6 +155,16 @@ Deve existir um fluxo excepcional de finalização administrativa para implanta�
 (d) fecha WorkOrder.status=CLOSED e marca tarefas PENDING como DONE transacionalmente, mantendo histórico consistente.
 
 RF07 - Kanban Produtivo Dinâmico
+
+O Kanban operacional possui **DUAS telas distintas** (atualmente 1 implementada, 1 no backlog):
+
+**1) Kanban DO DIA (implementado, URL `/kanban/`)** → Tela diária usada por operadores e Smart TV (perfil VISUAL). Regra estrita de exibição:
+- (a) Sempre mostra tarefas status=RUNNING (independente de data, estão em execução);
+- (b) Mostra tarefas SCHEDULED / PAUSED **SOMENTE SE scheduled_date = dia selecionado** (HOJE por padrão). Não mostra atrasados agendados para datas passadas.
+- (c) Sábado é dia útil (weekday<6), Domingo (weekday=6) só mostra RUNNING.
+- Perfil VISUAL (Smart TV): Header com relógio HH:MM:SS atualizado a cada 1s, botões "Trocar senha / Tela cheia / Sair (Logout)", Auto-fullscreen automático após load (ou no 1º clique/toque), sem iniciar/pausar/finalizar ações.
+
+**2) Kanban GERAL (FUTURO / backlog, URL `/kanban/geral/`)** → Tela gerencial de diagnóstico. Mostra TODAS as tarefas contratadas, pendentes, pausadas e em andamento, INDEPENDENTEMENTE da data de agendamento. Objetivo: identificação de gargalos, fila de espera global e backlog de produção.
 
 Colunas fixas da esquerda para a direita: Patio , Desmontagem , Funilaria , Preparação , Pintura , Montagem , Polimento , Prep Entrega .
 

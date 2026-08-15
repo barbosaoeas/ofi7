@@ -63,7 +63,14 @@ class CustomLoginView(LoginView):
             and not getattr(user, 'is_superuser', False)
             and getattr(user, 'role', None) == CustomUser.Role.VISUAL
         ):
-            return reverse('budgets:kanban_today')
+            return reverse('budgets:kanban_tv')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+        ):
+            return reverse('budgets:kanban_my_tasks')
         return super().get_success_url()
 
     def form_valid(self, form):

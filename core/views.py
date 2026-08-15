@@ -34,7 +34,14 @@ class RoleRequiredMixin:
             and not getattr(user, 'is_superuser', False)
             and getattr(user, 'role', None) == CustomUser.Role.VISUAL
         ):
-            return redirect('budgets:kanban_today')
+            return redirect('budgets:kanban_tv')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+        ):
+            return redirect('budgets:kanban_my_tasks')
         return redirect('core:dashboard')
 
 
@@ -53,7 +60,14 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             and not getattr(user, 'is_superuser', False)
             and getattr(user, 'role', None) == CustomUser.Role.VISUAL
         ):
-            return redirect('budgets:kanban_today')
+            return redirect('budgets:kanban_tv')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+        ):
+            return redirect('budgets:kanban_my_tasks')
         return super().dispatch(request, *args, **kwargs)
 
     def _parse_month_context(self):

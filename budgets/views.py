@@ -3,7 +3,8 @@ from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import transaction
-from django.db.models import Count, Exists, OuterRef
+from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
@@ -3866,6 +3867,30 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return ctx
 
 
+def resolve_collaborator_from_user(user) -> Collaborator | None:
+    """
+    Resolve o objeto Collaborator associado a um CustomUser.
+
+    O sistema atual NAO possui ForeignKey direta entre CustomUser e Collaborator.
+    O vínculo padrão é através do EMAIL IGUAL (CustomUser.email == Collaborator.email),
+    com fallback por NOME exato caso o email nao esteja cadastrado.
+    Retorna None se não houver nenhum colaborador associado.
+    """
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return None
+    email = (getattr(user, 'email', '') or '').strip()
+    if email:
+        by_email = Collaborator.objects.filter(email__iexact=email).first()
+        if by_email is not None:
+            return by_email
+    name = (getattr(user, 'name', '') or '').strip() or (getattr(user, 'first_name', '') or '').strip()
+    if name:
+        by_name = Collaborator.objects.filter(name__iexact=name).first()
+        if by_name is not None:
+            return by_name
+    return None
+
+
 class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     model = WorkOrderTask
     template_name = 'budgets/kanban_today.html'
@@ -3877,6 +3902,24 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         CustomUser.Role.OPERATIONAL,
         CustomUser.Role.VISUAL,
     )
+
+    def dispatch(self, request, *args, **kwargs):
+        user = getattr(request, 'user', None)
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.VISUAL
+        ):
+            return redirect('budgets:kanban_tv')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
+        ):
+            return redirect('budgets:kanban_my_tasks')
+        return super().dispatch(request, *args, **kwargs)
 
     def _next_workday(self, day):
         next_day = day + timedelta(days=1)
@@ -3951,7 +3994,14 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         is_workday = selected.weekday() < 6
         q = Q(status=WorkOrderTask.Status.RUNNING)
         if is_workday:
-            q = q | Q(scheduled_date=selected)
+            q = q | Q(
+                status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
+                scheduled_date=selected,
+            )
+        q = q | Q(
+            status=WorkOrderTask.Status.DONE,
+            completed_at__date=selected,
+        )
         return (
             super()
             .get_queryset()
@@ -3963,7 +4013,6 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
             )
             .filter(q)
             .filter(Q(work_order__budget__entry_date__isnull=True) | Q(work_order__budget__entry_date__lte=selected))
-            .exclude(status=WorkOrderTask.Status.DONE)
             .order_by('activity', 'order', 'id')
         )
 
@@ -4024,6 +4073,12 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 .exclude(status=WorkOrderTask.Status.DONE)
                 .values_list('work_order_id', flat=True)
             )
+        busy_work_order_ids |= set(
+            WorkOrderTask.objects.filter(
+                status=WorkOrderTask.Status.DONE,
+                completed_at__date=selected,
+            ).values_list('work_order_id', flat=True)
+        )
 
         patio_work_orders = (
             WorkOrder.objects.select_related('budget', 'budget__vehicle', 'budget__customer')
@@ -4123,6 +4178,271 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return context
 
 
+class WorkOrderKanbanVisualView(WorkOrderKanbanTodayView):
+    """
+    Kanban VISUAL (Smart TV) — MESMO conteúdo do Kanban do DIA, mas com interface
+    100% limpa, SEM sidebar/navbar do sistema, só para os operadores visualizarem
+    as tarefas de hoje na TV do pátio.
+    """
+
+    allowed_roles = WorkOrderKanbanTodayView.allowed_roles
+    template_name = 'budgets/kanban_tv.html'
+
+    def get_queryset(self):
+        today = timezone.localdate()
+        raw = (self.request.GET.get('date') or '').strip()
+        selected = today
+        if raw:
+            try:
+                selected = date.fromisoformat(raw)
+            except ValueError:
+                selected = today
+        is_workday = selected.weekday() < 6
+        q = Q(status=WorkOrderTask.Status.RUNNING)
+        if is_workday:
+            q = q | Q(
+                status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
+                scheduled_date=selected,
+            )
+        # ====== REGRA DE DONE: SÓ MOSTRA TAREFA CONCLUÍDA NO DIA SELECIONADO ======
+        q = q | Q(status=WorkOrderTask.Status.DONE, completed_at__date=selected)
+        return (
+            super(WorkOrderKanbanTodayView, self)
+            .get_queryset()
+            .select_related(
+                'work_order',
+                'work_order__budget',
+                'work_order__budget__vehicle',
+                'collaborator',
+            )
+            .filter(q)
+            .filter(Q(work_order__budget__entry_date__isnull=True) | Q(work_order__budget__entry_date__lte=selected))
+            .order_by('activity', 'order', 'id')
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['is_visual_mode'] = True
+        return context
+
+
+class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+    """
+    Tela MOBILE dos COLABORADORES OPERACIONAIS.
+    - Mobile-first: cards verticais, botões GRANDES full width.
+    - NÃO reutiliza o layout do kanban gerencial (8 colunas horizontais).
+    - SÓ mostra as TAREFAS DO COLABORADOR LOGADO (collaborator == request.user).
+    - Regras do queryset:
+        * RUNNING de qualquer dia (ex: tarefa iniciada ontem)
+        * SCHEDULED / PAUSED com scheduled_date == HOJE
+    - TAMBÉM mostra no rodapé:
+        * Tarefas CONCLUÍDAS HOJE (com o valor de comissão para engajamento)
+        * TOTAL DAS COMISSÕES GANHAS HOJE (R$ X,XX)
+    """
+
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
+    model = WorkOrderTask
+    context_object_name = 'tasks'
+    template_name = 'budgets/kanban_operacional.html'
+    paginate_by = None
+
+    def _resolve_collaborator(self, user):
+        return resolve_collaborator_from_user(user)
+
+    def dispatch(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return self.handle_no_permission()
+        collab = self._resolve_collaborator(request.user)
+        if collab is None and not request.user.is_superuser and not request.user.role in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE):
+            messages.error(
+                request,
+                'Usuário não vinculado a um colaborador. Solicite ao gerente que cadastre o seu email igual no cadastro de Colaboradores.',
+            )
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self):
+        today = timezone.localdate()
+        collaborator = self._resolve_collaborator(self.request.user)
+        q = (
+            Q(status=WorkOrderTask.Status.RUNNING)
+            | (
+                Q(
+                    status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
+                    scheduled_date=today,
+                )
+            )
+        )
+        base_filter = Q(collaborator=collaborator) if collaborator else Q(pk__in=[])
+        return (
+            WorkOrderTask.objects.select_related(
+                'work_order',
+                'work_order__budget',
+                'work_order__budget__vehicle',
+                'work_order__budget__customer',
+                'collaborator',
+                'service',
+            )
+            .filter(base_filter)
+            .filter(q)
+            .order_by(
+                Case(
+                    When(status=WorkOrderTask.Status.RUNNING, then=Value(0)),
+                    When(status=WorkOrderTask.Status.PAUSED, then=Value(1)),
+                    default=Value(2),
+                    output_field=IntegerField(),
+                ),
+                'scheduled_date',
+                'activity',
+                'order',
+                'id',
+            )
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        today = timezone.localdate()
+        now = timezone.now()
+
+        today_label = f'{today.strftime("%A")} · {today.strftime("%d/%m/%Y")}'
+        context['today_label'] = today_label
+        context['now_hms'] = now.strftime('%H:%M:%S')
+
+        user = self.request.user
+        collaborator = self._resolve_collaborator(user)
+        context['collaborator'] = collaborator
+        context['collaborator_unlinked'] = collaborator is None and not user.is_superuser and user.role not in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+        tasks = list(context['tasks'])
+        other_running = None
+        if collaborator:
+            other_running = (
+                WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
+                .filter(
+                    collaborator=collaborator,
+                    status=WorkOrderTask.Status.RUNNING,
+                )
+                .exclude(pk__in=[t.pk for t in tasks])
+                .order_by('id')
+                .first()
+            )
+        running_count = 0
+        if any(t.status == WorkOrderTask.Status.RUNNING for t in tasks):
+            running_count = sum(1 for t in tasks if t.status == WorkOrderTask.Status.RUNNING)
+        elif other_running:
+            running_count = 1
+        context['has_other_running'] = bool(running_count > 0)
+        context['other_running_task'] = other_running
+
+        for task in tasks:
+            task.display_status_label = simplify_task_status_label(task.status)
+            task.display_elapsed_seconds = int(task.elapsed_seconds or 0)
+            if task.status == WorkOrderTask.Status.RUNNING and task.last_started_at:
+                delta, _ = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
+                task.display_elapsed_seconds += int(delta)
+            task.display_elapsed_hms = seconds_to_hms(task.display_elapsed_seconds)
+            try:
+                budget = task.work_order.budget
+                vehicle = budget.vehicle
+                customer_name = budget.customer.name if budget.customer else ''
+                plate = vehicle.plate if vehicle else ''
+                task.display_budget_number = budget.display_number
+                task.display_customer = customer_name
+                task.display_plate = plate
+            except Exception:
+                task.display_budget_number = getattr(task.work_order, 'id', '-')
+                task.display_customer = ''
+                task.display_plate = ''
+
+            if not collaborator:
+                task.estimated_commission = Decimal('0')
+            else:
+                function_ok = collaborator.function not in (
+                    Collaborator.Function.MANAGER,
+                    Collaborator.Function.FINANCE,
+                )
+                if not function_ok:
+                    task.estimated_commission = Decimal('0')
+                else:
+                    base_amount = task.planned_amount or Decimal('0')
+                    service = task.service
+                    if service and service.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
+                        percent = Decimal(service.commission_value or 0)
+                        task.estimated_commission = (base_amount * (percent / Decimal('100'))).quantize(
+                            Decimal('0.01'), rounding=ROUND_HALF_UP
+                        )
+                    elif service and service.commission_mode == ServiceCatalog.CommissionMode.FIXED:
+                        task.estimated_commission = Decimal(service.commission_value or 0).quantize(
+                            Decimal('0.01'), rounding=ROUND_HALF_UP
+                        )
+                    else:
+                        percent = Decimal(collaborator.commission_percent or 0)
+                        task.estimated_commission = (base_amount * (percent / Decimal('100'))).quantize(
+                            Decimal('0.01'), rounding=ROUND_HALF_UP
+                        )
+
+            # ========== OVERTIME (ATRASO vs PLANEJADO) ==========
+            planned_s = None
+            if getattr(task, 'planned_hours', None):
+                try:
+                    planned_s = int(float(task.planned_hours) * 3600)
+                except Exception:
+                    planned_s = None
+            task.display_planned_seconds = planned_s
+            elapsed_s = int(getattr(task, 'display_elapsed_seconds', 0) or 0)
+            task.is_overdue = bool(planned_s and elapsed_s > planned_s)
+            if task.is_overdue:
+                task.overtime_seconds = elapsed_s - planned_s
+                task.overtime_hms = seconds_to_hms(task.overtime_seconds)
+                # Exibe o tempo previsto e executado para facilitar o banner
+                task.overtime_planned_hms = seconds_to_hms(planned_s)
+                task.overtime_elapsed_hms = seconds_to_hms(elapsed_s)
+            else:
+                task.overtime_seconds = 0
+                task.overtime_hms = ''
+                task.overtime_planned_hms = ''
+                task.overtime_elapsed_hms = ''
+
+        done_today = []
+        total_commission_today = Decimal('0')
+        if collaborator:
+            done_today_qs = (
+                WorkOrderTask.objects.select_related('work_order', 'work_order__budget', 'service')
+                .filter(
+                    collaborator=collaborator,
+                    status=WorkOrderTask.Status.DONE,
+                    completed_at__date=today,
+                )
+                .order_by('-completed_at')
+            )
+            for t in done_today_qs:
+                try:
+                    budget = t.work_order.budget
+                    vehicle = budget.vehicle
+                    customer_name = budget.customer.name if budget.customer else ''
+                    plate = vehicle.plate if vehicle else ''
+                    t.display_budget_number = budget.display_number
+                    t.display_customer = customer_name
+                    t.display_plate = plate
+                except Exception:
+                    t.display_budget_number = getattr(t.work_order, 'id', '-')
+                    t.display_customer = ''
+                    t.display_plate = ''
+                t.display_elapsed_hms = seconds_to_hms(int(t.elapsed_seconds or 0))
+                commission_sum = (
+                    CommissionLine.objects.filter(task=t, collaborator=collaborator).aggregate(
+                        total=Coalesce(Sum('commission_amount'), Decimal('0'))
+                    )['total']
+                    or Decimal('0')
+                )
+                t.display_commission_today = commission_sum
+                total_commission_today += commission_sum
+                done_today.append(t)
+
+        context['done_today'] = done_today
+        context['total_commission_today'] = total_commission_today
+        return context
+
+
 class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
 
@@ -4130,6 +4450,49 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
         task = WorkOrderTask.objects.select_related('collaborator', 'work_order', 'work_order__budget').filter(pk=pk).first()
         if task is None:
             raise Http404('Tarefa não encontrada.')
+
+        # --------------------------
+        # REGRA DE NAO SIMULTANEIDADE (BACK-END / SEGURANCA REAL):
+        # Se colaborador da tarefa JA TEM OUTRA tarefa RUNNING em QUALQUER lugar
+        # (mesmo que de outra OS ou nao listada no kanban), NÃO DEIXA INICIAR.
+        # IMPOSSÍVEL de burlar por link/Postman/JS manual.
+        # --------------------------
+        if task.collaborator_id:
+            has_other_running = (
+                WorkOrderTask.objects.filter(
+                    collaborator_id=task.collaborator_id,
+                    status=WorkOrderTask.Status.RUNNING,
+                )
+                .exclude(pk=task.pk)
+                .exists()
+            )
+            if has_other_running:
+                other_task = (
+                    WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
+                    .filter(
+                        collaborator_id=task.collaborator_id,
+                        status=WorkOrderTask.Status.RUNNING,
+                    )
+                    .exclude(pk=task.pk)
+                    .order_by('id')
+                    .first()
+                )
+                other_label = ''
+                if other_task:
+                    try:
+                        bn = other_task.work_order.budget.display_number
+                    except Exception:
+                        bn = getattr(other_task.work_order, 'id', '?')
+                    other_label = f' OS #{bn} ({other_task.get_activity_display()})'
+                messages.error(
+                    request,
+                    'Não é permitido trabalhar em 2 tarefas ao mesmo tempo. '
+                    f'Pausar ou Finalize primeiro a tarefa em andamento:{other_label or " (tarefa ativa)"}.',
+                )
+                next_url = (request.POST.get('next') or '').strip()
+                if next_url:
+                    return redirect(next_url)
+                return redirect('budgets:kanban_today')
 
         budget = getattr(task.work_order, 'budget', None)
         if budget and getattr(budget, 'status', '') == BudgetStatus_AUTHORIZED:
