@@ -3860,14 +3860,32 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 'tasks',
                 'tasks__collaborator',
                 'budget__pieces',
+                'batches',
+                'batches__tasks',
             )
         )
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         now_local = timezone.localtime(timezone.now())
+        now_utc = timezone.now()
         paired = []
         for wo in ctx['work_orders']:
+            # 🔧 Aplica rateio de LOTES ANTES de calcular os_status (lista OS).
+            # Atualiza status INDIVIDUAIS das pecas das tarefas -> muda status geral OS
+            # de (N) iniciado -> (I) iniciado -> (P) progresso -> (C) concluido etc.
+            batches_rel = getattr(wo, 'batches', None)
+            if batches_rel is not None:
+                try:
+                    all_batches = list(batches_rel.all())
+                except Exception:
+                    all_batches = []
+                if all_batches:
+                    for b in all_batches:
+                        try:
+                            apply_batch_time_allocation(b, now=now_utc)
+                        except Exception:
+                            pass
             paired.append((wo, compute_work_order_status(wo, now=now_local)))
         ctx['work_orders_with_status'] = paired
         return ctx
