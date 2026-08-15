@@ -3861,32 +3861,14 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 'tasks',
                 'tasks__collaborator',
                 'budget__pieces',
-                'batches',
-                'batches__tasks',
             )
         )
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         now_local = timezone.localtime(timezone.now())
-        now_utc = timezone.now()
         paired = []
         for wo in ctx['work_orders']:
-            # 🔧 Aplica rateio de LOTES ANTES de calcular os_status (lista OS).
-            # Atualiza status INDIVIDUAIS das pecas das tarefas -> muda status geral OS
-            # de (N) iniciado -> (I) iniciado -> (P) progresso -> (C) concluido etc.
-            batches_rel = getattr(wo, 'batches', None)
-            if batches_rel is not None:
-                try:
-                    all_batches = list(batches_rel.all())
-                except Exception:
-                    all_batches = []
-                if all_batches:
-                    for b in all_batches:
-                        try:
-                            apply_batch_time_allocation(b, now=now_utc)
-                        except Exception:
-                            pass
             paired.append((wo, compute_work_order_status(wo, now=now_local)))
         ctx['work_orders_with_status'] = paired
         return ctx
@@ -4119,7 +4101,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         if batch_ids:
             batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
             for b in batches_qs:
-                apply_batch_time_allocation(b, now=now)
+                apply_batch_time_allocation(b, now=now, can_write_db=False)
                 btasks = list(b.tasks.all())
                 tot = len(btasks)
                 done = sum(1 for bt in btasks if bt.status == WorkOrderTask.Status.DONE)
@@ -4330,7 +4312,7 @@ class WorkOrderKanbanVisualView(WorkOrderKanbanTodayView):
         if batch_ids:
             batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
             for b in batches_qs:
-                apply_batch_time_allocation(b, now=now)
+                apply_batch_time_allocation(b, now=now, can_write_db=False)
         context['is_visual_mode'] = True
         return context
 
@@ -4444,7 +4426,7 @@ class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, List
                 .order_by('id')
             )
             for batch in batches_qs:
-                apply_batch_time_allocation(batch, now=now)
+                apply_batch_time_allocation(batch, now=now, can_write_db=True)
                 batch_tasks = list(batch.tasks.all())
                 done_count = sum(1 for bt in batch_tasks if bt.status == WorkOrderTask.Status.DONE)
                 total_count = len(batch_tasks)
@@ -5239,7 +5221,7 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
                 work_order=self.object,
             ).prefetch_related('tasks')
             for b in all_batches:
-                apply_batch_time_allocation(b, now=timezone.now())
+                apply_batch_time_allocation(b, now=timezone.now(), can_write_db=True)
 
         os_status = compute_work_order_status(self.object, now=now_local)
 
@@ -5401,7 +5383,7 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
 # =============================================================================
 # 🍱 SISTEMA DE LOTES DE TAREFAS (FASE 1: LOTE BÁSICO / 2 CLIQUES)
 # =============================================================================
-def apply_batch_time_allocation(batch, now=None):
+def apply_batch_time_allocation(batch, now=None, can_write_db: bool = False):
     """FASE2: RATEIO TEMPORAL AUTOMATICO.
 
     Recebe um batch com status RUNNING (tem started_at definido).
@@ -5458,32 +5440,37 @@ def apply_batch_time_allocation(batch, now=None):
         if getattr(t, 'status', '') in (WorkOrderTask.Status.RUNNING, WorkOrderTask.Status.DONE, WorkOrderTask.Status.PAUSED):
             any_task_running_or_done = True
 
-    # 🔧 CASO ESPECIAL: batch.status ainda SCHEDULED ou PAUSED, mas PEÇAS já foram
+    # 🔧 CASO ESPECIAL: batch.status ainda SCHEDULED or PAUSED, mas PEÇAS já foram
     #    iniciadas individualmente (modo antigo FASE1 / Leo clicou no card individual).
     #    NESSE CASO, atualizamos o status do BATCH para RUNNING e started_at = MIN datas
     #    das tarefas (para rateio continuar contando do 1º clique).
+    need_save_batch_meta = False
     if batch_status == WorkOrderTaskBatch.Status.SCHEDULED or batch_status == WorkOrderTaskBatch.Status.PAUSED:
         if any_task_running_or_done or any_task_actual:
             if not started_at_batch and task_candidates:
                 started_at_batch = min(task_candidates)
+                need_save_batch_meta = True
             elif not started_at_batch and batch_status != WorkOrderTaskBatch.Status.SCHEDULED:
                 started_at_batch = now
-            try:
-                changed_fields = []
-                if batch_status != WorkOrderTaskBatch.Status.RUNNING:
-                    batch.status = WorkOrderTaskBatch.Status.RUNNING
-                    changed_fields.append('status')
-                if getattr(batch, 'started_at', None) != started_at_batch and started_at_batch is not None:
-                    batch.started_at = started_at_batch
-                    if 'status' not in changed_fields:
-                        changed_fields.append('started_at')
-                    else:
-                        changed_fields.append('started_at')
-                if changed_fields:
-                    changed_fields.append('updated_at')
-                    batch.save(update_fields=changed_fields)
-            except Exception:
-                pass
+                need_save_batch_meta = True
+            if batch_status != WorkOrderTaskBatch.Status.RUNNING:
+                batch.status = WorkOrderTaskBatch.Status.RUNNING
+                need_save_batch_meta = True
+            if getattr(batch, 'started_at', None) != started_at_batch and started_at_batch is not None:
+                batch.started_at = started_at_batch
+                need_save_batch_meta = True
+
+    # Somente persiste (salva) se can_write_db=True. Views somente leitura NAO escrevem.
+    if need_save_batch_meta and can_write_db:
+        try:
+            changed_fields = ['updated_at']
+            if batch_status != WorkOrderTaskBatch.Status.RUNNING:
+                changed_fields.append('status')
+            if started_at_batch is not None:
+                changed_fields.append('started_at')
+            batch.save(update_fields=list(dict.fromkeys(changed_fields)))
+        except Exception:
+            pass
 
     batch_status = getattr(batch, 'status', WorkOrderTaskBatch.Status.SCHEDULED)
     if batch_status != WorkOrderTaskBatch.Status.RUNNING:
@@ -5493,11 +5480,12 @@ def apply_batch_time_allocation(batch, now=None):
     if not started_at_batch:
         if task_candidates:
             started_at_batch = min(task_candidates)
-            try:
-                batch.started_at = started_at_batch
-                batch.save(update_fields=['started_at'])
-            except Exception:
-                pass
+            if can_write_db:
+                try:
+                    batch.started_at = started_at_batch
+                    batch.save(update_fields=['started_at'])
+                except Exception:
+                    pass
     if not started_at_batch:
         return False, {}
 
@@ -5567,38 +5555,35 @@ def apply_batch_time_allocation(batch, now=None):
                 cumulative_s = planned_end_s
 
     # Garantir: se todas as tarefas sao DONE (chegou no total_planned_hours), atualiza status
+    batch_done_save = False
     if total_done >= len(sorted_tasks) and len(sorted_tasks) > 0:
         if batch.status != WorkOrderTaskBatch.Status.DONE:
             batch.status = WorkOrderTaskBatch.Status.DONE
             batch.finished_at = now
+            batch_done_save = True
             tasks_to_save.append(('BATCH', batch))
 
-    if tasks_to_save:
-        for item in tasks_to_save:
-            if isinstance(item, tuple) and item[0] == 'BATCH':
-                b = item[1]
-                b.save(update_fields=['status', 'finished_at'])
-            else:
-                task_obj = item
-                uf = ['status', 'elapsed_seconds', 'actual_hours']
-                if task_obj.status == WorkOrderTask.Status.RUNNING:
-                    uf.append('last_started_at')
-                if task_obj.status == WorkOrderTask.Status.DONE:
-                    uf.append('completed_at')
-                task_obj.save(update_fields=uf)
-        return (
-            True,
-            {
-                'running_index': running_index,
-                'running_task_id': running_task_id,
-                'completed_count': total_done,
-                'remaining_seconds_in_current': remaining_in_current_s,
-                'elapsed_total_s': elapsed_total_s,
-            },
-        )
+    wrote_db = False
+    if tasks_to_save and can_write_db:
+        try:
+            for item in tasks_to_save:
+                if isinstance(item, tuple) and item[0] == 'BATCH':
+                    b = item[1]
+                    b.save(update_fields=['status', 'finished_at'])
+                else:
+                    task_obj = item
+                    uf = ['status', 'elapsed_seconds', 'actual_hours']
+                    if task_obj.status == WorkOrderTask.Status.RUNNING:
+                        uf.append('last_started_at')
+                    if task_obj.status == WorkOrderTask.Status.DONE:
+                        uf.append('completed_at')
+                    task_obj.save(update_fields=uf)
+            wrote_db = True
+        except Exception:
+            wrote_db = False
 
     return (
-        False,
+        bool(wrote_db),
         {
             'running_index': running_index,
             'running_task_id': running_task_id,
