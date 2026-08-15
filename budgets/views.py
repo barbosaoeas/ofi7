@@ -4094,6 +4094,28 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         now = timezone.now()
         now_local = timezone.localtime(now)
         task_items = list(context.get('tasks', []))
+
+        batch_ids = list({t.batch_id for t in task_items if t.batch_id})
+        batch_stats = {}
+        if batch_ids:
+            batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
+            for b in batches_qs:
+                btasks = list(b.tasks.all())
+                tot = len(btasks)
+                done = sum(1 for bt in btasks if bt.status == WorkOrderTask.Status.DONE)
+                batch_stats[b.id] = {
+                    'total': tot,
+                    'done': done,
+                    'id': b.id,
+                }
+        for task in task_items:
+            if task.batch_id and task.batch_id in batch_stats:
+                bs = batch_stats[task.batch_id]
+                task.display_batch_badge = f"📦 LOTE {bs['done']}/{bs['total']}"
+                task.display_batch_id = bs['id']
+            else:
+                task.display_batch_badge = ''
+                task.display_batch_id = None
         for task in task_items:
             task.is_patio = False
             try:
@@ -4374,27 +4396,139 @@ class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, List
         context['collaborator_unlinked'] = collaborator is None and not user.is_superuser and user.role not in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
         tasks = list(context['tasks'])
+        tasks_without_batch = [t for t in tasks if not t.batch_id]
+        tasks_with_batch = [t for t in tasks if t.batch_id]
+        context['tasks'] = tasks_without_batch
+
+        batch_ids = list({t.batch_id for t in tasks_with_batch if t.batch_id})
+        my_batches = []
+        if collaborator and batch_ids:
+            batches_qs = (
+                WorkOrderTaskBatch.objects.select_related(
+                    'work_order',
+                    'work_order__budget',
+                    'work_order__budget__vehicle',
+                    'collaborator',
+                )
+                .filter(
+                    pk__in=batch_ids,
+                    collaborator=collaborator,
+                )
+                .prefetch_related('tasks')
+                .order_by('id')
+            )
+            for batch in batches_qs:
+                batch_tasks = list(batch.tasks.all())
+                done_count = sum(1 for bt in batch_tasks if bt.status == WorkOrderTask.Status.DONE)
+                total_count = len(batch_tasks)
+                planned_hours_total = sum(float(bt.planned_hours or 0) for bt in batch_tasks)
+                actual_hours_total = sum(float(bt.actual_hours or 0) for bt in batch_tasks)
+                try:
+                    batch.display_budget_number = batch.work_order.budget.display_number
+                    v = batch.work_order.budget.vehicle
+                    batch.display_plate = v.plate if v else ''
+                except Exception:
+                    batch.display_budget_number = getattr(batch.work_order, 'id', '-')
+                    batch.display_plate = ''
+                batch.display_tasks_done = done_count
+                batch.display_tasks_total = total_count
+                batch.display_total_planned_h = planned_hours_total
+                batch.display_total_actual_h = actual_hours_total
+                batch.display_status_label = simplify_task_status_label(batch.status)
+                elapsed_batch_s = int(actual_hours_total * 3600)
+                for bt in batch_tasks:
+                    if bt.status == WorkOrderTask.Status.RUNNING and bt.last_started_at:
+                        delta_run, _ = capped_work_delta_seconds(bt.last_started_at, now, bt.allow_overtime)
+                        elapsed_batch_s += int(delta_run)
+                batch.display_elapsed_hms = seconds_to_hms(elapsed_batch_s)
+                batch.display_elapsed_seconds = elapsed_batch_s
+                planned_batch_s = int(planned_hours_total * 3600) if planned_hours_total > 0 else None
+                batch.is_overdue = bool(planned_batch_s and elapsed_batch_s > planned_batch_s)
+                if batch.is_overdue:
+                    ov_s = elapsed_batch_s - planned_batch_s
+                    batch.overtime_hms = seconds_to_hms(ov_s)
+                    batch.overtime_planned_hms = seconds_to_hms(planned_batch_s)
+                    batch.overtime_elapsed_hms = seconds_to_hms(elapsed_batch_s)
+                else:
+                    batch.overtime_hms = ''
+                    batch.overtime_planned_hms = ''
+                    batch.overtime_elapsed_hms = ''
+                commission_batch = Decimal('0')
+                function_ok = collaborator.function not in (
+                    Collaborator.Function.MANAGER,
+                    Collaborator.Function.FINANCE,
+                )
+                if function_ok:
+                    for bt in batch_tasks:
+                        base_amt = bt.planned_amount or Decimal('0')
+                        svc = bt.service
+                        if svc and svc.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
+                            pct = Decimal(svc.commission_value or 0)
+                            commission_batch += (base_amt * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        elif svc and svc.commission_mode == ServiceCatalog.CommissionMode.FIXED:
+                            commission_batch += Decimal(svc.commission_value or 0).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        else:
+                            pct = Decimal(collaborator.commission_percent or 0)
+                            commission_batch += (base_amt * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                batch.display_estimated_commission = commission_batch
+                batch_tasks_enriched = []
+                for bt in sorted(batch_tasks, key=lambda x: (x.order or 0, x.id)):
+                    bt.display_bt_status_label = simplify_task_status_label(bt.status)
+                    bt_t = float(bt.actual_hours or 0) * 3600
+                    if bt.status == WorkOrderTask.Status.RUNNING and bt.last_started_at:
+                        dbt, _ = capped_work_delta_seconds(bt.last_started_at, now, bt.allow_overtime)
+                        bt_t += int(dbt)
+                    bt.display_bt_elapsed_hms = seconds_to_hms(int(bt_t))
+                    batch_tasks_enriched.append(bt)
+                batch.display_items = batch_tasks_enriched
+                my_batches.append(batch)
+        context['my_batches'] = my_batches
+
         other_running = None
+        other_running_batch = None
         if collaborator:
             other_running = (
                 WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
                 .filter(
                     collaborator=collaborator,
                     status=WorkOrderTask.Status.RUNNING,
+                    batch_id__isnull=True,
                 )
-                .exclude(pk__in=[t.pk for t in tasks])
+                .exclude(pk__in=[t.pk for t in tasks_without_batch])
+                .order_by('id')
+                .first()
+            )
+            other_running_batch = (
+                WorkOrderTaskBatch.objects.select_related('work_order', 'work_order__budget')
+                .filter(
+                    collaborator=collaborator,
+                    status=WorkOrderTaskBatch.Status.RUNNING,
+                )
+                .exclude(pk__in=[b.pk for b in my_batches])
                 .order_by('id')
                 .first()
             )
         running_count = 0
-        if any(t.status == WorkOrderTask.Status.RUNNING for t in tasks):
-            running_count = sum(1 for t in tasks if t.status == WorkOrderTask.Status.RUNNING)
+        if any(t.status == WorkOrderTask.Status.RUNNING for t in tasks_without_batch):
+            running_count += sum(1 for t in tasks_without_batch if t.status == WorkOrderTask.Status.RUNNING)
         elif other_running:
-            running_count = 1
+            running_count += 1
+        if any(b.status == WorkOrderTaskBatch.Status.RUNNING for b in my_batches):
+            running_count += sum(1 for b in my_batches if b.status == WorkOrderTaskBatch.Status.RUNNING)
+        elif other_running_batch:
+            running_count += 1
         context['has_other_running'] = bool(running_count > 0)
         context['other_running_task'] = other_running
+        context['other_running_batch'] = other_running_batch
 
-        for task in tasks:
+        pending_indiv = len(tasks_without_batch)
+        pending_batch_pieces = sum(
+            max(0, (b.display_tasks_total or 0) - (b.display_tasks_done or 0))
+            for b in my_batches
+        )
+        context['pending_total_display'] = pending_indiv + pending_batch_pieces
+
+        for task in tasks_without_batch:
             task.display_status_label = simplify_task_status_label(task.status)
             task.display_elapsed_seconds = int(task.elapsed_seconds or 0)
             if task.status == WorkOrderTask.Status.RUNNING and task.last_started_at:
@@ -5226,6 +5360,343 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.success(request, 'Agendamento salvo.')
 
         return redirect('budgets:workorder_detail', pk=task.work_order_id)
+
+
+# =============================================================================
+# 🍱 SISTEMA DE LOTES DE TAREFAS (FASE 1: LOTE BÁSICO / 2 CLIQUES)
+# =============================================================================
+def _batch_redirect(request, default_url, batch=None, work_order_pk=None):
+    next_url = (request.POST.get('next') or '').strip()
+    if next_url:
+        return redirect(next_url)
+    if batch and batch.work_order_id:
+        return redirect('budgets:workorder_detail', pk=batch.work_order_id)
+    if work_order_pk:
+        return redirect('budgets:workorder_detail', pk=work_order_pk)
+    return redirect(default_url)
+
+
+class WorkOrderTaskBatchCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
+    """Cria LOTE (batch) a partir de tarefas selecionadas (programacao da OS).
+    Regra: Todas selecionadas = mesma activity + mesmo collaborador (ou ambos NULL activity/collab -> ERRO)."""
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, pk):
+        work_order = WorkOrder.objects.filter(pk=pk).first()
+        if work_order is None:
+            raise Http404('OS não encontrada.')
+        redirect_url = reverse('budgets:workorder_detail', kwargs={'pk': work_order.pk})
+
+        raw_task_ids = (request.POST.get('task_ids') or '').strip()
+        selected_task_ids = []
+        for raw in raw_task_ids.split(','):
+            raw = raw.strip()
+            if raw.isdigit():
+                selected_task_ids.append(int(raw))
+        selected_task_ids = list(dict.fromkeys(selected_task_ids))
+        if len(selected_task_ids) < 2:
+            messages.error(request, 'Para criar um lote, selecione ao menos 2 tarefas.')
+            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+
+        tasks = list(
+            WorkOrderTask.objects.filter(
+                work_order_id=work_order.pk,
+                pk__in=selected_task_ids,
+            )
+            .exclude(status=WorkOrderTask.Status.DONE)
+            .select_related('collaborator')
+        )
+        if not tasks:
+            messages.error(request, 'Nenhuma tarefa elegível (não concluída) para criar lote.')
+            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+
+        activities = {t.activity for t in tasks if t.activity}
+        if len(activities) != 1:
+            messages.error(request, 'Todas as tarefas do lote precisam ser da MESMA etapa (Desmontagem / Funilaria / etc).')
+            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+        activity = next(iter(activities))
+
+        collabs = {t.collaborator_id for t in tasks if t.collaborator_id}
+        if len(collabs) == 0:
+            messages.error(request, 'Atribua um colaborador para TODAS as tarefas antes de criar o lote.')
+            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+        if len(collabs) != 1:
+            messages.error(request, 'Todas as tarefas do lote precisam ter o MESMO colaborador.')
+            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
+        collaborator_id = next(iter(collabs))
+        collaborator = tasks[0].collaborator
+        scheduled_date = next((t.scheduled_date for t in tasks if t.scheduled_date), None)
+
+        # Desassocia de batches ANTERIORES (se tiver)
+        ids = [t.id for t in tasks]
+        WorkOrderTask.objects.filter(id__in=ids).update(batch=None)
+
+        batch = WorkOrderTaskBatch.objects.create(
+            work_order=work_order,
+            activity=activity,
+            collaborator_id=collaborator_id,
+            scheduled_date=scheduled_date,
+            status=WorkOrderTaskBatch.Status.SCHEDULED,
+        )
+        WorkOrderTask.objects.filter(id__in=ids).update(batch=batch)
+
+        messages.success(
+            request,
+            f'Lote #{batch.id} criado: {batch.tasks_count} tarefas de {batch.get_activity_display()} · {collaborator.name if collaborator else ""}.',
+        )
+        return _batch_redirect(request, redirect_url, batch=batch)
+
+
+class WorkOrderTaskBatchStartView(LoginRequiredMixin, RoleRequiredMixin, View):
+    """▶️ Iniciar TODAS as tarefas do lote de uma vez (1 clique)."""
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
+
+    def post(self, request, pk):
+        batch = WorkOrderTaskBatch.objects.select_related(
+            'work_order', 'work_order__budget', 'collaborator'
+        ).filter(pk=pk).first()
+        if batch is None:
+            raise Http404('Lote não encontrado.')
+        redirect_kanban = 'budgets:kanban_today'
+        tasks = list(
+            batch.tasks.exclude(status=WorkOrderTask.Status.DONE)
+            .order_by('order')
+            .select_related('collaborator', 'work_order', 'work_order__budget')
+        )
+        if not tasks:
+            messages.error(request, 'Nenhuma tarefa elegível para iniciar neste lote.')
+            return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        # Bloqueio de simultaneidade a nivel COLABORADOR (batch.collaborator):
+        # Garante NAO TEM NENHUMA tarefa RUNNING fora do batch p/ este colaborador.
+        if batch.collaborator_id:
+            has_other = (
+                WorkOrderTask.objects.filter(
+                    collaborator_id=batch.collaborator_id,
+                    status=WorkOrderTask.Status.RUNNING,
+                )
+                .exclude(batch_id=batch.pk)
+                .exists()
+            )
+            if has_other:
+                other = (
+                    WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
+                    .filter(
+                        collaborator_id=batch.collaborator_id,
+                        status=WorkOrderTask.Status.RUNNING,
+                    )
+                    .exclude(batch_id=batch.pk)
+                    .first()
+                )
+                lbl = ''
+                if other:
+                    try:
+                        lbl = f' OS #{other.work_order.budget.display_number} ({other.get_activity_display()})'
+                    except Exception:
+                        lbl = ''
+                messages.error(
+                    request,
+                    'Não é permitido 2 tarefas ao mesmo tempo para este colaborador. '
+                    f'Finalize/pause a tarefa ativa primeiro.{lbl}',
+                )
+                return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        # Bloqueio peças pendentes (orçamento):
+        budget = getattr(batch.work_order, 'budget', None)
+        if budget and getattr(budget, 'status', '') == BudgetStatus_AUTHORIZED:
+            if budget_has_pending_shop_parts(budget) and not bool(getattr(budget, 'allow_repair_without_parts', False)):
+                messages.error(request, 'Bloqueado: peças pendentes no orçamento. Marque "Liberar sem peças".')
+                return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        today = timezone.localdate()
+        entry_date = getattr(budget, 'entry_date', None) if budget else None
+        cutoff_time_blocked = False
+        now = timezone.now()
+        now_local = timezone.localtime(now)
+        if now_local.time() >= KANBAN_CUTOFF_TIME:
+            allow_ot = all(bool(t.allow_overtime) for t in tasks)
+            if not allow_ot:
+                cutoff_time_blocked = True
+        if cutoff_time_blocked:
+            messages.error(request, 'Após 17:48, só inicie o lote com Extra liberado em todas as tarefas.')
+            return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        started = 0
+        for task in tasks:
+            if task.status == WorkOrderTask.Status.RUNNING:
+                continue
+            if task.status == WorkOrderTask.Status.DONE:
+                continue
+            # sequence block (POR TAREFA, p/ manter seguranca individual):
+            seq_msg = get_task_sequence_block_message(task)
+            if seq_msg:
+                messages.error(request, seq_msg)
+                continue
+            if entry_date and today < entry_date:
+                continue
+            if task.scheduled_date and task.scheduled_date > today:
+                continue
+            if task.collaborator_id is None:
+                continue
+            upd = []
+            if task.started_at is None:
+                task.started_at = now
+                upd.append('started_at')
+            if task.last_started_at is None:
+                task.last_started_at = now
+                upd.append('last_started_at')
+            task.status = WorkOrderTask.Status.RUNNING
+            upd.append('status')
+            if upd:
+                task.save(update_fields=upd)
+                sync_shop_service_from_task(task)
+                started += 1
+
+        if started > 0:
+            batch.status = WorkOrderTaskBatch.Status.RUNNING
+            batch.started_at = batch.started_at or now
+            batch.save(update_fields=['status', 'started_at', 'updated_at'])
+
+        if started == 0:
+            messages.info(request, 'Nenhuma tarefa do lote foi iniciada (verifique datas/colaborador/ordem).')
+        else:
+            messages.success(request, f'Lote iniciado: {started} tarefa(s) agora em andamento.')
+        return _batch_redirect(request, redirect_kanban, batch=batch)
+
+
+class WorkOrderTaskBatchPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
+    """⏸️ Pausar TODAS as tarefas RUNNING do lote."""
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
+
+    def post(self, request, pk):
+        batch = WorkOrderTaskBatch.objects.select_related('work_order').filter(pk=pk).first()
+        if batch is None:
+            raise Http404('Lote não encontrado.')
+        redirect_kanban = 'budgets:kanban_today'
+        tasks = list(
+            batch.tasks.filter(status=WorkOrderTask.Status.RUNNING)
+            .order_by('order')
+            .select_related('work_order', 'work_order__budget')
+        )
+        if not tasks:
+            messages.error(request, 'Nenhuma tarefa em andamento neste lote para pausar.')
+            return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        now = timezone.now()
+        paused = 0
+        for task in tasks:
+            if task.last_started_at is None:
+                continue
+            delta, _ = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
+            task.elapsed_seconds = int(task.elapsed_seconds or 0) + delta
+            task.last_started_at = None
+            task.status = WorkOrderTask.Status.PAUSED
+            hours = (Decimal(task.elapsed_seconds) / Decimal('3600')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            task.actual_hours = hours
+            task.save(update_fields=['elapsed_seconds', 'last_started_at', 'status', 'actual_hours'])
+            sync_shop_service_from_task(task)
+            paused += 1
+
+        if paused > 0:
+            batch.status = WorkOrderTaskBatch.Status.PAUSED
+            batch.save(update_fields=['status', 'updated_at'])
+
+        messages.success(request, f'Lote pausado: {paused} tarefa(s) pausada(s).')
+        return _batch_redirect(request, redirect_kanban, batch=batch)
+
+
+class WorkOrderTaskBatchFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
+    """✅ Finalizar TODAS as tarefas RUNNING/PAUSED do lote (comissão individual p/ cada + fecha OS no fim)."""
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
+
+    def post(self, request, pk):
+        batch = WorkOrderTaskBatch.objects.select_related(
+            'work_order', 'work_order__budget', 'collaborator'
+        ).filter(pk=pk).first()
+        if batch is None:
+            raise Http404('Lote não encontrado.')
+        redirect_kanban = 'budgets:kanban_today'
+        tasks = list(
+            batch.tasks.exclude(status=WorkOrderTask.Status.DONE)
+            .order_by('order')
+            .select_related('work_order', 'work_order__budget', 'collaborator', 'service')
+        )
+        if not tasks:
+            messages.error(request, 'Nenhuma tarefa elegível para finalizar neste lote.')
+            return _batch_redirect(request, redirect_kanban, batch=batch)
+
+        now = timezone.now()
+        finished = 0
+        for task in tasks:
+            if task.status not in (WorkOrderTask.Status.RUNNING, WorkOrderTask.Status.PAUSED):
+                # Para lote básico (FASE 1): Aceitamos SCHEDULED e marcamos DONE com actual=planned (evita dor usuario).
+                # FASE 2 (rateio) vai ficar mais rigoroso.
+                task.status = WorkOrderTask.Status.RUNNING
+                task.started_at = task.started_at or now
+                task.last_started_at = now
+            # finaliza a tarefa (igual FinishView):
+            if task.status == WorkOrderTask.Status.RUNNING:
+                delta, effective_end = capped_work_delta_seconds(task.last_started_at or now, now, task.allow_overtime)
+                elapsed = int(task.elapsed_seconds or 0) + delta
+                task.elapsed_seconds = elapsed
+                task.last_started_at = None
+                task.completed_at = effective_end or now
+                task.status = WorkOrderTask.Status.DONE
+                hrs = (Decimal(elapsed) / Decimal('3600')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                if hrs <= 0 and task.planned_hours:
+                    hrs = task.planned_hours  # evita zero por pouco tempo
+                task.actual_hours = hrs
+            task.save(update_fields=['elapsed_seconds', 'last_started_at', 'completed_at', 'status', 'actual_hours'])
+            sync_shop_service_from_task(task)
+            # comissao individual (IGUAL FinishView):
+            if task.collaborator_id and not CommissionLine.objects.filter(task=task, collaborator_id=task.collaborator_id).exists():
+                pct = Decimal('0')
+                base = task.planned_amount or Decimal('0')
+                comm = Decimal('0')
+                collab = task.collaborator
+                if collab and collab.function in (Collaborator.Function.MANAGER, Collaborator.Function.FINANCE):
+                    pct = Decimal('0')
+                    comm = Decimal('0')
+                else:
+                    svc = task.service
+                    if svc and svc.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
+                        pct = Decimal(svc.commission_value or 0)
+                        comm = (base * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    elif svc and svc.commission_mode == ServiceCatalog.CommissionMode.FIXED:
+                        pct = Decimal('0')
+                        comm = Decimal(svc.commission_value or 0).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    else:
+                        pct = Decimal(collab.commission_percent or 0) if collab else Decimal('0')
+                        comm = (base * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                if comm > 0:
+                    CommissionLine.objects.create(
+                        task=task,
+                        collaborator=task.collaborator,
+                        percent=pct,
+                        base_amount=base,
+                        commission_amount=comm,
+                    )
+            finished += 1
+
+        if finished > 0:
+            batch.status = WorkOrderTaskBatch.Status.DONE
+            batch.finished_at = now
+            batch.save(update_fields=['status', 'finished_at', 'updated_at'])
+
+        # FECHA OS AUTOMATICAMENTE (se MAX order for DONE + blindagem):
+        wo = batch.work_order
+        closed = close_work_order_if_all_done(wo) if finished > 0 else False
+        try:
+            label = wo.budget.display_number
+        except Exception:
+            label = str(wo.id)
+        if finished == 0:
+            messages.info(request, 'Nenhuma tarefa do lote foi finalizada.')
+        elif closed:
+            messages.success(request, f'Lote finalizado: {finished} tarefa(s). OS #{label} foi FECHADA automaticamente.')
+        else:
+            messages.success(request, f'Lote finalizado: {finished} tarefa(s) concluída(s).')
+        return _batch_redirect(request, redirect_kanban, batch=batch)
 
 
 class WorkOrderTaskBulkAssignView(LoginRequiredMixin, RoleRequiredMixin, View):

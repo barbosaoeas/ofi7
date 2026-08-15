@@ -285,7 +285,62 @@
           </button>
         </div>
       </form>
+
+      <form method='post' action='{% url "budgets:workorder_batch_create" work_order.pk %}' class='mt-3 flex flex-wrap items-end gap-3 border-t border-slate-200 pt-3'>
+        {% csrf_token %}
+        <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+        <input type='hidden' name='task_ids' value='' data-batch-create-task-ids='1' />
+        <div class='min-w-[260px]'>
+          <div class='text-xs uppercase tracking-wide text-indigo-600 font-bold'>🍱 AÇÃO EM LOTE</div>
+          <div class='mt-1 text-xs text-slate-600'>Marque 2+ tarefas da MESMA etapa + MESMO colaborador e crie o lote (2 cliques para iniciar/finalizar tudo).</div>
+        </div>
+        <button type='submit' data-batch-create-btn='1' disabled class='rounded-md bg-gradient-to-r from-indigo-500 to-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-110' {% if os_status.is_blocked %}disabled{% endif %}>
+          🔗 Criar Lote das Selecionadas
+        </button>
+      </form>
     </div>
+
+    {% if work_order.batches.all %}
+      <div class='mt-4 space-y-3'>
+        {% for batch in work_order.batches.all %}
+          {% with batch_tasks=batch.tasks.all|dictsort:'order' batch_count=batch.tasks_count batch_done=batch.tasks_done_count batch_total_h=batch.total_planned_hours batch_actual_h=batch.total_actual_hours batch_collab=batch.collaborator %}
+            <div class='rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-indigo-50/30 p-4 shadow-sm'>
+              <div class='flex flex-wrap items-center justify-between gap-3'>
+                <div>
+                  <div class='flex flex-wrap items-center gap-2'>
+                    <span class='inline-flex items-center gap-1 rounded-md border border-indigo-500 bg-indigo-100 px-2 py-1 text-xs font-bold text-indigo-900'>📦 LOTE #{{ batch.id }}</span>
+                    <span class='text-sm font-semibold text-indigo-900'>
+                      {{ batch.get_activity_display }} · {% if batch_collab %}{{ batch_collab.name }}{% else %}Sem colaborador{% endif %}
+                    </span>
+                    <span class='rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700'>{{ batch_done }}/{{ batch_count }} peças</span>
+                    <span class='rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700'>Prev: {{ batch_total_h|floatformat:2 }}h</span>
+                    {% if batch_actual_h > 0 %}
+                      <span class='rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800'>Real: {{ batch_actual_h|floatformat:2 }}h</span>
+                    {% endif %}
+                    <span class='rounded-md px-2 py-1 text-xs font-semibold {% if batch.status == "DONE" %}bg-blue-100 text-blue-900 border border-blue-500{% elif batch.status == "RUNNING" %}bg-emerald-100 text-emerald-900 border border-emerald-500{% elif batch.status == "PAUSED" %}bg-amber-100 text-amber-900 border border-amber-500{% else %}bg-slate-100 text-slate-700 border border-slate-300{% endif %}'>
+                      {% if batch.status == "DONE" %}✅ Concluído{% elif batch.status == "RUNNING" %}🟩 Em andamento{% elif batch.status == "PAUSED" %}🟨 Pausado{% else %}⚪ Agendado{% endif %}
+                    </span>
+                  </div>
+                </div>
+                <form method='post' class='flex flex-wrap gap-2 no-print'>
+                  {% csrf_token %}
+                  <input type='hidden' name='next' value='{{ request.get_full_path }}' />
+                  <button type='submit' formaction='{% url "budgets:workorder_batch_start" batch.pk %}' class='rounded-md border border-emerald-500 bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:brightness-110 {% if batch.status == "DONE" %}opacity-40 cursor-not-allowed pointer-events-none{% endif %}'>
+                    ▶ Iniciar Todas
+                  </button>
+                  <button type='submit' formaction='{% url "budgets:workorder_batch_pause" batch.pk %}' class='rounded-md border border-amber-500 bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:brightness-110 {% if batch.status != "RUNNING" %}opacity-40 cursor-not-allowed pointer-events-none{% endif %}'>
+                    ⏸ Pausar Todas
+                  </button>
+                  <button type='submit' formaction='{% url "budgets:workorder_batch_finish" batch.pk %}' class='rounded-md border border-indigo-600 bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:brightness-110 {% if batch.status == "DONE" %}opacity-40 cursor-not-allowed pointer-events-none{% endif %}'>
+                    ✅ Finalizar Todas
+                  </button>
+                </form>
+              </div>
+            </div>
+          {% endwith %}
+        {% endfor %}
+      </div>
+    {% endif %}
 
     <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
       <table class='w-full text-left text-sm'>

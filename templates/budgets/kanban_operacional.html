@@ -87,7 +87,7 @@
                     </div>
                     <div class='text-right'>
                         <div class='text-[11px] text-[#a3a3a3]'>
-                            Pendentes: <span class='font-bold text-white'>{{ tasks|length }}</span>
+                            Pendentes: <span class='font-bold text-white'>{{ pending_total_display|default:tasks|length }}</span>
                         </div>
                         <div class='text-[11px] text-[#a3a3a3] mt-0.5'>
                             Concluídas hoje: <span class='font-bold text-[#22c55e]'>{{ done_today|length }}</span>
@@ -133,6 +133,8 @@
                         Você já tem uma tarefa <span class='font-bold'>EM ANDAMENTO</span>.
                         {% if other_running_task %}
                             OS #{{ other_running_task.work_order.budget.display_number }} · {{ other_running_task.get_activity_display }}.
+                        {% elif other_running_batch %}
+                            [LOTE #{{ other_running_batch.id }}] OS #{{ other_running_batch.work_order.budget.display_number }} · {{ other_running_batch.get_activity_display }}.
                         {% endif %}
                         Pausar ou Finalize ela para poder iniciar outra.
                     </div>
@@ -140,10 +142,195 @@
             </div>
         {% endif %}
 
+        {% if my_batches %}
+            <section class='mb-6'>
+                <div class='mb-2 flex items-center justify-between'>
+                    <h2 class='text-[13px] font-bold uppercase tracking-wide text-indigo-400'>
+                        📦 Lotes em andamento / pendentes
+                        <span class='ml-1 text-[10px] text-[#a3a3a3]'>({{ my_batches|length }} lote{{ my_batches|length|pluralize }})</span>
+                    </h2>
+                </div>
+                <div class='space-y-3'>
+                    {% for batch in my_batches %}
+                        {% with act=batch.activity %}
+                            <article
+                                class='rounded-2xl border p-3 shadow-xl transition-all
+                                       {% if batch.status == "RUNNING" %}bg-[#063018] border-[#2f855a] pulse-ring
+                                       {% elif batch.status == "PAUSED" %}bg-[#2a1e06] border-[#b7791f]
+                                       {% else %}bg-[#0d0d0d] border-[#262626]{% endif %}'
+                            >
+                                <div class='flex items-start justify-between gap-3'>
+                                    <div class='min-w-0 flex-1'>
+                                        <div class='flex flex-wrap items-center gap-2 text-[11px]'>
+                                            <span class='truncate rounded-md border border-indigo-500 bg-indigo-950 px-2 py-0.5 font-extrabold text-indigo-200'>
+                                                📦 LOTE #{{ batch.id }} · {{ batch.display_tasks_done }}/{{ batch.display_tasks_total }} peças
+                                            </span>
+                                            <span class='truncate rounded-md border border-[#262626] bg-[#141414] px-2 py-0.5 font-bold text-[#f5f5f5]'>
+                                                OS #{{ batch.display_budget_number }}
+                                            </span>
+                                            {% if batch.display_plate %}
+                                                <span class='truncate font-semibold text-[#d4af37]'>
+                                                    [{{ batch.display_plate }}]
+                                                </span>
+                                            {% endif %}
+                                            <span class='inline-flex items-center truncate rounded-md border px-2 py-0.5 font-bold tracking-wide
+                                                         {% if act == "DISASSEMBLY" %}border-[#3730a3] bg-[#1e1b4b] text-[#c7d2fe]
+                                                         {% elif act == "BODY_SHOP" %}border-[#b45309] bg-[#451a03] text-[#fed7aa]
+                                                         {% elif act == "PAINTING" %}border-[#a16207] bg-[#3f2d05] text-[#fde68a]
+                                                         {% elif act == "ASSEMBLY" %}border-[#0c4a6e] bg-[#082f49] text-[#bae6fd]
+                                                         {% elif act == "POLISHING" %}border-[#134e4a] bg-[#042f2e] text-[#99f6e4]
+                                                         {% elif act == "WASHING" %}border-[#065f46] bg-[#022c22] text-[#a7f3d0]
+                                                         {% else %}border-[#262626] bg-[#141414] text-[#e5e5e5]{% endif %}'>
+                                                Etapa: {{ batch.get_activity_display }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class='shrink-0'>
+                                        <span class='inline-block rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide
+                                                     {% if batch.status == "RUNNING" %}border-[#22c55e] bg-[#166534] text-[#bbf7d0]
+                                                     {% elif batch.status == "PAUSED" %}border-[#f59e0b] bg-[#92400e] text-[#fde68a]
+                                                     {% else %}border-[#404040] bg-[#262626] text-[#d4d4d4]{% endif %}'>
+                                            {{ batch.display_status_label }}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div class='mt-3 max-h-44 overflow-y-auto rounded-lg border border-[#1a1a1a] bg-[#0a0a0a]/70 p-2'>
+                                    <div class='space-y-1.5'>
+                                        {% for bt in batch.display_items %}
+                                            <div class='flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px]
+                                                        {% if bt.status == "DONE" %}bg-emerald-950/40 border border-emerald-900/40
+                                                        {% elif bt.status == "RUNNING" %}bg-emerald-900/40 border border-emerald-700/60
+                                                        {% elif bt.status == "PAUSED" %}bg-amber-950/30 border border-amber-900/40
+                                                        {% else %}bg-[#141414] border border-[#1a1a1a]{% endif %}'>
+                                                <div class='min-w-0 flex-1 truncate'>
+                                                    <span class='mr-1.5 text-[13px]'>
+                                                        {% if bt.status == "DONE" %}✅
+                                                        {% elif bt.status == "RUNNING" %}🟩
+                                                        {% elif bt.status == "PAUSED" %}🟨
+                                                        {% else %}⚪{% endif %}
+                                                    </span>
+                                                    <span class='truncate text-[#f5f5f5]'>{{ bt.description }}</span>
+                                                </div>
+                                                <div class='shrink-0 text-right'>
+                                                    <span class='rounded border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide
+                                                                 {% if bt.status == "DONE" %}border-emerald-700 bg-emerald-950 text-emerald-300
+                                                                 {% elif bt.status == "RUNNING" %}border-emerald-600 bg-emerald-900 text-emerald-200
+                                                                 {% elif bt.status == "PAUSED" %}border-amber-700 bg-amber-950 text-amber-300
+                                                                 {% else %}border-[#262626] bg-[#0a0a0a] text-[#a3a3a3]{% endif %}'>
+                                                        {{ bt.display_bt_status_label }}
+                                                    </span>
+                                                    <div class='mt-0.5 font-mono text-[9px] text-[#a3a3a3]'>{{ bt.display_bt_elapsed_hms }}</div>
+                                                </div>
+                                            </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+
+                                {% if batch.is_overdue %}
+                                    <div class='mt-3 rounded-lg border border-[#7f1d1d] bg-[#3b0a0a] p-3 text-[12px] text-[#fecaca] shadow-[0_0_0_1px_rgba(190,18,60,0.4)]'>
+                                        <div class='flex items-start gap-2.5'>
+                                            <span class='text-[18px] leading-none'>🚨</span>
+                                            <div class='flex-1'>
+                                                <div class='text-[13px] font-extrabold uppercase tracking-wide text-white'>LOTE ATRASADO</div>
+                                                <div class='mt-1 font-mono text-[11px]'>
+                                                    Passou <span class='font-bold text-white'>{{ batch.overtime_hms }}</span> do planejado
+                                                    &nbsp;·&nbsp; Exec <span class='text-white'>{{ batch.overtime_elapsed_hms }}</span>
+                                                    &nbsp;/&nbsp; Prev <span class='text-white'>{{ batch.overtime_planned_hms }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+
+                                <div class='mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[#1a1a1a] bg-[#0a0a0a]/70 p-2 text-[11px]'>
+                                    <div>
+                                        <div class='text-[10px] uppercase tracking-wide text-[#a3a3a3]'>Previsto (total lote)</div>
+                                        <div class='mt-0.5 font-semibold text-[#f5f5f5]'>
+                                            {% if batch.display_total_planned_h and batch.display_total_planned_h > 0 %}{{ batch.display_total_planned_h|floatformat:2 }}h{% else %}-{% endif %}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class='text-[10px] uppercase tracking-wide text-[#a3a3a3]'>Tempo total</div>
+                                        <div class='mt-0.5 font-mono font-semibold text-[#f5f5f5]'>
+                                            <span data-timer-text-batch='{{ batch.id }}'>{{ batch.display_elapsed_hms }}</span>
+                                        </div>
+                                    </div>
+                                    <div class='col-span-2 mt-1 border-t border-[#1a1a1a] pt-2'>
+                                        <div class='flex items-center justify-between'>
+                                            <span class='text-[10px] uppercase tracking-wide text-[#a3a3a3]'>
+                                                Comissão estimada do lote
+                                            </span>
+                                            <span class='text-[13px] font-extrabold text-primary'>
+                                                R$ {{ batch.display_estimated_commission|default:0|floatformat:2 }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class='mt-3 space-y-2'>
+                                    {% if batch.status != "DONE" %}
+                                        <form method='post' action='{% url "budgets:workorder_batch_start" batch.id %}'>
+                                            {% csrf_token %}
+                                            <input type='hidden' name='next' value='{% url "budgets:kanban_my_tasks" %}' />
+                                            <button
+                                                type='submit'
+                                                class='w-full rounded-xl bg-[#166534] px-4 py-3.5 text-[14px] font-bold text-[#bbf7d0] shadow-lg shadow-emerald-900/40 active:scale-[0.99]
+                                                       {% if batch.status != "SCHEDULED" and batch.status != "PAUSED" or has_other_running and batch.status != "RUNNING" %}opacity-40 pointer-events-none{% endif %}'
+                                                {% if batch.status != "SCHEDULED" and batch.status != "PAUSED" %}disabled{% endif %}
+                                            >
+                                                ▶️ INICIAR TODAS ({{ batch.display_tasks_total }} peças)
+                                            </button>
+                                        </form>
+
+                                        {% if has_other_running and batch.status != "RUNNING" %}
+                                            <div class='rounded-md border border-[#7f1d1d] bg-[#3b0a0a] px-3 py-2 text-[11px] font-semibold text-[#fecaca]'>
+                                                ⚠️ Você já tem outra tarefa/lote em andamento. Finalize ou pause ele antes.
+                                            </div>
+                                        {% endif %}
+
+                                        <form method='post' action='{% url "budgets:workorder_batch_pause" batch.id %}'>
+                                            {% csrf_token %}
+                                            <input type='hidden' name='next' value='{% url "budgets:kanban_my_tasks" %}' />
+                                            <button
+                                                type='submit'
+                                                class='w-full rounded-xl bg-[#92400e] px-4 py-3.5 text-[14px] font-bold text-[#fde68a] shadow-lg shadow-amber-900/40 active:scale-[0.99]
+                                                       {% if batch.status != "RUNNING" %}opacity-30 pointer-events-none grayscale{% endif %}'
+                                                {% if batch.status != "RUNNING" %}disabled{% endif %}
+                                            >
+                                                ⏸️ PAUSAR TODAS
+                                            </button>
+                                        </form>
+
+                                        <form method='post' action='{% url "budgets:workorder_batch_finish" batch.id %}'>
+                                            {% csrf_token %}
+                                            <input type='hidden' name='next' value='{% url "budgets:kanban_my_tasks" %}' />
+                                            <button
+                                                type='submit'
+                                                class='w-full rounded-xl bg-[#1e3a8a] px-4 py-3.5 text-[14px] font-bold text-[#bfdbfe] shadow-lg shadow-blue-900/40 active:scale-[0.99]
+                                                       {% if batch.status != "RUNNING" %}opacity-30 pointer-events-none grayscale{% endif %}'
+                                                {% if batch.status != "RUNNING" %}disabled{% endif %}
+                                            >
+                                                ✅ FINALIZAR TODAS (fecha OS automaticamente)
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            </article>
+                        {% endwith %}
+                    {% endfor %}
+                </div>
+            </section>
+        {% endif %}
+
         <section>
             <div class='mb-2 flex items-center justify-between'>
                 <h2 class='text-[13px] font-bold uppercase tracking-wide text-[#a3a3a3]'>
-                    {% if tasks %}Tarefas Pendentes / Em Andamento{% else %}Nenhuma tarefa para hoje{% endif %}
+                    {% if tasks %}
+                        {% if my_batches %}Tarefas Individuais pendentes{% else %}Tarefas Pendentes / Em Andamento{% endif %}
+                    {% else %}
+                        {% if my_batches %}{% else %}Nenhuma tarefa para hoje{% endif %}
+                    {% endif %}
                 </h2>
             </div>
 

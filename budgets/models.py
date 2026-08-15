@@ -331,6 +331,7 @@ class WorkOrderTask(models.Model):
     activity = models.CharField(max_length=20, choices=Activity.choices)
     service = models.ForeignKey(ServiceCatalog, on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
     description = models.CharField(max_length=255, blank=True)
+    batch = models.ForeignKey('WorkOrderTaskBatch', on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
     collaborator = models.ForeignKey('users.Collaborator', on_delete=models.PROTECT, null=True, blank=True)
     scheduled_date = models.DateField(null=True, blank=True)
     planned_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
@@ -351,6 +352,60 @@ class WorkOrderTask(models.Model):
 
     def __str__(self):
         return f'{self.get_activity_display()} - {self.work_order}'
+
+
+class WorkOrderTaskBatch(models.Model):
+    class Status(models.TextChoices):
+        SCHEDULED = 'SCHEDULED', 'Agendado'
+        RUNNING = 'RUNNING', 'Em andamento'
+        PAUSED = 'PAUSED', 'Pausado'
+        DONE = 'DONE', 'Concluído'
+
+    work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name='batches')
+    activity = models.CharField(max_length=20, choices=WorkOrderTask.Activity.choices)
+    collaborator = models.ForeignKey('users.Collaborator', on_delete=models.PROTECT, null=True, blank=True)
+    scheduled_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+        verbose_name = 'Lote de Tarefas (OS)'
+        verbose_name_plural = 'Lotes de Tarefas (OS)'
+
+    def __str__(self):
+        return f'Lote #{self.id} · {self.get_activity_display()} · {self.work_order}'
+
+    @property
+    def tasks_count(self):
+        return WorkOrderTask.objects.filter(batch_id=self.pk).count()
+
+    @property
+    def tasks_done_count(self):
+        return WorkOrderTask.objects.filter(batch_id=self.pk, status=WorkOrderTask.Status.DONE).count()
+
+    @property
+    def display_status_label(self):
+        return self.get_status_display()
+
+    @property
+    def total_planned_hours(self):
+        from django.db.models import Sum
+        res = WorkOrderTask.objects.filter(batch_id=self.pk).aggregate(
+            s=Sum('planned_hours')
+        )['s']
+        return res or Decimal('0')
+
+    @property
+    def total_actual_hours(self):
+        from django.db.models import Sum
+        res = WorkOrderTask.objects.filter(batch_id=self.pk).aggregate(
+            s=Sum('actual_hours')
+        )['s']
+        return res or Decimal('0')
 
 
 class CommissionLine(models.Model):

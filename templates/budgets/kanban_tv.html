@@ -63,8 +63,15 @@
               {% for t in col.tasks %}
                 <div class='rounded-lg border border-[#262626] p-2 {% if t.os_is_blocked %}bg-[#3B0A0A] border-[#7F1D1D]{% elif t.is_patio and t.patio_has_late_parts %}bg-[#3B0A0A] border-[#7F1D1D]{% elif t.is_patio %}bg-[#0B1F3B] border-[#1D4ED8]{% elif t.status == "DONE" %}bg-[#0B1F3B] border-[#1D4ED8]{% elif t.status == "RUNNING" %}bg-[#063018] border-[#2F855A]{% elif t.status == "PAUSED" %}bg-[#2A1E06] border-[#B7791F]{% else %}bg-[#0D0D0D]{% endif %}'>
                   <div class='flex items-start justify-between gap-2'>
-                    <div class='text-[11px] font-semibold text-[#F5F5F5] truncate'>
-                      OS #{{ t.work_order.budget.display_number }}
+                    <div class='min-w-0 flex-1'>
+                      <div class='text-[11px] font-semibold text-[#F5F5F5] truncate'>
+                        OS #{{ t.work_order.budget.display_number }}
+                      </div>
+                      {% if t.display_batch_badge %}
+                        <div class='mt-0.5 inline-flex items-center rounded border border-indigo-500 bg-indigo-950 px-1.5 py-0.5 text-[9px] font-extrabold text-indigo-200 tracking-wide'>
+                          {{ t.display_batch_badge }}
+                        </div>
+                      {% endif %}
                     </div>
                     <div class='flex items-center gap-1 shrink-0'>
                       {% if t.os_state_code == 'B' %}
