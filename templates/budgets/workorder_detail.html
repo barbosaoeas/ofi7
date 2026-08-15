@@ -369,13 +369,13 @@
                   value='{{ t.id }}'
                   data-bulk-task-checkbox='1'
                   class='h-4 w-4 rounded border border-slate-300 bg-white disabled:cursor-not-allowed disabled:opacity-40'
-                  {% if t.collaborator_id or os_status.is_blocked %}disabled{% endif %}
+                  {% if os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
-              <td class='px-4 py-3 text-slate-900'>{{ t.get_activity_display }}</td>
+              <td class='px-4 py-3 text-slate-900' data-task-activity='{{ t.activity }}'>{{ t.get_activity_display }}</td>
               <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
-              <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked %}disabled{% endif %}>
+              <td class='px-4 py-3' data-task-collaborator='1'>
+                <select form='task-{{ t.id }}' name='collaborator_id' data-task-collaborator-select='{{ t.id }}' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked %}disabled{% endif %}>
                   <option value=''>-</option>
                   {% for c in collaborators_operational %}
                     <option value='{{ c.id }}' {% if t.collaborator_id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -758,25 +758,86 @@
         var bulkSubmit = document.querySelector("[data-bulk-submit='1']");
         var bulkSelectAll = document.querySelector("[data-bulk-select-all='1']");
         var bulkClear = document.querySelector("[data-bulk-clear='1']");
+        var batchCreateBtn = document.querySelector("[data-batch-create-btn='1']");
+        var batchCreateTaskIdsInput = document.querySelector("[data-batch-create-task-ids='1']");
+        var osIsBlocked = !!bulkSubmit && bulkSubmit.hasAttribute('disabled') && (window.location.pathname || '').includes('/os/') ? (document.querySelector('form[data-bulk-panel="1"] p[class*="text-red-700"]') !== null) : false;
+
+        function getTaskRowMeta(checkbox) {
+          var tr = checkbox.closest('tr[data-task-row="1"]');
+          if (!tr) return { activity: '', collaborator_id: '' };
+          var activityTd = tr.querySelector('td[data-task-activity]');
+          var collabSelect = tr.querySelector('select[data-task-collaborator-select]');
+          var collabId = collabSelect ? String(collabSelect.value || '').trim() : '';
+          var activity = activityTd ? String(activityTd.getAttribute('data-task-activity') || '').trim() : '';
+          return { activity: activity, collaborator_id: collabId };
+        }
+
+        function validateBatchSelection(selectedIds) {
+          if (selectedIds.length < 2) return { ok: false, reason: 'Selecione pelo menos 2 tarefas.' };
+          var first = null;
+          for (var i = 0; i < bulkCheckboxes.length; i++) {
+            var cb = bulkCheckboxes[i];
+            if (!cb.checked) continue;
+            var meta = getTaskRowMeta(cb);
+            if (!meta.collaborator_id) return { ok: false, reason: 'Todas as tarefas selecionadas precisam ter colaborador atribuído.' };
+            if (!first) {
+              first = meta;
+              continue;
+            }
+            if (meta.activity !== first.activity) return { ok: false, reason: 'Todas as tarefas precisam ser da MESMA etapa.' };
+            if (meta.collaborator_id !== first.collaborator_id) return { ok: false, reason: 'Todas as tarefas precisam ter o MESMO colaborador.' };
+          }
+          return { ok: true, reason: '' };
+        }
 
         function updateBulkState() {
           var selected = [];
           var enabledCheckboxes = [];
+          var anySelectedHasCollab = false;
           bulkCheckboxes.forEach(function (checkbox) {
             if (!checkbox.disabled) enabledCheckboxes.push(checkbox);
-            if (checkbox.checked) selected.push(checkbox.value);
+            if (checkbox.checked) {
+              selected.push(checkbox.value);
+              var meta = getTaskRowMeta(checkbox);
+              if (meta.collaborator_id) anySelectedHasCollab = true;
+            }
           });
           if (bulkSelectedCount) bulkSelectedCount.textContent = String(selected.length);
           if (bulkTaskIdsInput) bulkTaskIdsInput.value = selected.join(',');
-          if (bulkSubmit) bulkSubmit.disabled = selected.length === 0;
+          if (bulkSubmit) bulkSubmit.disabled = selected.length === 0 || anySelectedHasCollab;
           if (bulkCheckAll) {
             bulkCheckAll.checked = enabledCheckboxes.length > 0 && selected.length === enabledCheckboxes.length;
             bulkCheckAll.disabled = enabledCheckboxes.length === 0;
+          }
+          if (batchCreateTaskIdsInput) batchCreateTaskIdsInput.value = selected.join(',');
+          if (batchCreateBtn) {
+            var valid = validateBatchSelection(selected);
+            batchCreateBtn.disabled = !valid.ok;
+            if (valid.ok) {
+              batchCreateBtn.removeAttribute('title');
+            } else {
+              batchCreateBtn.setAttribute('title', valid.reason);
+            }
+          }
+        }
+
+        var bulkTaskForm = document.querySelector("[data-bulk-panel='1'] form[action*='workorder_task_bulk_assign']");
+        if (bulkTaskForm) {
+          var bulkCollabSelect = bulkTaskForm.querySelector('select[name="bulk_collaborator_id"]');
+          if (bulkCollabSelect) {
+            bulkCollabSelect.addEventListener('change', function () {
+              updateBulkState();
+            });
           }
         }
 
         bulkCheckboxes.forEach(function (checkbox) {
           checkbox.addEventListener('change', updateBulkState);
+        });
+
+        var collabSelects = document.querySelectorAll('select[data-task-collaborator-select]');
+        collabSelects.forEach(function (sel) {
+          sel.addEventListener('change', updateBulkState);
         });
 
         if (bulkCheckAll) {
