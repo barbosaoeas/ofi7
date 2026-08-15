@@ -4100,6 +4100,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         if batch_ids:
             batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
             for b in batches_qs:
+                apply_batch_time_allocation(b, now=now)
                 btasks = list(b.tasks.all())
                 tot = len(btasks)
                 done = sum(1 for bt in btasks if bt.status == WorkOrderTask.Status.DONE)
@@ -4305,6 +4306,12 @@ class WorkOrderKanbanVisualView(WorkOrderKanbanTodayView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        now = timezone.now()
+        batch_ids = list({t.batch_id for t in context.get('tasks', []) if t.batch_id})
+        if batch_ids:
+            batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
+            for b in batches_qs:
+                apply_batch_time_allocation(b, now=now)
         context['is_visual_mode'] = True
         return context
 
@@ -4418,6 +4425,7 @@ class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, List
                 .order_by('id')
             )
             for batch in batches_qs:
+                apply_batch_time_allocation(batch, now=now)
                 batch_tasks = list(batch.tasks.all())
                 done_count = sum(1 for bt in batch_tasks if bt.status == WorkOrderTask.Status.DONE)
                 total_count = len(batch_tasks)
@@ -5205,6 +5213,16 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
                 selected_collaborator_id = ''
 
         now_local = timezone.localtime(timezone.now())
+
+        batches_exist = self.object.batches.exists()
+        if batches_exist:
+            running_batches = WorkOrderTaskBatch.objects.filter(
+                work_order=self.object,
+                status=WorkOrderTaskBatch.Status.RUNNING,
+            ).prefetch_related('tasks')
+            for b in running_batches:
+                apply_batch_time_allocation(b, now=timezone.now())
+
         os_status = compute_work_order_status(self.object, now=now_local)
 
         task_open_summaries = []
@@ -5364,6 +5382,152 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
 
 # =============================================================================
 # 🍱 SISTEMA DE LOTES DE TAREFAS (FASE 1: LOTE BÁSICO / 2 CLIQUES)
+# =============================================================================
+def apply_batch_time_allocation(batch, now=None):
+    """FASE2: RATEIO TEMPORAL AUTOMATICO.
+
+    Recebe um batch com status RUNNING (tem started_at definido).
+    Calcula elapsed total desde batch.started_at usando capped_work_delta_seconds
+    (mesmo cutoff 17:48 / allow_overtime do resto do sistema).
+    Itera as tarefas do batch EM ORDEM (order, pk).
+    Se elapsed >= sum(planned_hours ate peca N) => peca N DONE (salva completed_at,
+    elapsed_seconds individual, actual_hours). Atualiza sync_shop_service_from_task.
+    A PRIMEIRA peca ainda NAO concluida fica status RUNNING (as outras SCHEDULED/AG).
+    Se elapsed > total_planned_hours do batch => marca batch = RUNNING ainda mas
+    os cards mostram is_overdue=True (atrasado). Nao fecha comissoes nem OS aqui
+    (isso so na action FinishView, igual FASE1).
+
+    Args:
+        batch (WorkOrderTaskBatch): objeto batch (COM tasks prefetch_related de preferencia).
+        now (datetime): timezone-aware agora (para testes). Default: timezone.now().
+
+    Returns:
+        Tuple[bool, dict]: (saiu_gravando_algo_no_banco, info {'running_index': int or None,
+                                                               'running_task_id': int or None,
+                                                               'completed_count': int,
+                                                               'remaining_seconds_in_current': int,
+                                                               'elapsed_total_s': int})
+    """
+    if batch is None or not getattr(batch, 'pk', None):
+        return False, {}
+    now = now or timezone.now()
+    if batch.status != WorkOrderTaskBatch.Status.RUNNING:
+        return False, {}
+    if not getattr(batch, 'started_at', None):
+        return False, {}
+
+    batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
+    if not batch_tasks:
+        return False, {}
+
+    sorted_tasks = sorted(batch_tasks, key=lambda t: (getattr(t, 'order', 0) or 0, t.pk or 0))
+
+    allow_overtime_batch = bool(getattr(batch, 'collaborator', None))
+    delta_total_s, _eff_end = capped_work_delta_seconds(batch.started_at, now, allow_overtime_batch)
+    elapsed_total_s = max(int(delta_total_s or 0), 0)
+
+    total_done = 0
+    tasks_to_save = []
+    running_index = None
+    running_task_id = None
+    remaining_in_current_s = 0
+    cumulative_s = 0
+
+    for idx, t in enumerate(sorted_tasks):
+        planned_hours_t = float(getattr(t, 'planned_hours', 0) or 0)
+        planned_s_t = max(int(planned_hours_t * 3600), 0)
+        planned_end_s = cumulative_s + planned_s_t
+
+        was_done = (t.status == WorkOrderTask.Status.DONE)
+        if elapsed_total_s >= planned_end_s or was_done:
+            # Essa peca esta FEITA (no tempo previsto ou ja tinha sido DONE manual)
+            if not was_done:
+                t.status = WorkOrderTask.Status.DONE
+                t.completed_at = now
+                t.elapsed_seconds = int(getattr(t, 'elapsed_seconds', 0) or 0) + max(planned_s_t, 1)
+                t.actual_hours = (
+                    (Decimal(t.elapsed_seconds) / Decimal('3600'))
+                    .quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                )
+                try:
+                    sync_shop_service_from_task(t, save=False)
+                except Exception:
+                    pass
+                tasks_to_save.append(t)
+            total_done += 1
+            cumulative_s = planned_end_s
+        else:
+            # Ainda nao chegou nessa
+            if running_index is None:
+                # Essa e a PEÇA ATUAL
+                running_index = idx
+                running_task_id = t.pk
+                used_in_current_s = max(elapsed_total_s - cumulative_s, 0)
+                remaining_in_current_s = max(planned_s_t - used_in_current_s, 0)
+                # Marca ela como RUNNING (ainda que estivesse SCHEDULED)
+                if t.status != WorkOrderTask.Status.RUNNING:
+                    t.status = WorkOrderTask.Status.RUNNING
+                    t.last_started_at = batch.started_at
+                    t.elapsed_seconds = int(getattr(t, 'elapsed_seconds', 0) or 0)
+                    tasks_to_save.append(t)
+                else:
+                    # Ja esta RUNNING, so confirma last_started_at = started_at do batch
+                    # se nao tiver (mantem individual do clique)
+                    if not getattr(t, 'last_started_at', None):
+                        t.last_started_at = batch.started_at
+                        tasks_to_save.append(t)
+                cumulative_s = planned_end_s
+            else:
+                # Ja temos uma peça RUNNING; as restantes ficam (ou voltam para) SCHEDULED
+                # a MENOS que estejam DONE (manual).
+                if t.status not in (WorkOrderTask.Status.DONE, WorkOrderTask.Status.SCHEDULED):
+                    t.status = WorkOrderTask.Status.SCHEDULED
+                    tasks_to_save.append(t)
+                cumulative_s = planned_end_s
+
+    # Garantir: se todas as tarefas sao DONE (chegou no total_planned_hours), atualiza status
+    if total_done >= len(sorted_tasks) and len(sorted_tasks) > 0:
+        if batch.status != WorkOrderTaskBatch.Status.DONE:
+            batch.status = WorkOrderTaskBatch.Status.DONE
+            batch.finished_at = now
+            tasks_to_save.append(('BATCH', batch))
+
+    if tasks_to_save:
+        for item in tasks_to_save:
+            if isinstance(item, tuple) and item[0] == 'BATCH':
+                b = item[1]
+                b.save(update_fields=['status', 'finished_at'])
+            else:
+                task_obj = item
+                uf = ['status', 'elapsed_seconds', 'actual_hours']
+                if task_obj.status == WorkOrderTask.Status.RUNNING:
+                    uf.append('last_started_at')
+                if task_obj.status == WorkOrderTask.Status.DONE:
+                    uf.append('completed_at')
+                task_obj.save(update_fields=uf)
+        return (
+            True,
+            {
+                'running_index': running_index,
+                'running_task_id': running_task_id,
+                'completed_count': total_done,
+                'remaining_seconds_in_current': remaining_in_current_s,
+                'elapsed_total_s': elapsed_total_s,
+            },
+        )
+
+    return (
+        False,
+        {
+            'running_index': running_index,
+            'running_task_id': running_task_id,
+            'completed_count': total_done,
+            'remaining_seconds_in_current': remaining_in_current_s,
+            'elapsed_total_s': elapsed_total_s,
+        },
+    )
+
+
 # =============================================================================
 def _batch_redirect(request, default_url, batch=None, work_order_pk=None):
     next_url = (request.POST.get('next') or '').strip()
