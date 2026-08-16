@@ -5491,8 +5491,15 @@ def apply_batch_time_allocation(batch, now=None, can_write_db: bool = False):
 
     sorted_tasks = sorted(batch_tasks, key=lambda t: (getattr(t, 'order', 0) or 0, t.pk or 0))
 
-    allow_overtime_batch = bool(getattr(batch, 'collaborator', None))
-    delta_total_s, _eff_end = capped_work_delta_seconds(started_at_batch, now, allow_overtime_batch)
+    # 🔧 TRAVA CUTOFF 17:48 NO RATEIO TEMPORAL (igual comportamento individual Start/Pause/Finish).
+    # allow_overtime = ALL(tarefas do batch tem Extra liberado).
+    # Se QUALQUER peça do lote tiver allow_overtime=False → capped_work_delta_seconds trava
+    # em 17:48 do dia e NAO ACUMULA MAIS HORAS (nao deixa peças "correr" de madrugada no rateio).
+    all_allow_overtime = True
+    if sorted_tasks:
+        all_allow_overtime = all(bool(getattr(t, 'allow_overtime', False)) for t in sorted_tasks)
+
+    delta_total_s, _eff_end = capped_work_delta_seconds(started_at_batch, now, all_allow_overtime)
     elapsed_total_s = max(int(delta_total_s or 0), 0)
 
     total_done = 0
@@ -5880,6 +5887,18 @@ class WorkOrderTaskBatchFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
         if batch is None:
             raise Http404('Lote não encontrado.')
         redirect_kanban = 'budgets:kanban_today'
+
+        # 🔧 Blindagem anti-double-click (2 cliques Finalizar Todas muito rapidamente):
+        # Lote já está DONE? Não processe nada (mesmo que o exist() na comissão evite duplicações,
+        # evita loops inúteis de 25 tasks + sync_shop_service em cada).
+        if batch.status == WorkOrderTaskBatch.Status.DONE:
+            try:
+                label = batch.work_order.budget.display_number
+            except Exception:
+                label = str(batch.work_order_id)
+            messages.info(request, f'Lote #{batch.id} já foi finalizado anteriormente (OS #{label}).')
+            return _batch_redirect(request, redirect_kanban, batch=batch)
+
         tasks = list(
             batch.tasks.exclude(status=WorkOrderTask.Status.DONE)
             .order_by('order')
