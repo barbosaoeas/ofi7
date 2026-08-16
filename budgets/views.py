@@ -18,9 +18,14 @@ from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import re
+import threading
 from uuid import uuid4
 from xml.etree import ElementTree
 from django.db.models import Q
+
+# Thread-local guard para auto_pause_and_reschedule_after_cutoff rodar SOMENTE 1 VEZ POR REQUEST
+# (Evita chamar 3x no mesmo request se KanbanToday + Mobile + Detail forem compostos)
+_cutoff_guard = threading.local()
 
 from customers.models import Customer, Vehicle
 from core.views import RoleRequiredMixin
@@ -3984,61 +3989,12 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return super().dispatch(request, *args, **kwargs)
 
     def _next_workday(self, day):
-        next_day = day + timedelta(days=1)
-        while next_day.weekday() >= 5:
-            next_day = next_day + timedelta(days=1)
-        return next_day
+        return _get_next_weekday(day)
 
     def _auto_pause_end_of_day(self):
-        now = timezone.localtime(timezone.now())
-        cutoff = KANBAN_CUTOFF_TIME
-        today = now.date()
-        is_after_cutoff = now.time() >= cutoff
-        is_sunday = today.weekday() == 6
-        reschedule_today = today if not is_sunday else self._next_workday(today)
-        tomorrow = self._next_workday(today)
-
-        running_tasks = (
-            WorkOrderTask.objects.select_related('collaborator')
-            .filter(status=WorkOrderTask.Status.RUNNING)
-            .filter(allow_overtime=False)
-            .exclude(last_started_at__isnull=True)
-        )
-
-        if not running_tasks.exists():
-            return
-
-        for task in running_tasks:
-            last = timezone.localtime(task.last_started_at) if task.last_started_at else None
-            if last is None:
-                continue
-
-            started_day = last.date()
-            if started_day == today:
-                if not is_after_cutoff:
-                    continue
-                reschedule_date = tomorrow
-            else:
-                reschedule_date = reschedule_today
-
-            delta, effective_end = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
-            task.elapsed_seconds = int(task.elapsed_seconds or 0) + delta
-            task.last_started_at = None
-            task.status = WorkOrderTask.Status.PAUSED
-            task.scheduled_date = reschedule_date
-            task.actual_hours = (Decimal(task.elapsed_seconds) / Decimal('3600')).quantize(
-                Decimal('0.01'),
-                rounding=ROUND_HALF_UP,
-            )
-            task.save(
-                update_fields=[
-                    'elapsed_seconds',
-                    'last_started_at',
-                    'status',
-                    'scheduled_date',
-                    'actual_hours',
-                ]
-            )
+        """Refatorado: usa helper GLOBAL auto_pause_and_reschedule_after_cutoff que agora
+        cobre TANTO tarefas individuais QUANTO lotes (antes só tratava individuais)."""
+        auto_pause_and_reschedule_after_cutoff()
 
     def dispatch(self, request, *args, **kwargs):
         self._auto_pause_end_of_day()
@@ -4349,6 +4305,11 @@ class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, List
                 request,
                 'Usuário não vinculado a um colaborador. Solicite ao gerente que cadastre o seu email igual no cadastro de Colaboradores.',
             )
+        # 🔧 Aplica a trava 17:48 (pausa + reagenda LOTES e individuais) no carregamento mobile do colaborador
+        try:
+            auto_pause_and_reschedule_after_cutoff()
+        except Exception:
+            pass
         return super().dispatch(request, *args, **kwargs)
 
     def get_queryset(self):
@@ -5193,6 +5154,12 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        # 🔧 Trava final de expediente 17:48: pausa + reagenda tarefas individuais e LOTES abertos
+        #    (aplica para TODO o sistema, nao so a OS aberta - 1 vez por minuto por thread)
+        try:
+            auto_pause_and_reschedule_after_cutoff()
+        except Exception:
+            pass
         sync_xml_third_party_services(self.object.budget)
         tasks_open = self.object.tasks.exclude(status=WorkOrderTask.Status.DONE).select_related('collaborator')
         tasks_done = self.object.tasks.filter(status=WorkOrderTask.Status.DONE).select_related('collaborator')
@@ -5383,6 +5350,207 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
 # =============================================================================
 # 🍱 SISTEMA DE LOTES DE TAREFAS (FASE 1: LOTE BÁSICO / 2 CLIQUES)
 # =============================================================================
+
+def _get_next_weekday(day: date) -> date:
+    """Retorna o PROXIMO DIA UTIL a partir de day (pula sábado=5 e domingo=6).
+    Exemplo: sex-feira dia 16 -> seg 19; terca dia 13 -> qua 14; dom dia 17 -> seg 18."""
+    next_day = day + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day = next_day + timedelta(days=1)
+    return next_day
+
+
+def auto_pause_and_reschedule_after_cutoff(now=None, write_db: bool = True):
+    """Aplica a TRAVA DE FINAL DE EXPEDIENTE 17:48 em TUDO (tarefas individuais E LOTES).
+
+    REGRA (igual o usuario descreveu, comportamento igual ja existia para tarefas individuais):
+    1. Horario >= 17:48 (KANBAN_CUTOFF_TIME) OU tarefa/lote RUNNING desde DIA ANTERIOR (ontem, etc)
+    2. allow_overtime=False (NAO AUTORIZADO hh extra)
+    3. PAUSA a tarefa/lote (status -> PAUSED)
+    4. GRAVA as horas ACUMULADAS ATE O MOMENTO (actual_hours += elapsed via capped_work_delta_seconds)
+    5. REAGENDA para PRIMEIRO DIA UTIL APOS HOJE (scheduled_date = proximo dia util).
+    6. No dia seguinte: tarefa aparece status PAUSED -> botao INICIAR fica ativo (igual usuario pediu).
+    """
+    if now is None:
+        now = timezone.localtime(timezone.now())
+    else:
+        now = timezone.localtime(now)
+
+    # 🔒 Idempotencia: se write_db=True e ja rodou nesse mesmo minuto (HH:MM), retorna cedo
+    # (mesmo que multiplas views o chamem no mesmo request, 1 pausa por minuto eh suficiente).
+    if write_db:
+        minute_key = f"{now.strftime('%Y%m%d%H%M')}_cutoff_ran"
+        already_ran = getattr(_cutoff_guard, minute_key, False)
+        if already_ran:
+            return
+        setattr(_cutoff_guard, minute_key, True)
+
+    cutoff = KANBAN_CUTOFF_TIME
+    today = now.date()
+    is_after_cutoff = now.time() >= cutoff
+    is_sunday = today.weekday() == 6
+
+    # proximo dia util a partir de hoje:
+    next_workday = _get_next_weekday(today)
+    # se hoje for sabado/feriado/nao util: reagendar para hoje (util) ou proximo
+    reschedule_today = today if not is_sunday else next_workday
+
+    # -------------------------------------------------------------------------
+    # PARTE 1: TAREFAS INDIVIDUAIS (batch_id=NULL — comportamento legado)
+    # -------------------------------------------------------------------------
+    try:
+        running_individual = list(
+            WorkOrderTask.objects.select_related('collaborator')
+            .filter(status=WorkOrderTask.Status.RUNNING)
+            .filter(allow_overtime=False)
+            .exclude(last_started_at__isnull=True)
+            .exclude(batch_id__isnull=False)   # individuais = NAO em lote
+        )
+    except Exception:
+        running_individual = []
+
+    if running_individual:
+        for task in running_individual:
+            try:
+                last = timezone.localtime(task.last_started_at) if task.last_started_at else None
+                if last is None:
+                    continue
+                started_day = last.date()
+                reschedule_date = reschedule_today
+                if started_day == today:
+                    if not is_after_cutoff:
+                        # ainda dentro do expediente: nao fazer nada
+                        continue
+                    # hoje e passou de 17:48 => reagendar amanha (proximo util)
+                    reschedule_date = next_workday
+
+                delta, _eff = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
+                task.elapsed_seconds = int(task.elapsed_seconds or 0) + int(delta or 0)
+                task.last_started_at = None
+                task.status = WorkOrderTask.Status.PAUSED
+                task.scheduled_date = reschedule_date
+                hrs = (Decimal(int(task.elapsed_seconds or 0)) / Decimal('3600')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                )
+                task.actual_hours = hrs
+                if write_db:
+                    task.save(
+                        update_fields=[
+                            'elapsed_seconds',
+                            'last_started_at',
+                            'status',
+                            'scheduled_date',
+                            'actual_hours',
+                        ]
+                    )
+                    try:
+                        sync_shop_service_from_task(task)
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+
+    # -------------------------------------------------------------------------
+    # PARTE 2: LOTES DE TAREFAS (WorkOrderTaskBatch.status == RUNNING)
+    # NOVO — Nao existia antes de hoje. Igual comportamento individual:
+    #   Se allow_overtime = qualquer tarefa allow_overtime=False => geral bloqueado
+    #   Pausa TODAS tarefas RUNNING do lote (capped_work_delta individual)
+    #   Batch.status -> PAUSED + scheduled_date = proximo dia util
+    #   Cada tarefa do batch RUNNING -> PAUSED + scheduled_date = mesmo prox dia util
+    # -------------------------------------------------------------------------
+    try:
+        running_batches = list(
+            WorkOrderTaskBatch.objects.select_related('work_order', 'collaborator')
+            .filter(status=WorkOrderTaskBatch.Status.RUNNING)
+            .prefetch_related('tasks')
+        )
+    except Exception:
+        running_batches = []
+
+    if running_batches:
+        for batch in running_batches:
+            try:
+                batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
+                if not batch_tasks:
+                    continue
+                all_allow_ot = all(bool(getattr(t, 'allow_overtime', False)) for t in batch_tasks)
+                if all_allow_ot:
+                    # todas autorizadas extra: nao pausar
+                    continue
+
+                started_at_utc = getattr(batch, 'started_at', None)
+                if not started_at_utc:
+                    # se lote RUNNING mas sem started_at, pegar min(last_started_at das tarefas)
+                    starts = [t.last_started_at for t in batch_tasks if getattr(t, 'last_started_at', None)]
+                    if starts:
+                        started_at_utc = min(starts)
+                    else:
+                        continue
+                started_at_local = timezone.localtime(started_at_utc)
+                started_day = started_at_local.date()
+
+                if started_day == today and not is_after_cutoff:
+                    # dentro do expediente ainda: nao pausar
+                    continue
+
+                if started_day == today:
+                    reschedule_date = next_workday
+                else:
+                    reschedule_date = reschedule_today
+
+                # (2.1) pausar tarefas RUNNING do batch (igual BatchPauseView):
+                paused_count = 0
+                for task in batch_tasks:
+                    if task.status != WorkOrderTask.Status.RUNNING:
+                        continue
+                    try:
+                        if not getattr(task, 'last_started_at', None):
+                            continue
+                        delta, _eff = capped_work_delta_seconds(task.last_started_at, now, bool(task.allow_overtime))
+                        task.elapsed_seconds = int(task.elapsed_seconds or 0) + int(delta or 0)
+                        task.last_started_at = None
+                        task.status = WorkOrderTask.Status.PAUSED
+                        task.scheduled_date = reschedule_date
+                        hrs = (Decimal(int(task.elapsed_seconds or 0)) / Decimal('3600')).quantize(
+                            Decimal('0.01'), rounding=ROUND_HALF_UP
+                        )
+                        task.actual_hours = hrs
+                        if write_db:
+                            task.save(
+                                update_fields=[
+                                    'elapsed_seconds',
+                                    'last_started_at',
+                                    'status',
+                                    'scheduled_date',
+                                    'actual_hours',
+                                ]
+                            )
+                            try:
+                                sync_shop_service_from_task(task)
+                            except Exception:
+                                pass
+                        paused_count += 1
+                    except Exception:
+                        continue
+
+                # (2.2) pausar o proprio batch + atualizar scheduled_date do lote:
+                if write_db and (paused_count > 0 or batch.status != WorkOrderTaskBatch.Status.PAUSED):
+                    try:
+                        updated = []
+                        batch.status = WorkOrderTaskBatch.Status.PAUSED
+                        updated.append('status')
+                        if getattr(batch, 'scheduled_date', None) != reschedule_date:
+                            batch.scheduled_date = reschedule_date
+                            updated.append('scheduled_date')
+                        if updated:
+                            updated.append('updated_at')
+                            batch.save(update_fields=updated)
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+
+
 def apply_batch_time_allocation(batch, now=None, can_write_db: bool = False):
     """FASE2: RATEIO TEMPORAL AUTOMATICO.
 
