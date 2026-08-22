@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('budgets', '0031_customer_type_on_budget_and_cashmovement'),
-        ('users', '0007_alter_collaborator_function_alter_customuser_role'),
+        ('users', '0006_sync_collaborator_emails_to_users'),
     ]
 
     operations = [

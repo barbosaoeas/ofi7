@@ -1,1093 +1,43 @@
-from django import forms
-from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db import transaction
-from django.db.models import Case, Count, Exists, IntegerField, Max, OuterRef, Sum, Value, When
-from django.db.models.functions import Coalesce
+from django.db import OperationalError, transaction
+from django.db.models import Exists, OuterRef
 from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.dateparse import parse_date
-from django.utils.text import slugify
 from django.views import View
 from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, UpdateView
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-import re
-import threading
+import time
 from uuid import uuid4
 from xml.etree import ElementTree
 from django.db.models import Q
-
-# Thread-local guard para auto_pause_and_reschedule_after_cutoff rodar SOMENTE 1 VEZ POR REQUEST
-# (Evita chamar 3x no mesmo request se KanbanToday + Mobile + Detail forem compostos)
-_cutoff_guard = threading.local()
 
 from customers.models import Customer, Vehicle
 from core.views import RoleRequiredMixin
 from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
-from .calendar_utils import (
-    KANBAN_CUTOFF_TIME,
-    capped_work_delta_seconds,
-    next_weekday_including_saturday,
-    budget_has_pending_shop_parts,
-    budget_get_pending_shop_parts,
-    compute_performance_report,
-    compute_work_order_status,
-    get_elapsed_seconds_for_display,
-    performance_report_to_text,
-    seconds_to_hms,
-    simplify_task_status_label,
-    TaskStatus_SCHEDULED,
-    TaskStatus_RUNNING,
-    TaskStatus_PAUSED,
-    TaskStatus_DONE,
-    BudgetStatus_AUTHORIZED,
-)
-from .forms import AdministrativeClosureForm, BankAccountForm, CiliaXMLUploadForm, FinanceXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask, WorkOrderTaskBatch, XMLImportJob
-from .services.cilia_import_service import CiliaImportDuplicateError, CiliaImportError, CiliaImportValidationError, import_cilia_xml_bytes
+from .forms import BankAccountForm, CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
+from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
 
 
-WORK_ORDER_ACTIVITY_SEQUENCE = [
-    WorkOrderTask.Activity.DISMANTLING,
-    WorkOrderTask.Activity.BODYWORK,
-    WorkOrderTask.Activity.PREPARATION,
-    WorkOrderTask.Activity.PAINTING,
-    WorkOrderTask.Activity.ASSEMBLY,
-    WorkOrderTask.Activity.POLISHING,
-    WorkOrderTask.Activity.DELIVERY_PREP,
-]
+KANBAN_CUTOFF_TIME = dt_time(17, 48)
 
 
-def get_activity_predecessors(activity):
-    try:
-        index = WORK_ORDER_ACTIVITY_SEQUENCE.index(activity)
-    except ValueError:
-        return []
-    return WORK_ORDER_ACTIVITY_SEQUENCE[:index]
-
-
-def get_task_dependency_key(task):
-    if task is None:
-        return ''
-
-    description = (getattr(task, 'description', '') or '').strip()
-    if not description:
-        return ''
-
-    code_match = re.search(r'\((?:[^)]*?)(\d{4,})(?:[^)]*?)\)', description)
-    if code_match:
-        return f'code:{code_match.group(1)}'
-
-    normalized = _normalize_lookup_key(description)
-    prefixes = (
-        'desmontagem-',
-        'funilaria-',
-        'preparacao-',
-        'preparacao-para-entrega-',
-        'prep-entrega-',
-        'pintura-',
-        'montagem-',
-        'polimento-',
-    )
-    for prefix in prefixes:
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
-            break
-    return normalized
-
-
-def get_task_sequence_blockers(task):
-    predecessors = get_activity_predecessors(task.activity)
-    if not predecessors:
-        return []
-
-    dependency_key = get_task_dependency_key(task)
-    predecessor_qs = WorkOrderTask.objects.filter(
-        work_order_id=task.work_order_id,
-        activity__in=predecessors,
-    )
-    if dependency_key:
-        matching_ids = [
-            candidate.id
-            for candidate in predecessor_qs.only('id', 'description')
-            if get_task_dependency_key(candidate) == dependency_key
-        ]
-        predecessor_qs = predecessor_qs.filter(id__in=matching_ids)
-
-    if not dependency_key:
-        predecessor_qs = WorkOrderTask.objects.filter(
-            work_order_id=task.work_order_id,
-            activity__in=predecessors,
-        )
-
-    pending_activities = list(
-        predecessor_qs
-        .exclude(status=WorkOrderTask.Status.DONE)
-        .values_list('activity', flat=True)
-        .distinct()
-    )
-    label_map = dict(WorkOrderTask.Activity.choices)
-    ordered_pending = [activity for activity in predecessors if activity in pending_activities]
-    return [label_map.get(activity, activity) for activity in ordered_pending]
-
-
-def get_task_sequence_block_message(task):
-    blockers = get_task_sequence_blockers(task)
-    if not blockers:
-        return ''
-    if len(blockers) == 1:
-        return f'Conclua primeiro {blockers[0]}.'
-    return 'Conclua primeiro: ' + ', '.join(blockers) + '.'
-
-
-def task_has_blocking_pending_shop_parts(task):
-    if task is None:
-        return False
-
-    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+def budget_has_pending_shop_parts(budget):
     if not budget or not getattr(budget, 'id', None):
         return False
-
-    pending_parts = list(
-        Piece.objects.filter(
-            budget_id=budget.id,
-            provider_type=Piece.ProviderType.SHOP,
-            arrived=False,
-            arrival_date__isnull=True,
-        ).only('name')
-    )
-    if not pending_parts:
-        return False
-
-    task_key = get_task_dependency_key(task)
-    if not task_key:
-        return True
-
-    for part in pending_parts:
-        part_key = _normalize_lookup_key(getattr(part, 'name', '') or '')
-        if not part_key:
-            continue
-        if task_key == part_key or part_key in task_key or task_key in part_key:
-            return True
-    return False
-
-
-def _normalize_text(value):
-    return (value or '').strip()
-
-
-def _normalize_lookup_key(value):
-    return slugify(_normalize_text(value))
-
-
-def _parse_xml_text(element, tag_name):
-    child = element.find(tag_name)
-    if child is None:
-        return ''
-    return ''.join(child.itertext()).strip()
-
-
-def _parse_xml_int(element, tag_name):
-    raw = _parse_xml_text(element, tag_name)
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except Exception:
-        return None
-
-
-def _parse_xml_date(element, tag_name):
-    raw = _parse_xml_text(element, tag_name)
-    if not raw:
-        return None
-    try:
-        return date.fromisoformat(raw)
-    except Exception:
-        return None
-
-
-def _parse_xml_bool(element, tag_name, default=False):
-    raw = _parse_xml_text(element, tag_name).lower()
-    if not raw:
-        return default
-    return raw in ('1', 'true', 'yes', 'sim')
-
-
-def _parse_xml_decimal(element, tag_name):
-    raw = _parse_xml_text(element, tag_name)
-    if not raw:
-        return None
-    raw = raw.replace('R$', '').strip().replace(' ', '')
-    if ',' in raw and '.' in raw:
-        raw = raw.replace('.', '').replace(',', '.')
-    elif ',' in raw:
-        raw = raw.replace(',', '.')
-    try:
-        return Decimal(raw).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    except Exception:
-        return None
-
-
-def recalculate_budget_total(budget):
-    base_total = Decimal('0')
-    xml = budget.source_xml or ''
-    if xml:
-        try:
-            _, _, _, parsed_total_amount, _, _, _, *_ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
-            base_total = parsed_total_amount
-        except Exception:
-            base_total = budget.total_amount
-    else:
-        base_total = budget.total_amount
-
-    budget.total_amount = base_total + get_budget_extra_third_party_total(budget)
-    budget.save(update_fields=['total_amount'])
-
-
-def third_party_identity(description, amount):
-    normalized_description = (description or '').strip().lower()
-    normalized_amount = (amount or Decimal('0')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    return normalized_description, normalized_amount
-
-
-def normalize_service_description(description):
-    return (description or '').strip().lower()
-
-
-def is_office_managed_service(description):
-    desc = normalize_service_description(description)
-    office_keywords = (
-        'lavagem',
-        'lavacao',
-        'lavação',
-        'polimento',
-    )
-    return any(keyword in desc for keyword in office_keywords)
-
-
-def third_party_service_is_shop(service):
-    if service is None:
-        return False
-    return bool(getattr(service, 'is_shop_service', False) or is_office_managed_service(getattr(service, 'description', '')))
-
-
-def service_description_is_shop(description, explicit_shop=False):
-    return bool(explicit_shop or is_office_managed_service(description))
-
-
-def office_managed_service_activity(description, explicit_shop=False):
-    desc = normalize_service_description(description)
-    if 'polimento' in desc:
-        return WorkOrderTask.Activity.POLISHING
-    if 'lavagem' in desc or 'lavacao' in desc or 'lavação' in desc:
-        return WorkOrderTask.Activity.DELIVERY_PREP
-    if service_description_is_shop(description, explicit_shop):
-        if 'martelinho' in desc:
-            return WorkOrderTask.Activity.BODYWORK
-        return WorkOrderTask.Activity.BODYWORK
-    return None
-
-
-def map_third_party_status_to_task_status(status):
-    if status == ThirdPartyService.Status.DONE:
-        return WorkOrderTask.Status.DONE
-    if status == ThirdPartyService.Status.IN_PROGRESS:
-        return WorkOrderTask.Status.RUNNING
-    return WorkOrderTask.Status.SCHEDULED
-
-
-def get_budget_service_lines(budget):
-    xml = (getattr(budget, 'source_xml', None) or '').strip()
-    if not xml:
-        return []
-    try:
-        return extract_service_lines(xml.encode('utf-8', errors='replace'))
-    except Exception:
-        return []
-
-
-def get_budget_xml_manual_services_map(budget):
-    manual_services = {}
-    for line in get_budget_service_lines(budget):
-        manual_amount = line.get('manual_amount', Decimal('0')) or Decimal('0')
-        description = line.get('description') or ''
-        if manual_amount <= 0 or not description:
-            continue
-        manual_services[normalize_service_description(description)] = line
-    return manual_services
-
-
-def get_budget_extra_third_party_total(budget):
-    xml_manual_services = get_budget_xml_manual_services_map(budget)
-    total = Decimal('0')
-    for service in budget.third_party_services.all().only('description', 'amount'):
-        if normalize_service_description(service.description) in xml_manual_services:
-            continue
-        total += service.amount or Decimal('0')
-    return total
-
-
-def get_visible_third_party_services(budget):
-    xml_manual_services = get_budget_xml_manual_services_map(budget)
-    services = list(
-        budget.third_party_services.select_related('supplier').all()
-    )
-    visible = []
-    grouped = {}
-    for service in services:
-        description_key = normalize_service_description(service.description)
-        grouped.setdefault(description_key, []).append(service)
-
-    for description_key, items in grouped.items():
-        expected_line = xml_manual_services.get(description_key)
-        if expected_line is None:
-            visible.extend(items)
-            continue
-        expected_amount = (expected_line.get('total_amount') or Decimal('0')).quantize(
-            Decimal('0.01'),
-            rounding=ROUND_HALF_UP,
-        )
-        exact_matches = [
-            item for item in items
-            if (item.amount or Decimal('0')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) == expected_amount
-        ]
-        selected_pool = exact_matches or items
-        visible.append(
-            sorted(
-                selected_pool,
-                key=lambda item: (
-                    1 if item.status == ThirdPartyService.Status.DONE else 0,
-                    1 if item.supplier_id else 0,
-                    item.id,
-                ),
-            )[-1]
-        )
-
-    visible = sorted(
-        visible,
-        key=lambda item: (
-            item.status,
-            item.scheduled_date or date.max,
-            item.id,
-        ),
-    )
-    for item in visible:
-        item.effective_is_shop_service = third_party_service_is_shop(item)
-    return visible
-
-
-def get_external_visible_third_party_services(budget):
-    return [service for service in get_visible_third_party_services(budget) if not third_party_service_is_shop(service)]
-
-
-def sync_office_managed_service_tasks(work_order):
-    budget = getattr(work_order, 'budget', None)
-    if budget is None:
-        return
-
-    service_lines = get_budget_service_lines(budget)
-
-    current_order = work_order.tasks.order_by('-order').values_list('order', flat=True).first() or 0
-    third_party_by_description = {}
-    for service in budget.third_party_services.all():
-        description_key = normalize_service_description(service.description)
-        current = third_party_by_description.get(description_key)
-        if third_party_service_is_shop(service) and (current is None or service.id > current.id):
-            third_party_by_description[description_key] = service
-
-    for line in service_lines:
-        description = (line.get('description') or '').strip()
-        manual_amount = line.get('manual_amount', Decimal('0')) or Decimal('0')
-        linked_service = third_party_by_description.get(normalize_service_description(description))
-        explicit_shop = linked_service is not None and bool(getattr(linked_service, 'is_shop_service', False))
-        activity = office_managed_service_activity(description, explicit_shop=explicit_shop)
-        if not description or manual_amount <= 0 or activity is None:
-            continue
-
-        matching_task = work_order.tasks.filter(
-            activity=activity,
-            description__iexact=description,
-        ).first()
-        placeholder_task = None
-        if matching_task is None:
-            placeholder_task = work_order.tasks.filter(
-                activity=activity,
-                description='',
-            ).first()
-
-        linked_service = third_party_by_description.get(normalize_service_description(description))
-        task = matching_task or placeholder_task
-        update_fields = []
-        if task is None:
-            current_order += 10
-            task = WorkOrderTask.objects.create(
-                work_order=work_order,
-                activity=activity,
-                description=description,
-                planned_amount=manual_amount,
-                order=current_order,
-                scheduled_date=getattr(linked_service, 'scheduled_date', None) if linked_service is not None else None,
-                status=map_third_party_status_to_task_status(getattr(linked_service, 'status', None)) if linked_service is not None else WorkOrderTask.Status.SCHEDULED,
-                completed_at=getattr(linked_service, 'completed_at', None) if linked_service is not None else None,
-            )
-            continue
-
-        # PROTECAO ANTI-RESET (OS #592): Se a tarefa JA FOI INICIADA/PAUSADA/CONCLUIDA
-        # (status != SCHEDULED), NAO ALTERA status/completed/collaborator/REAL HOURS.
-        # Apenas atualiza metadados (description / planned_amount / scheduled_date).
-        task_is_scheduled_only = task.status == WorkOrderTask.Status.SCHEDULED
-
-        if task.description != description:
-            task.description = description
-            update_fields.append('description')
-        if task.planned_amount != manual_amount:
-            task.planned_amount = manual_amount
-            update_fields.append('planned_amount')
-        if linked_service is not None:
-            if task.scheduled_date != linked_service.scheduled_date:
-                task.scheduled_date = linked_service.scheduled_date
-                update_fields.append('scheduled_date')
-            if task_is_scheduled_only:
-                mapped_status = map_third_party_status_to_task_status(linked_service.status)
-                if mapped_status != task.status:
-                    task.status = mapped_status
-                    update_fields.append('status')
-                if linked_service.status == ThirdPartyService.Status.DONE and task.completed_at != linked_service.completed_at:
-                    task.completed_at = linked_service.completed_at
-                    update_fields.append('completed_at')
-        if update_fields:
-            task.save(update_fields=sorted(set(update_fields)))
-
-    for service in budget.third_party_services.all():
-        if not third_party_service_is_shop(service):
-            continue
-        description = (service.description or '').strip()
-        if not description:
-            continue
-        description_key = normalize_service_description(description)
-        if description_key in {
-            normalize_service_description(line.get('description'))
-            for line in service_lines
-            if line.get('description')
-        }:
-            continue
-        activity = office_managed_service_activity(description, explicit_shop=True)
-        if activity is None:
-            continue
-        task = work_order.tasks.filter(activity=activity, description__iexact=description).first()
-        if task is None:
-            current_order += 10
-            WorkOrderTask.objects.create(
-                work_order=work_order,
-                activity=activity,
-                description=description,
-                planned_amount=service.amount or Decimal('0'),
-                order=current_order,
-                scheduled_date=service.scheduled_date,
-                status=map_third_party_status_to_task_status(service.status),
-                completed_at=service.completed_at,
-            )
-
-
-def sync_xml_third_party_services(budget):
-    xml = (getattr(budget, 'source_xml', None) or '').strip()
-    if not xml:
-        return 0
-
-    try:
-        lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
-    except Exception:
-        return 0
-
-    third_party_lines = [line for line in lines if line.get('is_third_party')]
-    if not third_party_lines:
-        return 0
-
-    existing_keys = {
-        third_party_identity(service.description, service.amount)
-        for service in ThirdPartyService.objects.filter(budget_id=budget.id).only('description', 'amount')
-    }
-
-    created = 0
-    for line in third_party_lines:
-        description = (line.get('description') or '').strip()
-        amount = line.get('total_amount', Decimal('0')) or Decimal('0')
-        if not description or amount <= 0:
-            continue
-        identity = third_party_identity(description, amount)
-        if identity in existing_keys:
-            continue
-        ThirdPartyService.objects.create(
-            budget=budget,
-            description=description,
-            amount=amount,
-            status=ThirdPartyService.Status.SCHEDULED,
-            is_shop_service=is_office_managed_service(description),
-        )
-        existing_keys.add(identity)
-        created += 1
-
-    if created:
-        recalculate_budget_total(budget)
-    return created
-
-
-def pending_budget_finance_session_key(budget_id):
-    return f'pending_budget_finance_{budget_id}'
-
-
-def serialize_pending_budget_data(cleaned_data):
-    payload = {}
-    for field in (
-        'status',
-        'customer_type',
-        'refusal_reason_code',
-        'refusal_reason',
-        'entry_date',
-        'repair_start_date',
-        'expected_delivery_date',
-        'allow_repair_without_parts',
-    ):
-        value = cleaned_data.get(field)
-        if isinstance(value, date):
-            payload[field] = value.isoformat()
-        elif isinstance(value, bool):
-            payload[field] = value
-        else:
-            payload[field] = value or ''
-    return payload
-
-
-def deserialize_pending_budget_data(payload):
-    data = dict(payload or {})
-    for field in ('entry_date', 'repair_start_date', 'expected_delivery_date'):
-        raw = (data.get(field) or '').strip()
-        if not raw:
-            data[field] = None
-            continue
-        try:
-            data[field] = date.fromisoformat(raw)
-        except ValueError:
-            data[field] = None
-    data['allow_repair_without_parts'] = bool(data.get('allow_repair_without_parts'))
-    data['status'] = data.get('status') or ''
-    data['customer_type'] = data.get('customer_type') or ''
-    data['refusal_reason_code'] = data.get('refusal_reason_code') or ''
-    data['refusal_reason'] = data.get('refusal_reason') or ''
-    return data
-
-
-def ensure_work_order_for_budget(budget):
-    if budget.status != Budget.Status.AUTHORIZED or WorkOrder.objects.filter(budget=budget).exists():
-        return
-
-    xml = budget.source_xml or ''
-    vehicle_image_url = ''
-    if getattr(budget.vehicle, 'image_file', None):
-        try:
-            if budget.vehicle.image_file:
-                vehicle_image_url = budget.vehicle.image_file.url
-        except Exception:
-            vehicle_image_url = ''
-    if not vehicle_image_url:
-        vehicle_image_url = budget.vehicle.image_url or ''
-
-    work_order = WorkOrder.objects.create(
-        budget=budget,
-        vehicle_image_url=vehicle_image_url,
-        created_at=budget.created_at,
-    )
-    if xml:
-        try:
-            lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
-        except Exception:
-            lines = []
-    else:
-        lines = []
-
-    services = list(ServiceCatalog.objects.all().only('id', 'name'))
-    services = [s for s in services if (s.name or '').strip()]
-    services.sort(key=lambda s: len((s.name or '').strip()), reverse=True)
-
-    def match_service(description):
-        d = (description or '').strip().lower()
-        if not d:
-            return None
-        for s in services:
-            n = (s.name or '').strip().lower()
-            if n and n in d:
-                return s
-        return None
-
-    order = 0
-    activity_specs = [
-        (WorkOrderTask.Activity.DISMANTLING, 'desmontagem_hours', 'desmontagem_amount'),
-        (WorkOrderTask.Activity.BODYWORK, 'funilaria_hours', 'funilaria_amount'),
-        (WorkOrderTask.Activity.PREPARATION, 'preparacao_hours', 'preparacao_amount'),
-        (WorkOrderTask.Activity.PAINTING, 'pintura_hours', 'pintura_amount'),
-        (WorkOrderTask.Activity.ASSEMBLY, 'montagem_hours', 'montagem_amount'),
-    ]
-
-    for activity, hours_key, amount_key in activity_specs:
-        for s in [x for x in lines if not x.get('is_third_party')]:
-            hours = s.get(hours_key, Decimal('0'))
-            amount = s.get(amount_key, Decimal('0'))
-            if hours and hours > 0:
-                order += 10
-                code = s.get('code') or ''
-                desc = s.get('description') or ''
-                task_desc = desc
-                if code:
-                    task_desc = f'{desc} (Cód: {code})'
-                matched_service = match_service(task_desc)
-                WorkOrderTask.objects.create(
-                    work_order=work_order,
-                    activity=activity,
-                    service=matched_service,
-                    description=task_desc,
-                    planned_hours=hours,
-                    planned_amount=amount,
-                    order=order,
-                )
-
-    order += 10
-    WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.POLISHING, order=order)
-    order += 10
-    WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.DELIVERY_PREP, order=order)
-    sync_office_managed_service_tasks(work_order)
-
-
-def budget_delivery_kind(budget):
-    movement_sources = set(
-        CashMovement.objects.filter(budget=budget).values_list('source', flat=True)
-    )
-    if movement_sources.intersection({CashMovement.Source.INSURERS, CashMovement.Source.INSURER}):
-        return 'SEGURADORA'
-    return 'PARTICULAR'
-
-
-def budget_delivery_allows_future_insurer_receivables(open_in_movements, reference_date=None):
-    if not open_in_movements:
-        return False
-
-    today = reference_date or timezone.localdate()
-    insurer_sources = {CashMovement.Source.INSURERS, CashMovement.Source.INSURER}
-    return all(
-        movement.source in insurer_sources
-        and movement.due_date is not None
-        and movement.due_date >= today
-        for movement in open_in_movements
-    )
-
-
-def get_budget_work_order(budget):
-    try:
-        return budget.work_order
-    except WorkOrder.DoesNotExist:
-        return None
-
-
-def budget_delivery_status(budget):
-    work_order = get_budget_work_order(budget)
-
-    task_total = 0
-    task_done = 0
-    if work_order is not None:
-        task_total = work_order.tasks.count()
-        task_done = work_order.tasks.filter(status=WorkOrderTask.Status.DONE).count()
-
-    visible_third_party_services = get_external_visible_third_party_services(budget)
-    third_total = len(visible_third_party_services)
-    third_done = len([service for service in visible_third_party_services if service.status == ThirdPartyService.Status.DONE])
-
-    open_in_movements = list(
-        CashMovement.objects.filter(
-            budget=budget,
-            direction=CashMovement.Direction.IN,
-            is_realized=False,
-        ).order_by('due_date', 'created_at', 'id')
-    )
-    today = timezone.localdate()
-    overdue_movements = [
-        m for m in open_in_movements
-        if m.due_date is not None and m.due_date < today
-    ]
-    overdue_amount = sum([(m.amount or Decimal('0')) for m in overdue_movements], Decimal('0'))
-    oldest_overdue_date = None
-    overdue_days = 0
-    if overdue_movements:
-        oldest_overdue_date = min(m.due_date for m in overdue_movements if m.due_date is not None)
-        if oldest_overdue_date is not None:
-            delta = today - oldest_overdue_date
-            overdue_days = max(delta.days, 0)
-
-    open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
-    allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
-    realized_amount = sum(
-        [
-            movement.amount
-            for movement in CashMovement.objects.filter(
-                budget=budget,
-                direction=CashMovement.Direction.IN,
-                is_realized=True,
-            ).only('amount')
-        ],
-        Decimal('0'),
-    )
-
-    blockers = []
-    if budget.status != Budget.Status.AUTHORIZED:
-        blockers.append('O orçamento precisa estar Autorizado.')
-    if budget.is_delivered:
-        blockers.append('O veículo já foi entregue.')
-    if work_order is None:
-        blockers.append('A OS ainda não foi criada.')
-    if task_total == 0:
-        blockers.append('Não há tarefas cadastradas na OS.')
-    elif task_done < task_total:
-        blockers.append('Existem tarefas internas pendentes.')
-    if third_done < third_total:
-        blockers.append('Existem serviços de terceiros pendentes.')
-    if not CashMovement.objects.filter(budget=budget, direction=CashMovement.Direction.IN).exists():
-        blockers.append('O financeiro do orçamento ainda não foi registrado.')
-    elif open_amount > Decimal('0') and not allows_future_insurer_receivables:
-        blockers.append('Existem pendências financeiras em aberto.')
-
-    return {
-        'kind': budget_delivery_kind(budget),
-        'work_order': work_order,
-        'task_total': task_total,
-        'task_done': task_done,
-        'task_pending': max(task_total - task_done, 0),
-        'third_total': third_total,
-        'third_done': third_done,
-        'third_pending': max(third_total - third_done, 0),
-        'finance_open_movements': open_in_movements,
-        'finance_open_amount': open_amount,
-        'finance_realized_amount': realized_amount,
-        'finance_overdue_count': len(overdue_movements),
-        'finance_overdue_days': overdue_days,
-        'finance_overdue_amount': overdue_amount,
-        'finance_oldest_overdue_date': oldest_overdue_date,
-        'allows_future_insurer_receivables': allows_future_insurer_receivables,
-        'finance_note': (
-            'Recebimento da seguradora previsto para depois da entrega.'
-            if open_amount > Decimal('0') and allows_future_insurer_receivables
-            else ''
-        ),
-        'can_deliver': len(blockers) == 0,
-        'blockers': blockers,
-    }
-
-
-def budget_administrative_closure_status(budget, user=None):
-    work_order = get_budget_work_order(budget)
-    user_is_manager = bool(
-        user and (
-            getattr(user, 'is_superuser', False)
-            or getattr(user, 'role', None) == CustomUser.Role.MANAGER
-        )
-    )
-    has_started_tasks = False
-    if work_order is not None:
-        has_started_tasks = work_order.tasks.filter(
-            status__in=(
-                WorkOrderTask.Status.RUNNING,
-                WorkOrderTask.Status.PAUSED,
-                WorkOrderTask.Status.DONE,
-            )
-        ).exists()
-    open_in_movements = list(
-        CashMovement.objects.filter(
-            budget=budget,
-            direction=CashMovement.Direction.IN,
-            is_realized=False,
-        ).order_by('due_date', 'created_at', 'id')
-    )
-    today = timezone.localdate()
-    overdue_movements = [
-        m for m in open_in_movements
-        if m.due_date is not None and m.due_date < today
-    ]
-    overdue_amount = sum([(m.amount or Decimal('0')) for m in overdue_movements], Decimal('0'))
-    oldest_overdue_date = None
-    overdue_days = 0
-    if overdue_movements:
-        oldest_overdue_date = min(m.due_date for m in overdue_movements if m.due_date is not None)
-        if oldest_overdue_date is not None:
-            delta = today - oldest_overdue_date
-            overdue_days = max(delta.days, 0)
-
-    open_amount = sum([movement.amount for movement in open_in_movements], Decimal('0'))
-    allows_future_insurer_receivables = budget_delivery_allows_future_insurer_receivables(open_in_movements)
-
-    blockers = []
-    if not user_is_manager:
-        blockers.append('A finalização administrativa é exclusiva para gerente.')
-    if budget.status != Budget.Status.AUTHORIZED:
-        blockers.append('O orçamento precisa estar Autorizado.')
-    if budget.is_delivered:
-        blockers.append('O veículo já foi entregue.')
-    if getattr(budget, 'administrative_closure', False):
-        blockers.append('Este orçamento já foi marcado para finalização administrativa.')
-    if work_order is None:
-        blockers.append('A OS ainda não foi criada.')
-    elif has_started_tasks:
-        blockers.append('A OS já foi iniciada no operacional.')
-    finance_blockers = []
-    if not CashMovement.objects.filter(budget=budget, direction=CashMovement.Direction.IN).exists():
-        finance_blockers.append('O financeiro do orçamento ainda não foi registrado.')
-    elif open_amount > Decimal('0') and not allows_future_insurer_receivables:
-        finance_blockers.append('Existem pendências financeiras em aberto.')
-
-    return {
-        'work_order': work_order,
-        'user_is_manager': user_is_manager,
-        'has_started_tasks': has_started_tasks,
-        'finance_registered': CashMovement.objects.filter(
-            budget=budget,
-            direction=CashMovement.Direction.IN,
-        ).exists(),
-        'finance_open_amount': open_amount,
-        'finance_overdue_count': len(overdue_movements),
-        'finance_overdue_days': overdue_days,
-        'finance_overdue_amount': overdue_amount,
-        'finance_oldest_overdue_date': oldest_overdue_date,
-        'allows_future_insurer_receivables': allows_future_insurer_receivables,
-        'finance_blockers': finance_blockers,
-        'can_administratively_close': len(blockers) == 0,
-        'suggested_delivery_date': budget.expected_delivery_date or timezone.localdate(),
-        'blockers': blockers,
-    }
-
-
-def get_third_party_expense_category():
-    category, _ = CashCategory.objects.get_or_create(
-        name='Serviços terceirizados OS',
-        defaults={
-            'direction': CashMovement.Direction.OUT,
-            'group': CashCategory.ExpenseGroup.OPERATIONAL,
-            'is_active': True,
-        },
-    )
-    changed = False
-    if category.direction != CashMovement.Direction.OUT:
-        category.direction = CashMovement.Direction.OUT
-        changed = True
-    if category.group != CashCategory.ExpenseGroup.OPERATIONAL:
-        category.group = CashCategory.ExpenseGroup.OPERATIONAL
-        changed = True
-    if not category.is_active:
-        category.is_active = True
-        changed = True
-    if changed:
-        category.save(update_fields=['direction', 'group', 'is_active'])
-    return category
-
-
-def sync_third_party_expense(service):
-    if service is None:
-        return None
-
-    movement = service.expense_movement
-    should_have_expense = (
-        not third_party_service_is_shop(service)
-        and service.status == ThirdPartyService.Status.DONE
-        and (service.amount or Decimal('0')) > 0
-    )
-
-    if not should_have_expense:
-        if movement is not None and not movement.is_realized:
-            movement.delete()
-        if service.expense_movement_id is not None:
-            service.expense_movement = None
-            service.save(update_fields=['expense_movement'])
-        return None
-
-    category = get_third_party_expense_category()
-    due_date = service.scheduled_date or timezone.localdate()
-    description = f'Orçamento #{service.budget.display_number} - Terceiro: {service.description}'
-
-    if movement is None:
-        movement = CashMovement.objects.create(
-            budget=service.budget,
-            supplier=service.supplier,
-            category=category,
-            direction=CashMovement.Direction.OUT,
-            source=CashMovement.Source.COMPANY,
-            description=description,
-            amount=service.amount,
-            launch_date=timezone.localdate(),
-            due_date=due_date,
-            is_realized=False,
-        )
-        service.expense_movement = movement
-        service.save(update_fields=['expense_movement'])
-        return movement
-
-    movement.supplier = service.supplier
-    movement.category = category
-    movement.description = description
-    movement.amount = service.amount
-    movement.due_date = due_date
-    movement.direction = CashMovement.Direction.OUT
-    movement.source = CashMovement.Source.COMPANY
-    movement.save(
-        update_fields=[
-            'supplier',
-            'category',
-            'description',
-            'amount',
-            'due_date',
-            'direction',
-            'source',
-        ]
-    )
-    return movement
-
-
-def after_third_party_service_saved(service):
-    sync_third_party_expense(service)
-    recalculate_budget_total(service.budget)
-    try:
-        work_order = service.budget.work_order
-    except WorkOrder.DoesNotExist:
-        work_order = None
-    if work_order is not None:
-        sync_office_managed_service_tasks(work_order)
-
-
-def sync_shop_service_from_task(task):
-    if task is None or getattr(task, 'work_order_id', None) is None:
-        return None
-
-    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
-    if budget is None:
-        return None
-
-    description = (getattr(task, 'description', '') or '').strip()
-    if not description:
-        return None
-
-    service = (
-        budget.third_party_services
-        .filter(description__iexact=description)
-        .order_by('-id')
-        .first()
-    )
-    if service is None:
-        return None
-
-    if not third_party_service_is_shop(service):
-        return None
-
-    update_fields = []
-    if service.scheduled_date != task.scheduled_date:
-        service.scheduled_date = task.scheduled_date
-        update_fields.append('scheduled_date')
-
-    mapped_status = service.status
-    if task.status == WorkOrderTask.Status.DONE:
-        mapped_status = ThirdPartyService.Status.DONE
-    elif task.status == WorkOrderTask.Status.RUNNING:
-        mapped_status = ThirdPartyService.Status.IN_PROGRESS
-    elif task.status in (WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED):
-        mapped_status = ThirdPartyService.Status.SCHEDULED
-
-    if service.status != mapped_status:
-        service.status = mapped_status
-        update_fields.append('status')
-
-    completed_at = task.completed_at if task.status == WorkOrderTask.Status.DONE else None
-    if service.completed_at != completed_at:
-        service.completed_at = completed_at
-        update_fields.append('completed_at')
-
-    if not getattr(service, 'is_shop_service', False):
-        service.is_shop_service = True
-        update_fields.append('is_shop_service')
-
-    if update_fields:
-        service.save(update_fields=sorted(set(update_fields)))
-    return service
-
-
-def annotate_service_lines_completion(budget, service_lines):
-    try:
-        work_order = budget.work_order
-    except WorkOrder.DoesNotExist:
-        return service_lines
-
-    tasks = list(work_order.tasks.only('activity', 'description', 'status'))
-    activity_specs = [
-        ('desmontagem_hours', WorkOrderTask.Activity.DISMANTLING, 'Desmontagem'),
-        ('funilaria_hours', WorkOrderTask.Activity.BODYWORK, 'Funilaria'),
-        ('preparacao_hours', WorkOrderTask.Activity.PREPARATION, 'Preparação'),
-        ('pintura_hours', WorkOrderTask.Activity.PAINTING, 'Pintura'),
-        ('montagem_hours', WorkOrderTask.Activity.ASSEMBLY, 'Montagem'),
-    ]
-
-    for line in service_lines:
-        description = (line.get('description') or '').strip().lower()
-        code = (line.get('code') or '').strip().lower()
-        completion = []
-
-        for hours_key, activity, label in activity_specs:
-            hours = line.get(hours_key, Decimal('0')) or Decimal('0')
-            if not hours or hours <= 0:
-                continue
-
-            matched_task = None
-            for task in tasks:
-                if task.activity != activity:
-                    continue
-                task_description = (task.description or '').strip().lower()
-                if code and code in task_description and description and description in task_description:
-                    matched_task = task
-                    break
-                if description and description in task_description:
-                    matched_task = task
-                    break
-
-            completion.append(
-                {
-                    'label': label,
-                    'done': bool(matched_task and matched_task.status == WorkOrderTask.Status.DONE),
-                }
-            )
-
-        line['completion_items'] = completion
-        if not completion:
-            manual_activity = office_managed_service_activity(line.get('description'))
-            if manual_activity is not None:
-                manual_task = None
-                description = (line.get('description') or '').strip().lower()
-                for task in tasks:
-                    if task.activity != manual_activity:
-                        continue
-                    if description and description in (task.description or '').strip().lower():
-                        manual_task = task
-                        break
-                completion = [
-                    {
-                        'label': dict(WorkOrderTask.Activity.choices).get(manual_activity, 'Tarefa'),
-                        'done': bool(manual_task and manual_task.status == WorkOrderTask.Status.DONE),
-                    }
-                ]
-                line['completion_items'] = completion
-        line['is_completed'] = bool(completion) and all(item['done'] for item in completion)
-        line['completion_label'] = 'Concluído' if line['is_completed'] else 'Pendente'
-
-    return service_lines
+    return Piece.objects.filter(
+        budget_id=budget.id,
+        provider_type=Piece.ProviderType.SHOP,
+        arrived=False,
+        arrival_date__isnull=True,
+    ).exists()
 
 
 def parse_xml_created_at(xml_bytes):
@@ -1259,7 +209,28 @@ def add_months(base_date, months):
     return date(year, month, day)
 
 
+def capped_work_delta_seconds(last_started_at, now, allow_overtime):
+    if last_started_at is None:
+        return 0, None
 
+    last_local = timezone.localtime(last_started_at)
+    now_local = timezone.localtime(now)
+
+    if allow_overtime:
+        effective_end = now_local
+    else:
+        tz = timezone.get_current_timezone()
+        started_day = last_local.date()
+        cutoff_dt = timezone.make_aware(datetime.combine(started_day, KANBAN_CUTOFF_TIME), tz)
+        if last_local >= cutoff_dt:
+            effective_end = last_local
+        elif now_local.date() == started_day:
+            effective_end = now_local if now_local <= cutoff_dt else cutoff_dt
+        else:
+            effective_end = cutoff_dt
+
+    delta = int((effective_end - last_local).total_seconds())
+    return max(delta, 0), effective_end
 
 
 class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -1269,35 +240,14 @@ class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     paginate_by = 25
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
-    def _delivery_filter(self):
-        delivery_filter = (self.request.GET.get('delivery') or '').strip().lower()
-        if delivery_filter not in ('approved', 'delivered'):
-            delivery_filter = 'approved'
-        return delivery_filter
-
     def get_queryset(self):
-        queryset = (
+        return (
             super()
             .get_queryset()
             .select_related('customer', 'vehicle')
             .filter(status=Budget.Status.AUTHORIZED)
+            .order_by('-approved_at', '-created_at')
         )
-        if self._delivery_filter() == 'delivered':
-            queryset = queryset.filter(delivered_at__isnull=False).order_by('-delivered_at', '-approved_at', '-created_at')
-        else:
-            queryset = queryset.filter(delivered_at__isnull=True).order_by('-approved_at', '-created_at')
-        return queryset
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        authorized_budgets = Budget.objects.filter(status=Budget.Status.AUTHORIZED)
-        context['delivery_filter'] = self._delivery_filter()
-        context['approved_count'] = authorized_budgets.filter(delivered_at__isnull=True).count()
-        context['delivered_count'] = authorized_budgets.filter(delivered_at__isnull=False).count()
-        q = self.request.GET.copy()
-        q.pop('page', None)
-        context['current_query_without_page'] = q.urlencode()
-        return context
 
 
 class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -1328,1310 +278,6 @@ class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         context['today'] = today
         context['total_open_budgets'] = self.get_queryset().count()
         return context
-
-
-def _call_local_ollama_analysis(report_text: str, timeout: int = 180) -> str:
-    import json
-    import socket
-    import urllib.request
-    import urllib.error
-
-    # Tenta modelo leve primeiro, se nao existir tenta o 3b completo.
-    # O usuario pode instalar QUALQUER um dos dois: ollama pull llama3.2:3b
-    # ou ollama pull phi3:mini (1.8GB, mais rapido).
-    models_para_tentar = ["llama3.2:3b", "phi3:mini", "qwen2.5:1.5b"]
-    base_prompt = (
-        "Voce e um consultor SENIOR de operacoes em oficina de funilaria e pintura, "
-        "especialista em reducao de lead time e analise de atrasos. "
-        "Analise o relatorio abaixo e produza uma analise em PORTUGUES DO BRASIL, "
-        "CLARA, OBJETIVA e ACIONAVEL para o gerente da oficina.\n\n"
-        "ATENCAO — NOVOS DADOS IMPORTANTES NO RELATORIO (use-os OBRIGATORIAMENTE):\n"
-        "A) DEMORA NA APROVACAO COMERCIAL (campos 'Atraso aprovacao Xd', media, OS com >=3d):\n"
-        "   O tempo que o orcamento ficou parado ENTREGUE AO CLIENTE ate ser APROVADO. \n"
-        "   Atrasos aqui sao GARGALO de entrada (vendas / comercial / seguradora demorando para autorizar).\n"
-        "B) SCM — SUPPLY CHAIN DE PECAS SHOP (campo 'RESUMO SCM' e 'DETALHES DE PECAS' por OS):\n"
-        "   1) PECAS NAO COMPRADAS desde a aprovacao (urgencia maxima, risco imediato de atrasar a entrega).\n"
-        "   2) PECAS COMPRADAS MAS NAO CHEGARAM (com atraso).\n"
-        "   3) PECAS COM LEAD TIME LONGO (>7 dias, fornecedor lento / importacao).\n"
-        "   4) PECAS SUSPEITAS de ERRO / EXTRAVIO / TROCA PENDENTE / CHEGOU ERRADA\n"
-        "      (sinalizado no alerta 'SINAL DE ALERTA: atraso >= 10 dias e nao chegou).\n"
-        "   5) PECAS QUE CHEGARAM ATRASADAS da data prevista.\n"
-        "C) HORAS POR SEÇÃO (PRODUÇÃO) — gargalos internos:\n"
-        "   As 7 secoes fixas da oficina sao: DESMONTAGEM, FUNILARIA, PREPARAÇÃO, PINTURA,\n"
-        "   MONTAGEM, POLIMENTO, PREP. ENTREGA.\n"
-        "   - Ha um BLOCO GLOBAL 'HORAS POR SEÇÃO — PRODUÇÃO' com a comparacao PLANEJADO vs REAL\n"
-        "     de TODA a carteira, indicando qual SECAO tem o MAIOR estouro de horas da oficina.\n"
-        "   - Para CADA ORCAMENTO, ha o bloco 'HORAS POR SEÇÃO (plan vs real / gargalo interno)'\n"
-        "     e 'GARGALOS DE PRODUÇÃO por seção' mostrando, PARA CADA SECAO daquela OS,\n"
-        "     horas planejadas, horas reais, diferenca (ESTOURO +Xh ou RAPIDO -Yh).\n"
-        "   - VALOR POSITIVO em 'dif' = ESTOURO (equipe gastou MAIS tempo que planejado).\n"
-        "     VALOR NEGATIVO = equipe foi MAIS RAPIDA que o previsto (bom).\n"
-        "   - LINHA ESPECIAL 'NOTA IMPACTANTE (IA): OS BLOQUEADA por X peça(s) PENDENTES':\n"
-        "     isto SIGNIFICA que a secao de MONTAGEM/FUNILARIA esta atrasada POR CAUSA DE PEÇAS\n"
-        "     (SCM), e NAO por mao de obra. SEMPRE SEPARE as causas na analise:\n"
-        "       * Causa SCM / pecas faltando\n"
-        "       * Causa COMERCIAL / demora aprovacao\n"
-        "       * Causa OPERACIONAL / secao estourando horas (planejamento errado ou\n"
-        "         colaborador ineficiente)\n\n"
-        "ESTRUTURA OBRIGATORIA (nao invente secao, escreva exatamente estes 6 blocos):\n\n"
-        "# (1) RESUMO EXECUTIVO\n"
-        "4 linhas maximo, em bullet points com os numeros mais importantes.\n"
-        "- Inclua: valor R$ atrasado, OS com atraso na aprovacao, pecas nao compradas,\n"
-        "  e a SECAO com MAIOR estouro global de horas da oficina (ex: 'Funilaria +23h').\n\n"
-        "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
-        "Liste top 3 gargalos, com evidencia (dados do relatorio).\n"
-        "CLASSIFIQUE CADA GARGALO EXPLICITAMENTE em:\n"
-        "   (a) GARGALO SCM (pecas: nao compradas / suspeita erro / lead longo)\n"
-        "   (b) GARGALO COMERCIAL (demora aprovacao >= 3d)\n"
-        "   (c) GARGALO DE PRODUÇÃO / SEÇÃO (FUNILARIA / PINTURA / MONTAGEM etc estourando)\n"
-        "Para cada gargalo de producao, INDIQUE QUAL SEÇÃO (ex: 'Gargalo em FUNILARIA: estouro medio +2.5h/OS').\n"
-        "Para cada gargalo, associe o IMPACTO: quantas OS, quantos R$ parados, quantas horas estouradas.\n\n"
-        "# (3) ANALISE DOS ATRASOS POR FAIXA\n"
-        "1-2 dias, 3-5 dias, +5 dias: por que cada grupo esta atrasando?\n"
-        "PARA CADA FAIXA, responda OBRIGATORIAMENTE:\n"
-        "  * Qual % do atraso e SCM (pecas) vs COMERCIAL (aprovacao) vs PRODUÇÃO (secao)?\n"
-        "  * Qual SEÇAO MAIS contribuiu para o atraso nesta faixa?\n"
-        "Sempre informe VALOR R$ da faixa.\n\n"
-        "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
-        "- Valor R$ de receita parada / imobilizada (campo VALOR TOTAL ATRASADO).\n"
-        "- Horas TOTAIS estouradas na carteira inteira (campo DIFERENÇA / ESTOURO GERAL).\n"
-        "- Qual SECAO gerou MAIOR estouro de horas e MAIOR prejuizo operacional.\n"
-        "- IMPACTO DAS PECAS: R$ imobilizado em peças que nao chegaram / atrasadas.\n"
-        "- IMPACTO DA DEMORA APROVACAO: OS paradas no comercial.\n"
-        "- Clientes afetados e risco reputacional.\n\n"
-        "# (5) CONTRAMEDIDAS (ACOES PRIORIZADAS 30-60-90 DIAS)\n"
-        "Divida em ALTA PRIORIDADE (30 dias / acao hoje), MEDIA (60 dias) e BAIXA (90 dias).\n"
-        "ALTA PRIORIDADE DEVE conter NO MINIMO 5 acoes:\n"
-        "  1) Resolver pecas NAO COMPRADAS desde aprovacao.\n"
-        "  2) Resolver pecas com suspeita de extravio/chegou errada (>=10d).\n"
-        "  3) Reduzir demora de aprovacao >=3d (cobranca cliente/seguradora).\n"
-        "  4) ACAO CORRETIVA para a SECAO com MAIOR estouro GLOBAL da oficina:\n"
-        "     ex: 'remanejar 1 colaborador da Pintura para a Funilaria nas proximas 2 OS'\n"
-        "     ou 'ajustar horas planejadas na Funilaria (sempre estoura +3h em media)'.\n"
-        "  5) ACAO para casos onde SECAO estoura POR CAUSA DE PECAS (bloqueio SCM):\n"
-        "     ex: 'permitir bypass em montagem parcial caso peça pendente nao afete a etapa X'.\n"
-        "Cada acao ESPECIFICA para a oficina. Associe RETORNO em R$ ou horas economizadas.\n\n"
-        "# (6) RECOMENDACOES INDIVIDUAIS POR ORCAMENTO CRITICO\n"
-        "Selecione os 4-5 piores casos (+5d OU valor alto OU pecas criticas OU secao estourada).\n"
-        "Para cada caso, INCLUA OBRIGATORIAMENTE:\n"
-        "  - OS #, valor reparo em R$, dias atraso, situacao APROVACAO, situacao PECAS.\n"
-        "  - QUAL E A SECAO GARGALO desta OS? (do bloco 'GARGALOS DE PRODUÇÃO por seção').\n"
-        "  - DIAGNOSTICO: O atraso desta OS se deve a (1) pecas, (2) secao estourando,\n"
-        "    (3) demora comercial, (4) combinacao?\n"
-        "  - 1 sugestao ESPECIFICA e ACAO LIGADA DIRETAMENTE a causa raiz.\n\n"
-        "REGRAS:\n"
-        "- Nao invente dados! Use apenas o que esta no relatorio abaixo.\n"
-        "- Sempre responda em R$ (REAL BRASILEIRO), valores do relatorio. Nao invente.\n"
-        "- Se usuario perguntar 'qual secao estou gastando mais?', use o bloco GLOBAL\n"
-        "  'HORAS POR SEÇÃO — PRODUÇÃO' e complemente por OS com os blocos ⚙️ individuais.\n"
-        "- Use negrito e bullet points para ficar legivel.\n"
-        "- Maximo de 2200 palavras.\n\n"
-        "RELATORIO BRUTO PARA ANALISE:\n"
-        "------------------------------------------------------------\n"
-        f"{report_text}\n"
-        "------------------------------------------------------------\n"
-        "ANALISE GERENCIAL:\n"
-    )
-
-    import json as _json
-    ultimo_erro = None
-    for model_name in models_para_tentar:
-        payload = {
-            "model": model_name,
-            "prompt": base_prompt,
-            "stream": False,
-            "options": {"num_ctx": 6144, "temperature": 0.3, "top_p": 0.9},
-        }
-        data = _json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/generate",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                status = resp.getcode()
-                raw = resp.read().decode("utf-8", errors="replace")
-                if 200 <= status < 300:
-                    try:
-                        obj = _json.loads(raw)
-                        saida = str(obj.get("response", "")).strip()
-                        if saida:
-                            return (
-                                f"🤖 Modelo: `{model_name}` · Tempo estimado ~"
-                                f"{max(10, int(len(saida) / 600))}s de processamento local\n\n"
-                                f"{saida}"
-                            )
-                    except Exception as e_json:
-                        ultimo_erro = f"Parse JSON {model_name}: {type(e_json).__name__}: {e_json}. Raw[:500]={raw[:500]}"
-                        continue
-                elif status == 404:
-                    # Modelo nao baixado ainda, tenta proximo
-                    ultimo_erro = f"Modelo {model_name} nao encontrado (404) - puxe com: ollama pull {model_name}"
-                    continue
-                else:
-                    ultimo_erro = f"HTTP {status} para {model_name}: {raw[:500]}"
-                    continue
-        except urllib.error.HTTPError as e_http:
-            if e_http.code == 404:
-                ultimo_erro = (
-                    f"Modelo {model_name} nao baixado ainda. "
-                    f"Rode no terminal: ollama pull {model_name}"
-                )
-                continue
-            ultimo_erro = f"HTTPError {e_http.code} ({model_name}): {str(e_http)}"
-            continue
-        except urllib.error.URLError as e_url:
-            motivo = str(e_url.reason) if hasattr(e_url, 'reason') else str(e_url)
-            if isinstance(getattr(e_url, 'reason', None), (ConnectionRefusedError, socket.error, OSError)):
-                return (
-                    "# ⛔ ERRO: Nao foi possivel conectar a IA LOCAL (Ollama)\n\n"
-                    "**Causa provavel:** O servico Ollama nao esta RODANDO no seu computador local "
-                    "(`127.0.0.1:11434` nao respondeu).\n\n"
-                    "**PASSO-A-PASSO para ligar a IA LOCAL (Windows/Mac/Linux, ~2GB):**\n\n"
-                    "  1) **Baixar e instalar Ollama:** https://ollama.com/download\n\n"
-                    "  2) **Abrir PowerShell (janela separada, DEIXAR ABERTA SEMPRE)** e rodar:\n"
-                    "     ```\n"
-                    "     ollama pull llama3.2:3b\n"
-                    "     ```\n"
-                    "     (Demora ~5min, baixa ~2GB. Pode usar tambem: `phi3:mini` ~1.8GB, mais rapido)\n\n"
-                    "  3) **Na MESMA janela PowerShell, rode:**\n"
-                    "     ```\n"
-                    "     ollama serve\n"
-                    "     ```\n"
-                    "     (Se o servico Ollama ja iniciou automaticamente com a instalacao,\n"
-                    "      ele avisa que a porta 11434 ja esta em uso — tudo bem, e normal.)\n\n"
-                    "  4) **Volte aqui no navegador, aperte F5** e clique em `🤖 Analisar com IA Local` de novo.\n\n"
-                    "---\n"
-                    f"_Detalhe tecnico: URLError. {motivo}_"
-                )
-            ultimo_erro = f"URLError ({model_name}): {motivo}"
-            continue
-        except socket.timeout:
-            ultimo_erro = (
-                f"Timeout ({timeout}s) no modelo {model_name}. "
-                f"Tente aumentar timeout ou usar modelo menor: ollama pull phi3:mini"
-            )
-            continue
-        except Exception as e_geral:
-            ultimo_erro = f"{type(e_geral).__name__} ({model_name}): {e_geral}"
-            continue
-
-    # Se chegamos aqui: nenhum modelo funcionou, retorna o ultimo erro registrado + fallback amigavel.
-    instalacao_msg = (
-        "\n\n---\n\n"
-        "# 💡 Como ativar a IA LOCAL (primeira vez):\n\n"
-        "1. Baixe: https://ollama.com/download e instale.\n"
-        "2. PowerShell: `ollama pull llama3.2:3b` (ou `phi3:mini` ~1.8GB mais leve)\n"
-        "3. PowerShell: `ollama serve` (deixe aberto)\n"
-        "4. Atualize a pagina e clique em Analisar IA novamente.\n\n"
-        "Ou: Cole o **'Relatorio bruto para IA'** (final da pagina, accordion fechado)\n"
-        "diretamente em ChatGPT/Gemini/Claude — o resultado e o mesmo!\n"
-    )
-    if ultimo_erro:
-        return f"# ⚠️ IA Local indisponivel\n\n**Motivo:** {ultimo_erro}{instalacao_msg}"
-    return f"# ⚠️ IA Local: modelo nao respondeu.{instalacao_msg}"
-
-
-# ============================================================
-#  [IA NUVEM OPENAI] + MEMORIA DE CONVERSA (Economia 95% tokens!)
-# ============================================================
-import os as _os
-import json as _json
-import time as _time
-import hashlib as _hashlib
-import urllib.request as _ureq
-import urllib.error as _uerr
-from pathlib import Path as _Path
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Tuple
-
-
-@dataclass
-class LLMResult:
-    provider: str                 # 'openai' | 'ollama' | 'erro'
-    model: str
-    tokens_in: int
-    tokens_out: int
-    cost_usd: float
-    content: str
-    error: Optional[str] = None
-
-    @property
-    def cost_brl(self) -> float:
-        # Taxa aproximada 5.10 USD -> BRL (atualizei em 08/2026)
-        return round(self.cost_usd * 5.10, 2)
-
-
-# Precificacao gpt-4o-mini (Jul-2024): https://openai.com/api/pricing/
-# $0.150 / milhao tokens INPUT / $0.600 / milhao OUTPUT
-_OPENAI_PRICING_PER_1M = {
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.0),
-    "gpt-3.5-turbo-0125": (0.50, 1.50),
-}
-
-
-def _resolve_openai_api_key() -> str:
-    """Fallback TRIPLO (agora QUADRUPLO) para achar a chave OpenAI.
-    Ordem: 1) django_settings (import-time), 2) os.environ atual,
-           3) arquivo .env (raiz projeto), 4) .secrets/oficina_env.sh (padrao PA)
-    Retorna vazio se nao achar em lugar nenhum.
-    """
-    candidatos: List[str] = []
-
-    # (1) settings.OPENAI_API_KEY (carregado no import do settings.py)
-    candidatos.append(getattr(django_settings, "OPENAI_API_KEY", "") or "")
-
-    # (2) os.environ DIRETO (força leitura atualizada do ambiente)
-    candidatos.append(_os.environ.get("OPENAI_API_KEY", "") or "")
-
-    # (3) Ultimo recurso: ler ARQUIVOS de environment DIRETAMENTE (até 3 nomes possíveis)
-    #     Ordem de prioridade:  .env  >>>  .env.exemplo  >>>  .env.example
-    def _extrai_key_de_arquivo(caminho: str, separador: str = "=") -> Optional[str]:
-        try:
-            if not _os.path.isfile(caminho):
-                return None
-            with open(caminho, "r", encoding="utf-8", errors="replace") as f_env:
-                for linha in f_env:
-                    linha = linha.strip()
-                    if not linha or linha.startswith("#") or separador not in linha:
-                        continue
-                    if separador == "=" and linha.upper().startswith("EXPORT "):
-                        linha = linha[len("EXPORT "):].lstrip()  # tira 'export ' do shell script
-                    partes = linha.split(separador, 1)
-                    if len(partes) != 2:
-                        continue
-                    chave = partes[0].strip().strip('"\'').upper()
-                    valor = partes[1].strip().strip('"\'')
-                    if chave == "OPENAI_API_KEY":
-                        return valor
-        except Exception:
-            return None
-        return None
-
-    _PASTA_RAIZ = str(_Path(__file__).resolve().parent.parent)
-    NOMES_ARQUIVOS_ENV = [".env", ".env.exemplo", ".env.example"]
-    for _nome_arquivo in NOMES_ARQUIVOS_ENV:
-        caminho = _os.path.join(_PASTA_RAIZ, _nome_arquivo)
-        chave_env = _extrai_key_de_arquivo(caminho, "=")
-        if chave_env:
-            candidatos.append(chave_env)
-            break  # já achou em um, para
-
-    # (4) Padrão PythonAnywhere: .secrets/oficina_env.sh (comandos `export VAR=valor`)
-    #     Isso resolve o bug de "chave existe mas está no .secrets e não no .env"
-    caminhos_secret_extra = [
-        _os.path.join(str(_Path(__file__).resolve().parent.parent), ".secrets", "oficina_env.sh"),
-        "/home/ofi7ipojuca/.secrets/oficina_env.sh",  # seu user PA hardcoded
-    ]
-    for p in caminhos_secret_extra:
-        chave_sh = _extrai_key_de_arquivo(p, "=")
-        if chave_sh:
-            candidatos.append(chave_sh)
-            break
-
-    # Pega o PRIMEIRO candidato que nao for vazio / placeholder
-    for c in candidatos:
-        c = (c or "").strip()
-        # Remove aspas que podem ter ficado (ex: OPENAI_API_KEY="sk-abc..." -> tira aspas duplas)
-        if len(c) >= 2 and ((c[0] == '"' and c[-1] == '"') or (c[0] == "'" and c[-1] == "'")):
-            c = c[1:-1].strip()
-        if not c:
-            continue
-        # Placeholders conhecidos do .env.example
-        if c.lower() in {"sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}:
-            continue
-        if "xxxxxxxx" in c.lower():
-            continue
-        return c
-    return ""
-
-
-def _openai_api_key_ok(key: str) -> bool:
-    key = (key or "").strip()
-    if not key:
-        return False
-    # Remove aspas se vierem com
-    if len(key) >= 2 and ((key[0] == '"' and key[-1] == '"') or (key[0] == "'" and key[-1] == "'")):
-        key = key[1:-1].strip()
-    # Placeholders
-    if key.startswith("sk-xxxx") or "xxxxxxxx" in key.lower():
-        return False
-    # Chaves reais:
-    #   Antigas sk-... > 30 caracteres
-    #   Novas sk-proj-... > 50 caracteres
-    #   Ollama-like strings (nao sao da OpenAI): nao comecam com sk-
-    if not key.startswith("sk-"):
-        return False
-    return len(key) >= 30
-
-
-def _ensure_openai_key_effective() -> bool:
-    """HELPER para ser chamado NO INICIO DE TUDO (get_context_data, get, post).
-    Resolve o bug do PythonAnywhere uWSGI workers c/ settings.OPENAI_API_KEY vazio na memoria.
-    1) Usa fallback completo para encontrar a chave em .env/.secrets/oficina_env.sh.
-    2) Se encontrar, GRAVA de volta em os.environ E em django_settings.OPENAI_API_KEY,
-       para que QUALQUER logica (mesmo a que so use settings) tambem enxergue.
-    Retorna True se a chave esta OK e efetiva apos o helper.
-    """
-    chave = _resolve_openai_api_key()
-    ok = _openai_api_key_ok(chave)
-    if ok and chave:
-        # Escreve de volta em runtime (efetivo APENAS no worker atual).
-        _os.environ["OPENAI_API_KEY"] = chave
-        try:
-            django_settings.OPENAI_API_KEY = chave
-        except Exception:
-            pass
-    return ok
-
-
-def _debug_openai_sources() -> Dict[str, str]:
-    """Para DEBUG apenas: retorna INFO NAO SENSIVEL sobre onde a chave foi buscada,
-    para ser exibida no template caso a chave nao seja detectada.
-    NAO retorna a chave REAL, apenas qtd de caracteres / 'achou / nao achou'.
-    """
-    info: Dict[str, str] = {}
-
-    def _status(chave: Optional[str]) -> str:
-        if not chave:
-            return "(vazio)"
-        c = (chave or "").strip()
-        if len(c) >= 2 and ((c[0] == '"' and c[-1] == '"') or (c[0] == "'" and c[-1] == "'")):
-            c = c[1:-1].strip()
-        if not c:
-            return "(vazio)"
-        if c.lower() in {"sk-xxxx", "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"} or "xxxxxxxx" in c.lower():
-            return f"PLACEHOLDER ({len(c)} chars)"
-        # mascara: sk-****ultimos4
-        if c.startswith("sk-") and len(c) > 8:
-            return f"OK? sk-***{c[-4:]} ({len(c)} chars)"
-        return f"({len(c)} chars prefixo inválido '{c[:6]}...')"
-
-    # Fonte 1
-    info["settings.OPENAI_API_KEY"] = _status(getattr(django_settings, "OPENAI_API_KEY", "") or "")
-    # Fonte 2
-    info["os.environ[OPENAI_API_KEY]"] = _status(_os.environ.get("OPENAI_API_KEY", "") or "")
-    # Fonte 3 — ARQUIVOS DE ENV (agora aceita 3 nomes: .env, .env.exemplo, .env.example)
-    _pasta_raiz_debug = str(_Path(__file__).resolve().parent.parent)
-    NOMES_ARQUIVOS_ENV_DEBUG = [".env", ".env.exemplo", ".env.example"]
-    for _nome_debug in NOMES_ARQUIVOS_ENV_DEBUG:
-        caminho_arquivo = _os.path.join(_pasta_raiz_debug, _nome_debug)
-        try:
-            v3b: Optional[str] = None
-            if _os.path.isfile(caminho_arquivo):
-                with open(caminho_arquivo, "r", encoding="utf-8", errors="replace") as f:
-                    for ln in f:
-                        ln = ln.strip()
-                        if not ln.startswith("OPENAI_API_KEY="):
-                            continue
-                        v3b = ln.split("=", 1)[1].strip().strip('"').strip("'")
-                        break
-            info[f"arquivo {_nome_debug} ({caminho_arquivo})"] = _status(v3b) if _os.path.isfile(caminho_arquivo) else "(arquivo não existe)"
-        except Exception as e3b:
-            info[f"arquivo {_nome_debug} ({caminho_arquivo})"] = f"ERRO leitura: {e3b}"
-    # Fonte 4
-    caminhos_extra = [
-        _os.path.join(str(_Path(__file__).resolve().parent.parent), ".secrets", "oficina_env.sh"),
-        "/home/ofi7ipojuca/.secrets/oficina_env.sh",
-    ]
-    for p in caminhos_extra:
-        try:
-            v4: Optional[str] = None
-            if _os.path.isfile(p):
-                with open(p, "r", encoding="utf-8", errors="replace") as f:
-                    for ln in f:
-                        ln2 = ln.strip()
-                        if ln2.upper().startswith("EXPORT "):
-                            ln2 = ln2[len("EXPORT "):]
-                        if not ln2.startswith("OPENAI_API_KEY="):
-                            continue
-                        v4 = ln2.split("=", 1)[1].strip().strip('"').strip("'")
-                        break
-            info[f"secret: {p}"] = _status(v4) if _os.path.isfile(p) else "(arquivo não existe)"
-        except Exception as e4:
-            info[f"secret: {p}"] = f"ERRO leitura: {e4}"
-    return info
-
-
-def _report_cache_key(report_text: str) -> str:
-    return _hashlib.sha256(report_text.encode("utf-8")).hexdigest()[:20]
-
-
-def _llm_storage_dir() -> str:
-    base = (
-        getattr(django_settings, "LLM_CACHE_DIR", "").strip()
-        or _os.path.join(str(_os.path.dirname(__file__)), "..", "storage", "llm_cache")
-    )
-    _os.makedirs(base, exist_ok=True)
-    _os.makedirs(_os.path.join(base, "analysis"), exist_ok=True)
-    _os.makedirs(_os.path.join(base, "chat"), exist_ok=True)
-    return base
-
-
-def _analysis_cache_path(report_text: str, provider: str) -> str:
-    return _os.path.join(_llm_storage_dir(), "analysis", f"{provider}_{_report_cache_key(report_text)}.json")
-
-
-def _chat_history_path(report_text: str) -> str:
-    return _os.path.join(_llm_storage_dir(), "chat", f"history_{_report_cache_key(report_text)}.json")
-
-
-def _load_analysis_cache(report_text: str, provider: str, max_age_seconds: int = 86400) -> Optional[LLMResult]:
-    fp = _analysis_cache_path(report_text, provider)
-    if not _os.path.isfile(fp):
-        return None
-    try:
-        with open(fp, "r", encoding="utf-8") as f:
-            obj = _json.load(f)
-    except Exception:
-        return None
-    if _time.time() - float(obj.get("ts", 0)) > max_age_seconds:
-        return None
-    # ==============================================================================
-    #  ✅ CORREÇÃO DURA (CAMADA 2): NUNCA RETORNAR CACHE DE ERRO, MESMO QUE O ARQUIVO EXISTA.
-    #     (blindagem dupla — salva erro + também nao carrega erro.)
-    # ==============================================================================
-    if obj.get("error") or not obj.get("model") or obj.get("provider") == "erro" or provider == "erro":
-        return None
-    content = str(obj.get("content", "") or "")
-    if len(content.strip()) < 200:
-        return None
-    # Palavras proibidas no content:
-    norm = content.lower().replace(" ", "").replace("\n", "")
-    _proibidas = (
-        "errodeconfiguracao", "chaveopenainao", "chaveopenainãoconfigurada",
-        "⛔", "naoconfiguradoem", "chavenãoconfigurada", "chavenaoconfigurada",
-        "semchave", "errobilling", "ratelimit", "nenhumprovedordeiadisponivel",
-    )
-    for p in _proibidas:
-        if p in norm:
-            return None
-    try:
-        return LLMResult(
-            provider=str(obj.get("provider", provider)),
-            model=str(obj.get("model", "")),
-            tokens_in=int(obj.get("tokens_in", 0)),
-            tokens_out=int(obj.get("tokens_out", 0)),
-            cost_usd=float(obj.get("cost_usd", 0.0)),
-            content=content,
-            error=obj.get("error"),
-        )
-    except Exception:
-        return None
-
-
-def _save_analysis_cache(report_text: str, provider: str, result: LLMResult) -> None:
-    # ==============================================================================
-    #  ✅ CORREÇÃO DURA (CAMADA 1): NUNCA SALVAR CACHE DE ERRO — NENHUM CASO.
-    #     Impede que cache de "chave nao configurada" / "erro billing" / etc
-    #     fique servido por 24h.
-    # ==============================================================================
-    # Condicoes OBVIAS:
-    if result.error or not result.model or provider == "erro" or result.provider == "erro":
-        return
-    # Condicoes EXTRA (evita salvar resultado vazio):
-    if not result.content or len(result.content.strip()) < 200:
-        return
-    # Condicoes PALAVRAS PROIBIDAS no content (mesmo que result.error seja None,
-    # pode ser que a view montou um content "erro configuracao" sem setar o .error):
-    content_norm = (result.content or "").lower().replace(" ", "").replace("\n", "")
-    _proibidas = (
-        "errodeconfiguracao", "chaveopenainao", "chaveopenai_nao",
-        "chaveopenainãoconfigurada", "⛔", "naoconfiguradoem",
-        "chavenãoconfigurada", "chavenaoconfigurada", "semchave",
-        "errobilling", "ratelimit",
-    )
-    for p in _proibidas:
-        if p in content_norm:
-            return
-    try:
-        fp = _analysis_cache_path(report_text, provider)
-        with open(fp, "w", encoding="utf-8") as f:
-            _json.dump(
-                {
-                    "ts": _time.time(),
-                    "provider": result.provider,
-                    "model": result.model,
-                    "tokens_in": result.tokens_in,
-                    "tokens_out": result.tokens_out,
-                    "cost_usd": result.cost_usd,
-                    "content": result.content,
-                    "error": result.error,
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
-            )
-    except Exception:
-        pass
-
-
-def _chat_history_load(report_text: str, max_messages: int = 10) -> List[Dict]:
-    fp = _chat_history_path(report_text)
-    if not _os.path.isfile(fp):
-        return []
-    try:
-        with open(fp, "r", encoding="utf-8") as f:
-            msgs = _json.load(f)
-    except Exception:
-        return []
-    if not isinstance(msgs, list):
-        return []
-    return msgs[-max_messages:]
-
-
-def _chat_history_append(report_text: str, user_msg: str, assistant_msg: str) -> None:
-    fp = _chat_history_path(report_text)
-    msgs = _chat_history_load(report_text, max_messages=50)
-    msgs.append({"role": "user", "content": user_msg, "ts": _time.time()})
-    msgs.append({"role": "assistant", "content": assistant_msg, "ts": _time.time()})
-    try:
-        with open(fp, "w", encoding="utf-8") as f:
-            _json.dump(msgs[-50:], f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-
-def _chat_history_clear(report_text: str) -> None:
-    fp = _chat_history_path(report_text)
-    try:
-        if _os.path.isfile(fp):
-            _os.remove(fp)
-    except Exception:
-        pass
-
-
-def _truncate_words(text: str, max_words: int = 250) -> str:
-    """Giga economia de token: usamos apenas um RESUMO CURTO da analise original
-    nas perguntas seguintes. Nunca mais reenviamos o relatorio BRUTO inteiro!"""
-    palavras = text.split()
-    if len(palavras) <= max_words:
-        return text
-    return " ".join(palavras[:max_words]) + f"\n\n[... (truncado para {max_words} palavras p/ economizar tokens)]"
-
-
-def _call_openai_analysis(report_text: str, user_followup: Optional[str] = None) -> LLMResult:
-    """IA Nuvem OpenAI.
-    - 1a chamada: envia prompt completo + relatorio.
-    - Follow-up (user_followup != None): APENAS envia (RESUMO 250 palavras + ultimas 10 msgs) + pergunta nova.
-      => 95% MENOS tokens gastos em perguntas seguintes! MEMORIA DE CONVERSA.
-    """
-    api_key = _resolve_openai_api_key()
-    model = (
-        _os.environ.get("OPENAI_DEFAULT_MODEL", "").strip()
-        or getattr(django_settings, "OPENAI_DEFAULT_MODEL", "gpt-4o-mini").strip()
-        or "gpt-4o-mini"
-    )
-    temperature = float(getattr(django_settings, "OPENAI_TEMPERATURE", 0.3))
-    timeout = int(getattr(django_settings, "OPENAI_TIMEOUT", 120))
-
-    if not _openai_api_key_ok(api_key):
-        return LLMResult(
-            provider="erro",
-            model="",
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
-            content=(
-                "# ⛔ Chave OpenAI NAO configurada\n\n"
-                "**Como configurar em 30 segundos:**\n\n"
-                "  1) Gere sua chave em: https://platform.openai.com/api-keys (login na sua conta)\n"
-                "  2) Abra o arquivo **`.env`** na raiz do projeto, encontre a linha:\n"
-                "     ```\n"
-                "     OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n"
-                "     ```\n"
-                "  3) Apague `sk-xxxx...` e cole a sua chave VERDADEIRA na mesma linha.\n"
-                "  4) Salve o arquivo. **Reinicie o `runserver` (local) ou clique Reload Web App (PythonAnywhere).**\n\n"
-                "💡 Dica: Use **`gpt-4o-mini`** (padrão) — é **50x mais barato** que GPT-4 e qualidade quase igual."
-            ),
-            error="chave nao configurada",
-        )
-
-    # =============================================================
-    # MEMORIA DE CONVERSA (SEGUNDA CHAMADA E DIANTE - ECONOMIA 95%!)
-    # =============================================================
-    if user_followup:
-        last_analysis = ""
-        for prov in ("openai", "ollama"):
-            cached = _load_analysis_cache(report_text, prov)
-            if cached and cached.content:
-                last_analysis = cached.content
-                break
-        # Apenas 250 palavras da análise ORIGINAL - nada de reenviar 5000 palavras!
-        sistema = (
-            "Você é um consultor de oficina (explicou o desempenho abaixo). "
-            "Responda em PORTUGUÊS DO BRASIL, direto, objetivo, acionável.\n\n"
-            "==== RESUMO (250 palavras) da SUA ANALISE ANTERIOR (memoria curta): ====\n"
-            f"{_truncate_words(last_analysis or '(nenhuma analise anterior)')}\n"
-            "==== HISTORICO RECENTE (ultimas 5 mensagens): ====\n"
-        )
-        historico = _chat_history_load(report_text, max_messages=10)
-        messages = [{"role": "system", "content": sistema}]
-        # adiciona historico recente de chats anteriores
-        for m in historico[-10:]:
-            role = str(m.get("role", "user")).strip()
-            if role not in {"user", "assistant"}:
-                continue
-            messages.append({"role": role, "content": str(m.get("content", ""))[:1200]})
-        messages.append({"role": "user", "content": str(user_followup).strip()})
-    else:
-        # ============================================================
-        # PRIMEIRA CHAMADA (analise completa 6 blocos)
-        # ============================================================
-        prompt_sistema = (
-            "Voce e um consultor SENIOR de operacoes em oficina de funilaria e pintura, "
-            "especialista em reducao de lead time e analise de atrasos. "
-            "Analise o relatorio abaixo e produza uma analise em PORTUGUES DO BRASIL, "
-            "CLARA, OBJETIVA e ACIONAVEL para o gerente da oficina.\n\n"
-            "ATENCAO — DADOS NOVOS QUE VOCE DEVE USAR OBRIGATORIAMENTE:\n"
-            "-----------------------------------------------------------\n"
-            "A) DEMORA NA APROVACAO COMERCIAL (bloco RESUMO SCM + linha 'Atraso aprovacao: Xd' em cada OS):\n"
-            "   - Mede dias ENTRE a criacao do orcamento (created_at) e a data de aprovacao (approved_at).\n"
-            "   - Se OS tem atraso >= 3 dias: GARGALO de entrada (cliente demorou para autorizar,\n"
-            "     seguradora enrolou, orcamentista nao cobrou, falta follow-up comercial).\n"
-            "B) SCM — SUPPLY CHAIN DE PECAS (bloco RESUMO SCM + campo 'DETALHES DE PECAS' em cada OS):\n"
-            "   1) PECAS NAO COMPRADAS desde a APROVACAO: a maior URGÊNCIA de todas.\n"
-            "      - Medido em 'pieces_not_purchased_days_since_approved' = ha quantos dias\n"
-            "        a peça está sem purchase_date DESDE que o orçamento foi APROVADO.\n"
-            "      - Causa: compras não efetuou pedido, orçamento faltou enviar para compras,\n"
-            "        bloqueio de caixa, falta de fornecedor cadastrado.\n"
-            "   2) PECAS COMPRADAS MAS NÃO CHEGARAM (com prazo já expirado):\n"
-            "      - Se ATRASO >= 10 DIAS, o alerta marca 'SINAL DE ALERTA: provavel\n"
-            "        PEÇA CHEGOU ERRADA / EXTRAVIO / TROCA PENDENTE'. Este é o caso mais\n"
-            "        crítico de supply chain — normalmente é troca/garantia com fornecedor.\n"
-            "   3) PECAS COM LEAD TIME MUITO LONGO (>7 dias):\n"
-            "      - Causa: fornecedor distante, peça importada, fornecedor com problema de estoque.\n"
-            "   4) PECAS QUE CHEGARAM ATRASADAS da data prevista.\n"
-            "C) HORAS POR SEÇÃO (GARGALOS DE PRODUÇÃO):\n"
-            "   As 7 secoes fixas da oficina sao: DESMONTAGEM, FUNILARIA, PREPARAÇÃO, PINTURA,\n"
-            "   MONTAGEM, POLIMENTO, PREP. ENTREGA.\n"
-            "   - Ha um BLOCO GLOBAL 'HORAS POR SEÇÃO — PRODUÇÃO' com PLANEJADO vs REAL p/ TODA a\n"
-            "     carteira, e uma linha 'SEÇÃO COM MAIOR ESTOURO (GARGALO PRINCIPAL)'.\n"
-            "   - Para CADA ORCAMENTO ha o bloco 'HORAS POR SEÇÃO (plan vs real / gargalo interno)'\n"
-            "     com 1 linha ⚙️ por secao (DESMONTAGEM, FUNILARIA...), cada uma com:\n"
-            "       plan=Xh · real=Yh · dif=+/-Zh [ESTOURO ou RAPIDO ou ok] · tarefas DONE/TOTAL (progresso %%)\n"
-            "   - Ha tambem o bloco 'GARGALOS DE PRODUÇÃO por seção' com apenas as secoes que\n"
-            "     estouraram OU foram mais rapidas.\n"
-            "   - VALOR POSITIVO dif = ESTOURO (equipe gastou MAIS tempo que orcado).\n"
-            "     VALOR NEGATIVO dif = MAIS RAPIDO que o orçado (bom).\n"
-            "   - LINHA ESPECIAL 'NOTA IMPACTANTE (IA): OS BLOQUEADA por X peça(s) PENDENTES':\n"
-            "     isto SIGNIFICA que a secao (geralmente MONTAGEM / FUNILARIA) esta atrasada\n"
-            "     POR CAUSA DE SCM / PEÇAS (nao ha peça para montar), e NAO por mao de obra\n"
-            "     ineficiente. SEMPRE SEPARE as causas no seu diagnostico:\n"
-            "       * Causa SCM (faltam peças)  vs  * Causa COMERCIAL (demora aprovacao)\n"
-            "       * Causa OPERACIONAL / secao estourando (planejamento de horas errado ou\n"
-            "         colaborador ineficiente)\n\n"
-            "ESTRUTURA OBRIGATORIA (escreva exatamente estes 6 blocos, nao invente secoes):\n\n"
-            "# (1) RESUMO EXECUTIVO\n"
-            "Maximo 4 linhas, bullet points com os numeros mais importantes.\n"
-            "- OBRIGATORIO: Informe VALOR TOTAL ATRASADO em R$, OS com atraso aprovacao,\n"
-            "  pecas NAO COMPRADAS, e a SEÇÃO com MAIOR estouro GLOBAL de horas da oficina\n"
-            "  (ex: 'Funilaria estourou +24h na carteira toda').\n"
-            "- OBRIGATORIO: Impacto ponderado em R$·dias.\n\n"
-            "# (2) PRINCIPAIS GARGALOS IDENTIFICADOS\n"
-            "Liste top 3 gargalos, com evidencia. Sempre que possivel, associe VALOR R$ + HORAS.\n"
-            "CLASSIFIQUE CADA GARGALO EXPLICITAMENTE em:\n"
-            "   (a) GARGALO SCM (pecas)\n"
-            "   (b) GARGALO COMERCIAL (demora aprovacao)\n"
-            "   (c) GARGALO DE PRODUÇÃO / SEÇÃO (FUNILARIA, PINTURA etc estourando)\n"
-            "Caso (c) OBRIGATORIO informar QUAL SEÇÃO e estouro medio por OS.\n\n"
-            "# (3) ANALISE DOS ATRASOS POR FAIXA (1-2d / 3-5d / +5d)\n"
-            "Para CADA FAIXA, responda OBRIGATORIAMENTE:\n"
-            "  * Valor R$ total da faixa.\n"
-            "  * Que proporção do atraso é SCM vs COMERCIAL vs SEÇÃO (produção)?\n"
-            "  * Qual SEÇÃO MAIS atrasou nesta faixa?\n"
-            "Sempre associe números do relatório.\n\n"
-            "# (4) IMPACTO FINANCEIRO E OPERACIONAL\n"
-            "- OBRIGATORIO: DESTACAR VALOR TOTAL ATRASADO em R$ (receita imobilizada/parada).\n"
-            "- Composicao do valor atrasado: R$ MO, R$ PECAS, R$ SERVICOS.\n"
-            "- Horas TOTAIS estouradas na carteira inteira (campo DIFERENÇA / ESTOURO GERAL).\n"
-            "- Qual SECAO gerou MAIOR estouro → maior prejuizo operacional (hora extra / ociosidade).\n"
-            "- IMPACTO ESPECIFICO SCM: R$ atrelados a OS com peças NAO COMPRADAS.\n"
-            "- IMPACTO ESPECIFICO COMERCIAL: R$ atrelados a OS >= 3d de atraso na aprovacao.\n"
-            "- Clientes afetados e risco reputacional.\n\n"
-            "# (5) CONTRAMEDIDAS (ACOES PRIORIZADAS 30-60-90 DIAS)\n"
-            "Divida em ALTA PRIORIDADE (30 dias / HOJE), MEDIA (60 dias), BAIXA (90 dias).\n"
-            "ALTA PRIORIDADE (30 dias) DEVE, OBRIGATORIAMENTE, conter MINIMO 5 acoes:\n"
-            "  (A) Resolver peças NAO COMPRADAS desde aprovacao.\n"
-            "  (B) Resolver peças com SUSPEITA de erro/extravio/troca (>= 10d de atraso).\n"
-            "  (C) Reduzir demora de aprovacao >= 3d (cobranca ativa).\n"
-            "  (D) ACAO CORRETIVA para a SEÇÃO com MAIOR estouro GLOBAL:\n"
-            "      Exemplos: 'remanejar 1 colaborador da Pintura para Funilaria nas proximas 2 OS'\n"
-            "      ou 'ajustar horas planejadas da Funilaria em +3h (sempre estoura valor medio)'\n"
-            "      ou 'treinar colaborador X que esta com 60% das tarefas da secao atrasadas'.\n"
-            "  (E) ACAO para casos onde SECAO estoura POR CAUSA DE BLOQUEIO DE PEÇAS:\n"
-            "      Exemplos: 'permitir bypass de montagem parcial quando a peça pendente nao\n"
-            "      afeta a etapa', ou 'antecipar etapas de pintura se funilaria esta bloqueada'.\n"
-            "Sempre associe RETORNO esperado em R$ ou horas economizadas.\n\n"
-            "# (6) RECOMENDACOES INDIVIDUAIS POR ORCAMENTO CRITICO\n"
-            "Selecione os 4-5 piores casos (combinacao de: +5d atraso / valor R$ alto /\n"
-            "pecas criticas / secao estourada).\n"
-            "PARA CADA CASO, OBRIGATORIAMENTE:\n"
-            "  - OS #, valor reparo R$, dias de atraso, situacao APROVACAO, situacao PECAS.\n"
-            "  - QUAL E A SECAO GARGALO desta OS? (do bloco GARGALOS DE PRODUÇÃO por seção).\n"
-            "  - DIAGNOSTICO DE CAUSA RAIZ: atraso por (1) pecas, (2) secao estourando,\n"
-            "    (3) demora comercial, (4) combinacao?\n"
-            "  - 1 sugestao ESPECIFICA e AÇIONAVEL ligada DIRETAMENTE a causa raiz\n"
-            "    (ex: 'comprar peça X hoje fornecedor Y', 'ligar fornecedor Z protocolo troca',\n"
-            "     'cobrar seguradora amanha 9h', 'mover colaborador A para funilaria nesta OS').\n\n"
-            "REGRAS IMPORTANTISSIMAS (CUMPRA SEMPRE):\n"
-            "1) NUNCA invente valores monetarios. Use APENAS os valores em R$ (BRL, REAL BRASILEIRO) do relatorio.\n"
-            "2) SEMPRE responda em R$ (reais), usando formato R$ 1.234,56. NUNCA converta para USD.\n"
-            "3) Pergunta do tipo 'quanto deixei de receber' / 'valor atraso' / 'receita parada':\n"
-            "   responda DIRETAMENTE com VALOR TOTAL ATRASADO. Depois complemente detalhes.\n"
-            "4) Quando a pergunta for sobre peças, responda usando os dados de DETALHES DE PECAS da respectiva OS.\n"
-            "   Inclua: nome peça, quantos dias sem comprar, valor, fornecedor (se tiver).\n"
-            "5) Quando a pergunta for SEÇÕES / GARGALOS DE PRODUÇÃO / 'em qual secao estou gastando mais' /\n"
-            "   'funilaria atrasou?' / 'pintura deu mais trabalho?' — responda:\n"
-            "   * Primeiro o BLOCO GLOBAL HORAS POR SEÇÃO — qual seção MAIS estourou, valor total, estouro medio.\n"
-            "   * Depois, por ORCAMENTO individual, use os blocos ⚙️ (secoes) para justificar.\n"
-            "   * SEMPRE que uma seção tiver estouro, VERIFIQUE se a linha 'NOTA IMPACTANTE (IA): OS BLOQUEADA\n"
-            "     por X peça(s) PENDENTES' esta presente — se sim, avise que o estouro pode ser PEÇAS e nao\n"
-            "     mao de obra ruim; se nao, o estouro e' realmente do processo / colaborador.\n"
-            "6) Use negrito e bullets. Max 2500 palavras total.\n"
-            "7) Toda recomendacao deve ter acao concreta executavel no mesmo dia."
-        )
-        messages = [
-            {"role": "system", "content": prompt_sistema},
-            {"role": "user", "content": "RELATORIO BRUTO PARA ANALISE:\n\n" + report_text},
-        ]
-
-    # 4. HTTP POST para OpenAI (sem dependencia de biblioteca, puro urllib)
-    payload = _json.dumps(
-        {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 2048,
-        }
-    ).encode("utf-8")
-    req = _ureq.Request(
-        "https://api.openai.com/v1/chat/completions",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    try:
-        with _ureq.urlopen(req, timeout=timeout) as resp:
-            raw_bytes = resp.read()
-    except _uerr.HTTPError as e:
-        detalhe = ""
-        try:
-            detalhe = e.read().decode("utf-8", errors="replace")[:1200]
-        except Exception:
-            detalhe = str(e)
-        return LLMResult(
-            provider="erro",
-            model=model,
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
-            content=(
-                f"# ❌ Erro OpenAI (HTTP {e.code})\n\n"
-                f"**Mensagem:**\n```\n{detalhe}\n```\n\n"
-                "**Possiveis causas:**\n"
-                "  1. Chave API errada / revogada\n"
-                "  2. Cartao de credito nao cadastrado em https://platform.openai.com/settings/billing\n"
-                "  3. Rate limit / cota excedida\n"
-            ),
-            error=f"HTTP {e.code}: {detalhe[:200]}",
-        )
-    except Exception as e:
-        return LLMResult(
-            provider="erro",
-            model=model,
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
-            content=f"# ❌ Erro inesperado OpenAI: `{type(e).__name__}`\n\n{str(e)}",
-            error=str(e),
-        )
-
-    try:
-        raw_txt = raw_bytes.decode("utf-8", errors="replace")
-        obj = _json.loads(raw_txt)
-        escolhas = obj.get("choices", []) or []
-        if not escolhas:
-            return LLMResult(
-                provider="erro", model=model, tokens_in=0, tokens_out=0, cost_usd=0,
-                content="# ❌ OpenAI sem resposta (choices vazio)",
-                error=f"raw[:400]={raw_txt[:400]}"
-            )
-        content = str(escolhas[0].get("message", {}).get("content", "")).strip()
-        usage = obj.get("usage", {}) or {}
-        tk_in = int(usage.get("prompt_tokens", 0))
-        tk_out = int(usage.get("completion_tokens", 0))
-        precos = _OPENAI_PRICING_PER_1M.get(model, (0.15, 0.60))
-        cost_usd = (tk_in * precos[0] / 1_000_000.0) + (tk_out * precos[1] / 1_000_000.0)
-        res = LLMResult(
-            provider="openai",
-            model=model,
-            tokens_in=tk_in,
-            tokens_out=tk_out,
-            cost_usd=round(cost_usd, 6),
-            content=content or "(resposta vazia da OpenAI)",
-        )
-        # salva no cache APENAS se for a analise completa (NAO salva chat followup)
-        if not user_followup:
-            _save_analysis_cache(report_text, "openai", res)
-        else:
-            # Follow-up: salva no historico de chat individual
-            _chat_history_append(report_text, user_followup or "", content)
-        return res
-    except Exception as e:
-        return LLMResult(
-            provider="erro", model=model, tokens_in=0, tokens_out=0, cost_usd=0,
-            content=f"# ❌ Parse da resposta OpenAI falhou ({type(e).__name__}: {e})\n\n"
-                    f"```\n{str(raw_bytes[:1200])}\n```",
-            error=str(e)
-        )
-
-
-# ============================================================
-#  [VIEW BASE] PerformanceDashboardView
-# ============================================================
-
-class PerformanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, ListView):
-    model = Budget
-    template_name = "budgets/performance_dashboard.html"
-    context_object_name = "budgets"
-    paginate_by = None
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def get_queryset(self):
-        q = Q(expected_delivery_date__isnull=False) | Q(delivered_at__isnull=False) | Q(approved_at__isnull=False)
-        return (
-            super()
-            .get_queryset()
-            .select_related("customer", "vehicle")
-            .prefetch_related("pieces")
-            .filter(q)
-            .order_by("-delivered_at", "-expected_delivery_date", "-approved_at", "-created_at")
-        )
-
-    def get_context_data(self, **kwargs):
-        # ==============================================================================
-        # GARANTE que a CHAVE OPENAI esteja EFETIVA no worker uWSGI (PythonAnywhere).
-        # Sem isto, workers antigos (carregados ANTES do .env ser criado) podem continuar
-        # com django_settings.OPENAI_API_KEY vazio na memoria, mesmo que o arquivo exista.
-        # ==============================================================================
-        _ensure_openai_key_effective()
-        ctx = super().get_context_data(**kwargs)
-        budgets = list(ctx["budgets"])
-        report = compute_performance_report(budgets)
-        report_text = performance_report_to_text(report)
-        ctx.update(report=report, report_text=report_text)
-        return ctx
-
-
-def _parse_ia_sections(texto: str) -> List[Dict[str, str]]:
-    """Quebra o texto da analise da IA nas 6 secoes para impressao organizada.
-    Se nao encontrar marcadores, retorna 1 unica secao 'Analise Completa'.
-    """
-    marcadores = [
-        ("RESUMO EXECUTIVO", "📋 Resumo Executivo", ["(1) RESUMO", "# (1) RESUMO", "RESUMO EXECUTIVO", "(1) Resumo"]),
-        ("PRINCIPAIS GARGALOS", "🔧 Principais Gargalos Identificados", ["(2) PRINCIPAIS GARGALOS", "# (2) PRINCIPAIS GARGALOS", "PRINCIPAIS GARGALOS IDENTIFICADOS"]),
-        ("ANALISE DOS ATRASOS POR FAIXA", "⏱️ Análise dos Atrasos por Faixa", ["(3) ANALISE DOS ATRASOS", "# (3) ANALISE DOS ATRASOS", "ANALISE DOS ATRASOS POR FAIXA", "(3) ATRASOS"]),
-        ("IMPACTO FINANCEIRO", "💰 Impacto Financeiro / Operacional", ["(4) IMPACTO", "# (4) IMPACTO", "IMPACTO FINANCEIRO", "IMPACTO OPERACIONAL", "(4) Impacto"]),
-        ("CONTRAMEDIDAS", "🚀 Contramedidas 30/60/90 dias", ["(5) CONTRAMEDIDAS", "# (5) CONTRAMEDIDAS", "CONTRAMEDIDAS", "PLANO DE ACAO", "PLANO DE AÇÃO"]),
-        ("CASOS CRITICOS", "🚨 Casos Críticos (Ação Imediata)", ["(6) CASOS CRITICOS", "# (6) CASOS CRITICOS", "CASOS CRITICOS", "CASOS CRÍTICOS", "(6) Casos"]),
-    ]
-    texto_norm = texto or ""
-    secoes: List[Dict[str, str]] = []
-    last_end = 0
-    # Encontra cada marcador no texto, ordem de ocorrencia (nao forca ordem dos indices)
-    hits = []  # (start_index, key, titulo_bonito)
-    for chave, titulo, padroes in marcadores:
-        for p in padroes:
-            idx = texto_norm.lower().find(p.lower())
-            if idx >= 0:
-                hits.append((idx, chave, titulo))
-                break
-    hits.sort(key=lambda x: x[0])
-    for i, (start, key, titulo) in enumerate(hits):
-        end = hits[i + 1][0] if i + 1 < len(hits) else len(texto_norm)
-        corpo = texto_norm[start:end].strip()
-        # Remove 1a linha (o titulo) para nao repetir
-        linhas = corpo.splitlines()
-        if linhas:
-            primeira_linha_LOW = linhas[0].strip().lower()
-            if any(p.lower() in primeira_linha_LOW for _, _, padroes in marcadores for p in padroes):
-                corpo = "\n".join(linhas[1:]).strip()
-        if corpo:
-            secoes.append({"key": key, "titulo": titulo, "corpo": corpo})
-        last_end = end
-    if not secoes:
-        secoes.append({"key": "COMPLETO", "titulo": "📋 Análise Completa da IA", "corpo": texto_norm.strip()})
-    return secoes
-
-
-class PerformanceInsightsView(PerformanceDashboardView):
-    # Ja herda LoginRequiredMixin e RoleRequiredMixin + allowed_roles do pai.
-    allowed_roles = PerformanceDashboardView.allowed_roles
-
-    # ------------------------------------------------------------
-    # [GET] Analise completa (cache + nuvem/local)
-    # ------------------------------------------------------------
-    def get(self, request, *args, **kwargs):
-        import datetime as _dt
-        self.object_list = self.get_queryset()
-        ctx = self.get_context_data(**kwargs)
-        report_text = ctx.get("report_text", "")
-
-        force_refresh = (
-            str(request.GET.get("refresh", "")).strip().lower()
-            in {"1", "true", "sim", "yes", "forcar"}
-        )
-        print_mode = (
-            str(request.GET.get("print", "")).strip().lower()
-            in {"1", "true", "sim", "yes", "imprimir", "relatorio"}
-        )
-        clear_chat = (
-            str(request.GET.get("clear_chat", "")).strip().lower()
-            in {"1", "true", "sim"}
-        )
-        user_provider_pref = str(request.GET.get("provider", "auto")).strip().lower()  # auto/openai/ollama
-
-        if clear_chat:
-            _chat_history_clear(report_text)
-
-        # ==============================================================================
-        # 1) Efetiva a chave OpenAI em settings/os.environ (se fallback achou ela OK)
-        #    Resolve bug dos workers uWSGI do PythonAnywhere com settings cacheado.
-        #    Nota: get_context_data JA chama _ensure_openai_key_effective(), mas chamamos
-        #    novamente aqui p/ garantir (caso get_context_data nao tenha sido chamado).
-        # ==============================================================================
-        _ensure_openai_key_effective()
-        api_key = _resolve_openai_api_key()
-        api_key_ok = _openai_api_key_ok(api_key)
-
-        prefer_cloud = bool(
-            _os.environ.get("LLM_PREFER_CLOUD_IF_KEY", getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", "true"))
-            not in {False, None, "0", "false", "no", "off", "False"}
-            or bool(getattr(django_settings, "LLM_PREFER_CLOUD_IF_KEY", True))
-        )
-        ollama_habilitado_neste_ambiente = bool(getattr(django_settings, "LLM_ENABLE_OLLAMA_LOCAL", False))
-
-        # Ordem de provedores, dependendo da preferencia
-        # -----------------------------------------------------------------
-        # REGRAS (atualizadas 08/08 — evita erro Ollama se chave OpenAI existir
-        #                        E BLOQUEIA OLLAMA EM NUVEM (PA) via LLM_ENABLE_OLLAMA_LOCAL):
-        #
-        #   SE ollama_habilitado_neste_ambiente = False (PythonAnywhere / nuvem):
-        #      -> OLLAMA E' DESATIVADO COMPLETAMENTE. MESMO QUE USUARIO CLIQUE em 🤖 Local,
-        #         ele NÃO chama http://127.0.0.1:11434. Cai direto em OpenAI ou mostra
-        #         mensagem amigavel "Ollama so funciona no notebook local."
-        #
-        #   SE ollama_habilitado_neste_ambiente = True (notebook local):
-        #      user=openai :  [openai]            (so OpenAI, erro formatado chave/billing/rate)
-        #      user=ollama :  [ollama]            (so Ollama, erro passo-a-passo instalacao)
-        #      user=auto   :  se api_key_ok  -> [openai]
-        #                      se nao        -> [ollama, openai]  (fallback)]
-        # -----------------------------------------------------------------
-        provedores_para_tentar: List[str] = []
-        if not ollama_habilitado_neste_ambiente:
-            # ========= NUVEM (PythonAnywhere / producao): OLLAMA DESATIVADO SEMPRE.
-            # BLOQUEADO: nao adiciona ollama em HIPOTESE ALGUMA.
-            if user_provider_pref == "ollama":
-                # Usuario clicou no botao 🤖 Local na nuvem. Mantemos preferencia de usuario mas convertemos para
-                # openai (explicando o por que) se tiver chave, senao mostramos aviso de configurar OpenAI.
-                if api_key_ok:
-                    provedores_para_tentar = ["openai"]
-                # senao: deixa lista VAZIA para o loop nao tentar nada -> mensagem customizada abaixo
-            else:
-                # Modo auto ou openai: usa apenas OpenAI
-                if api_key_ok:
-                    provedores_para_tentar = ["openai"]
-        else:
-            # Ambiente LOCAL (notebook): Ollama existe e' permitido.
-            if user_provider_pref == "openai":
-                provedores_para_tentar = ["openai"]
-            elif user_provider_pref == "ollama":
-                provedores_para_tentar = ["ollama"]
-            else:  # auto
-                if api_key_ok and prefer_cloud:
-                    provedores_para_tentar = ["openai"]
-                else:
-                    provedores_para_tentar = ["ollama", "openai"]
-
-        # 1) Carrega do CACHE, se nao for refresh forcado
-        llm_result: Optional[LLMResult] = None
-        cache_hit_provider = None
-        # ==========================================================================
-        # ✅ CORREÇÃO 3: Se force_refresh=True, ANTES DE QUALQUER COISA, APAGA o cache antigo
-        #    dos provedores. Garante que nao leia um JSON velho de erro (ex: 12:17 de 3h atras)
-        # ==========================================================================
-        if force_refresh:
-            for prov in ("openai", "ollama"):
-                try:
-                    fp_del = _analysis_cache_path(report_text, prov)
-                    if _os.path.isfile(fp_del):
-                        _os.remove(fp_del)
-                except Exception:
-                    pass
-        if not force_refresh:
-            for prov in provedores_para_tentar:
-                if prov == "openai" and not api_key_ok:
-                    continue
-                r = _load_analysis_cache(report_text, prov)
-                if r and r.content and r.error is None:
-                    llm_result = r
-                    cache_hit_provider = prov
-                    break
-
-        # 2) Nao tinha cache? Roda o modelo de fato!
-        if llm_result is None:
-            erros: List[str] = []
-            ultimo_resultado_valido: Optional[LLMResult] = None
-            # Se lista esta VAZIA (nuvem + usuario clicou ollama sem chave OpenAI),
-            # cria um resultado amigavel ja de cara sem tentar nada.
-            if not provedores_para_tentar:
-                if not ollama_habilitado_neste_ambiente:
-                    # =========== NUVEM + OLLAMA INDISPONIVEL ===========
-                    msg_user = []
-                    msg_user.append("# 🛑 Ollama Local nao esta disponivel neste servidor (PythonAnywhere / Nuvem).")
-                    msg_user.append("")
-                    msg_user.append("> **Por que?** Ollama roda APENAS no seu notebook local (127.0.0.1:11434).")
-                    msg_user.append("> Ele NAO funciona em hospedagens compartilhadas como PythonAnywhere.")
-                    msg_user.append("")
-                    if not api_key_ok:
-                        msg_user.append("## ⚠️ Para usar IA no servidor, voce TEM que ter a OpenAI configurada.")
-                        msg_user.append("")
-                        msg_user.append("Edite o arquivo `.env` na pasta do projeto no PA e cole sua chave:")
-                        msg_user.append("```")
-                        msg_user.append("OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-                        msg_user.append("```")
-                        msg_user.append("Depois clique em [Reload] no painel WEB do PythonAnywhere.")
-                    else:
-                        msg_user.append("## ✅ OpenAI ja esta configurada neste servidor. Usando nuvem ☁️.")
-                        msg_user.append("")
-                        msg_user.append("Clique em **🎯 Auto** ou **☁️ OpenAI** para usar a analise da nuvem.")
-                    llm_result = LLMResult(
-                        provider="aviso", model="", tokens_in=0, tokens_out=0, cost_usd=0.0,
-                        content="\n".join(msg_user),
-                        error="ollama_desativado_nuvem",
-                    )
-                ultimo_resultado_valido = llm_result
-            for prov in provedores_para_tentar:
-                # ===== PROTECAO EXTRA: CHAMADA BLOQUEADA se Ollama desativado =====
-                if prov == "ollama" and not ollama_habilitado_neste_ambiente:
-                    erros.append("ollama: BLOQUEADO (LLM_ENABLE_OLLAMA_LOCAL = False em settings.py). Ollama NAO roda em nuvem.")
-                    continue
-                try:
-                    if prov == "openai":
-                        if not api_key_ok:
-                            erros.append("openai: CHAVE NAO CONFIGURADA (api_key_ok=False). Verifique OPENAI_API_KEY no .env (depois rode o deploy no PA).")
-                            continue  # pula
-                        r = _call_openai_analysis(report_text, user_followup=None)
-                    else:  # ollama
-                        txt = _call_local_ollama_analysis(report_text)
-                        # Ollama retorna str pura. Converter para LLMResult uniforme.
-                        sucesso = ("RESUMO EXECUTIVO" in txt or "# (1)" in txt or "(1) RESUMO" in txt or "llama3.2" in txt or "phi3" in txt or "Modelo:" in txt)
-                        r = LLMResult(
-                            provider="ollama" if sucesso else "erro",
-                            model="local",
-                            tokens_in=0,
-                            tokens_out=0,
-                            cost_usd=0.0,
-                            content=txt,
-                            error=None if sucesso else "erro_local",
-                        )
-                        if sucesso:
-                            _save_analysis_cache(report_text, "ollama", r)
-                except Exception as e_llm:
-                    r = LLMResult(
-                        provider="erro",
-                        model=prov,
-                        tokens_in=0,
-                        tokens_out=0,
-                        cost_usd=0.0,
-                        content=f"# ❌ Erro inesperado ({prov}): `{type(e_llm).__name__}`\n\n{e_llm}",
-                        error=str(e_llm),
-                    )
-                # Guarda sempre o ultimo resultado (mesmo com erro) para mostrar ao usuario
-                ultimo_resultado_valido = r
-                # Se resultado e valido (nao tem erro grave), para de tentar
-                if r.error is None or r.provider != "erro":
-                    llm_result = r
-                    break
-                erros.append(f"{prov}: {r.error}")
-            # Se nenhum dos dois deu certo: mostra o erro do ÚLTIMO provedor tentado (mais relevante)
-            if llm_result is None:
-                if ultimo_resultado_valido is not None:
-                    # Usa o erro do ultimo provedor (ex: erro formatado da OpenAI
-                    # com chave/billing/rate limit ou erro do Ollama com passo-a-passo)
-                    llm_result = ultimo_resultado_valido
-                else:
-                    llm_result = LLMResult(
-                        provider="erro", model="",
-                        tokens_in=0, tokens_out=0, cost_usd=0.0,
-                        content="# ❌ Nenhum provedor de IA disponivel\n\n" +
-                                ("\n".join(f"- {e}" for e in erros) if erros else "Tente configurar OpenAI no .env ou iniciar ollama serve."),
-                        error="; ".join(erros) if erros else "nenhum_provedor",
-                    )
-
-        # 3) Carrega historico de chat para follow-ups visiveis no template
-        chat_history = _chat_history_load(report_text, max_messages=20)
-
-        # 4) Passa TUDO para o template
-        ctx.update(
-            ai_analysis=llm_result.content,
-            ia_provider=llm_result.provider,
-            ia_model=llm_result.model,
-            ia_tokens_in=llm_result.tokens_in,
-            ia_tokens_out=llm_result.tokens_out,
-            ia_tokens_total=llm_result.tokens_in + llm_result.tokens_out,
-            ia_cost_usd=f"${llm_result.cost_usd:.5f}",
-            ia_cost_brl=f"R$ {llm_result.cost_brl:.2f}",
-            ia_erro=llm_result.error,
-            ia_cache_hit=bool(cache_hit_provider),
-            ia_cache_hit_provider=cache_hit_provider,
-            ia_force_refresh=force_refresh,
-            ia_openai_configured=api_key_ok,
-            ia_provedor_sugerido=(provedores_para_tentar[0] if provedores_para_tentar else "auto"),
-            chat_history=chat_history,
-            ia_report_hash=_report_cache_key(report_text),
-            ia_ollama_available=ollama_habilitado_neste_ambiente,  # False = nuvem (PA) / True = notebook local
-            ia_openai_debug=_debug_openai_sources() if not api_key_ok else None,  # Card diagnostico so aparece se nao detectou a chave
-        )
-        if llm_result.provider != "erro" and llm_result.error is None:
-            if cache_hit_provider:
-                # data do cache (ja salvo em ts la no cache)
-                fp = _analysis_cache_path(report_text, cache_hit_provider)
-                try:
-                    with open(fp, "r", encoding="utf-8") as f:
-                        cached_obj = _json.load(f)
-                    ctx["ia_generated_at"] = _dt.datetime.fromtimestamp(float(cached_obj.get("ts", 0)), tz=timezone.utc)
-                except Exception:
-                    ctx["ia_generated_at"] = timezone.now()
-            else:
-                ctx["ia_generated_at"] = timezone.now()
-        else:
-            ctx["ia_generated_at"] = timezone.now()
-
-        if print_mode:
-            # ============================================================
-            # MODO IMPRESSAO: template limpo A4, sem navbar, otimizado.
-            # ECONOMIA TOKENS: se nao tiver cache, mostra aviso e pede para gerar primeiro (NAO gasta tokens na impressao!)
-            # ============================================================
-            ctx["ia_secoes"] = _parse_ia_sections(llm_result.content)
-            ctx["ia_pode_imprimir"] = (
-                llm_result.provider != "erro"
-                and llm_result.error is None
-                and bool(llm_result.content)
-                and "⛔" not in llm_result.content[:200]
-                and "❌" not in llm_result.content[:200]
-                and "sem chave" not in llm_result.content[:300].lower()
-            )
-            # Totalizadores para o topo do relatorio
-            rep = ctx.get("report") or None
-            if rep is not None:
-                buckets = [
-                    ("🚨 +5d (CRÍTICO)", len(getattr(rep, "late_plus_5d", [])), "red"),
-                    ("🔥 5 dias", len(getattr(rep, "late_5d", [])), "orange"),
-                    ("⏱️ 4 dias", len(getattr(rep, "late_4d", [])), "orange"),
-                    ("⏱️ 3 dias", len(getattr(rep, "late_3d", [])), "amber"),
-                    ("⏱️ 2 dias", len(getattr(rep, "late_2d", [])), "amber"),
-                    ("⏱️ 1 dia", len(getattr(rep, "late_1d", [])), "yellow"),
-                    ("✅ No prazo", len(getattr(rep, "on_time", [])), "emerald"),
-                    ("⏸️ S/prazo", len(getattr(rep, "no_promise_date", [])), "slate"),
-                ]
-                total_os = sum(b[1] for b in buckets)
-                total_atrasados = sum(b[1] for b in buckets if b[2] in {"red", "orange", "amber", "yellow"})
-                ctx["print_buckets"] = buckets
-                ctx["print_total_os"] = total_os
-                ctx["print_total_atrasados"] = total_atrasados
-                ctx["print_total_no_prazo"] = len(getattr(rep, "on_time", []))
-                ctx["print_total_sem_prazo"] = len(getattr(rep, "no_promise_date", []))
-                # 5 OS mais criticas (do bucket late_plus_5d)
-                criticas = []
-                for row in list(getattr(rep, "late_plus_5d", []))[:5]:
-                    criticas.append({
-                        "orcamento": getattr(row, "budget_id", ""),
-                        "cliente": getattr(row, "customer_name", "")[:40],
-                        "veiculo": (str(getattr(row, "vehicle_model", "") or "") + " " + str(getattr(row, "vehicle_plate", "") or "")).strip()[:50],
-                        "dias_atraso": getattr(row, "late_days", 0),
-                        "secao_atual": getattr(row, "current_section_label", "-"),
-                        "bloqueio_pecas": "SIM" if getattr(row, "pending_parts_count", 0) > 0 else "não",
-                    })
-                ctx["print_criticas"] = criticas
-            return render(request, "budgets/performance_print_report.html", ctx)
-
-        return render(request, self.template_name, ctx)
-
-    # ------------------------------------------------------------
-    # [POST] Pergunta de follow-up (MEMORIA de CONVERSA!)
-    # ------------------------------------------------------------
-    def post(self, request, *args, **kwargs):
-        # Garante que a chave OpenAI esteja EFETIVA no worker uWSGI (PythonAnywhere)
-        _ensure_openai_key_effective()
-        self.object_list = self.get_queryset()
-        ctx = self.get_context_data(**kwargs)
-        report_text = ctx.get("report_text", "")
-        pergunta = str(request.POST.get("pergunta", "")).strip()
-
-        # 1) Limpar historico?
-        if "btn_limpar_chat" in request.POST:
-            _chat_history_clear(report_text)
-            return redirect(reverse("budgets:performance_insights") + "#chat")
-
-        if not pergunta:
-            return redirect(reverse("budgets:performance_insights") + "#chat")
-
-        # 2) Prioridade: OpenAI se chave OK, senao fallback para erro amigavel.
-        followup_result: Optional[LLMResult] = None
-        api_key = _resolve_openai_api_key()
-        api_key_ok = _openai_api_key_ok(api_key)
-        if api_key_ok:
-            followup_result = _call_openai_analysis(report_text, user_followup=pergunta)
-        else:
-            followup_result = LLMResult(
-                provider="erro", model="", tokens_in=0, tokens_out=0, cost_usd=0.0,
-                content=(
-                    "# ⚠️ Follow-up disponivel apenas com OPENAI.\n\n"
-                    "A memoria de conversa (perguntar detalhes) atualmente **usa apenas a API OpenAI**.\n"
-                    "Configure sua chave em `.env` (OPENAI_API_KEY=sk-...) e recarregue a página."
-                ),
-                error="sem_openai",
-            )
-
-        # 3) Passa resposta follow-up para template (nao salva em cache principal, chat_history já foi salvo pelo helper)
-        ctx.update(
-            ai_analysis=None,  # nao re-renderizar a analise principal se viamos de POST follow-up? Sim, mostramos apenas a ultima pergunta/resposta
-            ia_provider=followup_result.provider,
-            ia_model=followup_result.model,
-            ia_tokens_in=followup_result.tokens_in,
-            ia_tokens_out=followup_result.tokens_out,
-            ia_tokens_total=followup_result.tokens_in + followup_result.tokens_out,
-            ia_cost_usd=f"${followup_result.cost_usd:.5f}",
-            ia_cost_brl=f"R$ {followup_result.cost_brl:.2f}",
-            ia_erro=followup_result.error,
-            ia_cache_hit=False,
-            ia_cache_hit_provider=None,
-            ia_force_refresh=False,
-            ia_openai_configured=api_key_ok,
-            ia_provedor_sugerido="openai",
-            chat_history=_chat_history_load(report_text, max_messages=20),
-            ia_report_hash=_report_cache_key(report_text),
-            followup_pergunta=pergunta,
-            followup_resposta=followup_result.content,
-            ia_generated_at=timezone.now(),
-        )
-        # 4) Carrega a analise principal do cache (sem gastar tokens) para manter o contexto na tela
-        for prov in ("openai", "ollama"):
-            cached = _load_analysis_cache(report_text, prov)
-            if cached and cached.content:
-                ctx["ai_analysis"] = cached.content
-                ctx["ia_cache_hit"] = True
-                ctx["ia_cache_hit_provider"] = prov
-                break
-        return render(request, self.template_name, ctx)
 
 
 class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -3187,263 +833,6 @@ class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect(next_url or 'budgets:finance_dashboard')
 
 
-class FinanceXMLTemplateDownloadView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def get(self, request):
-        bank_accounts = list(BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')[:5])
-        categories = list(CashCategory.objects.filter(is_active=True).order_by('direction', 'group', 'name')[:8])
-        customers = list(Customer.objects.order_by('name')[:5])
-        suppliers = list(Supplier.objects.filter(is_active=True).order_by('name')[:5])
-
-        root = ElementTree.Element('financeiro')
-        metadata = ElementTree.SubElement(root, 'metadata')
-        ElementTree.SubElement(metadata, 'gerado_em').text = timezone.now().isoformat()
-        ElementTree.SubElement(metadata, 'observacao').text = (
-            'Use um item por lancamento. Preencha ids ou nomes de referencia existentes na base.'
-        )
-
-        referencias = ElementTree.SubElement(root, 'referencias')
-        bancos_el = ElementTree.SubElement(referencias, 'contas_bancarias')
-        for bank in bank_accounts:
-            item = ElementTree.SubElement(bancos_el, 'conta')
-            ElementTree.SubElement(item, 'id').text = str(bank.id)
-            ElementTree.SubElement(item, 'banco').text = bank.bank_name
-            ElementTree.SubElement(item, 'conta_nome').text = bank.account_name
-
-        categorias_el = ElementTree.SubElement(referencias, 'categorias')
-        for category in categories:
-            item = ElementTree.SubElement(categorias_el, 'categoria')
-            ElementTree.SubElement(item, 'id').text = str(category.id)
-            ElementTree.SubElement(item, 'nome').text = category.name
-            ElementTree.SubElement(item, 'direcao').text = category.direction
-
-        clientes_el = ElementTree.SubElement(referencias, 'clientes')
-        for customer in customers:
-            item = ElementTree.SubElement(clientes_el, 'cliente')
-            ElementTree.SubElement(item, 'id').text = str(customer.id)
-            ElementTree.SubElement(item, 'nome').text = customer.name
-
-        fornecedores_el = ElementTree.SubElement(referencias, 'fornecedores')
-        for supplier in suppliers:
-            item = ElementTree.SubElement(fornecedores_el, 'fornecedor')
-            ElementTree.SubElement(item, 'id').text = str(supplier.id)
-            ElementTree.SubElement(item, 'nome').text = supplier.name
-
-        movimentos = ElementTree.SubElement(root, 'movimentos')
-        movimento = ElementTree.SubElement(movimentos, 'movimento')
-        ElementTree.SubElement(movimento, 'descricao').text = 'Exemplo de lancamento'
-        ElementTree.SubElement(movimento, 'valor').text = '1500.00'
-        ElementTree.SubElement(movimento, 'direcao').text = 'IN'
-        ElementTree.SubElement(movimento, 'origem').text = 'PARTICULAR'
-        ElementTree.SubElement(movimento, 'data_lancamento').text = timezone.localdate().isoformat()
-        ElementTree.SubElement(movimento, 'data_vencimento').text = timezone.localdate().isoformat()
-        ElementTree.SubElement(movimento, 'realizado').text = 'false'
-        ElementTree.SubElement(movimento, 'conta_bancaria_id').text = str(bank_accounts[0].id) if bank_accounts else ''
-        ElementTree.SubElement(movimento, 'categoria_id').text = str(categories[0].id) if categories else ''
-        ElementTree.SubElement(movimento, 'cliente_id').text = str(customers[0].id) if customers else ''
-        ElementTree.SubElement(movimento, 'fornecedor_id').text = ''
-        ElementTree.SubElement(movimento, 'orcamento_id').text = ''
-
-        response = HttpResponse(
-            ElementTree.tostring(root, encoding='utf-8', xml_declaration=True),
-            content_type='application/xml; charset=utf-8',
-        )
-        response['Content-Disposition'] = 'attachment; filename="modelo-financeiro.xml"'
-        return response
-
-
-class FinanceXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
-    template_name = 'budgets/finance_import_xml.html'
-    form_class = FinanceXMLUploadForm
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def _source_aliases(self):
-        return {
-            CashMovement.Source.CUSTOMER: CashMovement.Source.PARTICULAR,
-            CashMovement.Source.INSURER: CashMovement.Source.INSURERS,
-            CashMovement.Source.OTHER: CashMovement.Source.COMPANY,
-        }
-
-    def _allowed_sources_by_direction(self):
-        return {
-            CashMovement.Direction.IN: {
-                CashMovement.Source.PARTICULAR,
-                CashMovement.Source.INSURERS,
-                CashMovement.Source.COMPANY,
-                CashMovement.Source.PARTS_SALE,
-                CashMovement.Source.LOANS,
-            },
-            CashMovement.Direction.OUT: {
-                CashMovement.Source.COMPANY,
-                CashMovement.Source.LOANS,
-            },
-        }
-
-    def _normalize_source(self, source, direction=''):
-        source = self._source_aliases().get(source, source)
-        if direction:
-            valid_sources = self._allowed_sources_by_direction().get(direction, set())
-        else:
-            valid_sources = {
-                CashMovement.Source.PARTICULAR,
-                CashMovement.Source.INSURERS,
-                CashMovement.Source.COMPANY,
-                CashMovement.Source.PARTS_SALE,
-                CashMovement.Source.LOANS,
-            }
-        return source if source in valid_sources else ''
-
-    def _default_source_for_direction(self, direction):
-        if direction == CashMovement.Direction.IN:
-            return CashMovement.Source.PARTICULAR
-        return CashMovement.Source.COMPANY
-
-    def _lookup_maps(self):
-        return {
-            'bank_by_id': {obj.id: obj for obj in BankAccount.objects.filter(is_active=True)},
-            'bank_by_name': {
-                _normalize_lookup_key(f'{obj.bank_name} {obj.account_name}'): obj
-                for obj in BankAccount.objects.filter(is_active=True)
-            },
-            'category_by_id': {obj.id: obj for obj in CashCategory.objects.filter(is_active=True)},
-            'category_by_name': {_normalize_lookup_key(obj.name): obj for obj in CashCategory.objects.filter(is_active=True)},
-            'customer_by_id': {obj.id: obj for obj in Customer.objects.all()},
-            'customer_by_name': {_normalize_lookup_key(obj.name): obj for obj in Customer.objects.all()},
-            'supplier_by_id': {obj.id: obj for obj in Supplier.objects.filter(is_active=True)},
-            'supplier_by_name': {_normalize_lookup_key(obj.name): obj for obj in Supplier.objects.filter(is_active=True)},
-            'budget_by_id': {obj.id: obj for obj in Budget.objects.all()},
-        }
-
-    def _resolve_related(self, element, maps, index):
-        bank = None
-        bank_id = _parse_xml_int(element, 'conta_bancaria_id')
-        if bank_id is not None:
-            bank = maps['bank_by_id'].get(bank_id)
-        if bank is None:
-            bank_name = _parse_xml_text(element, 'conta_bancaria_nome')
-            if bank_name:
-                bank = maps['bank_by_name'].get(_normalize_lookup_key(bank_name))
-        if bank is None:
-            raise forms.ValidationError(f'Movimento {index}: conta bancária não encontrada.')
-
-        category = None
-        category_id = _parse_xml_int(element, 'categoria_id')
-        if category_id is not None:
-            category = maps['category_by_id'].get(category_id)
-        if category is None:
-            category_name = _parse_xml_text(element, 'categoria_nome')
-            if category_name:
-                category = maps['category_by_name'].get(_normalize_lookup_key(category_name))
-
-        customer = None
-        customer_id = _parse_xml_int(element, 'cliente_id')
-        if customer_id is not None:
-            customer = maps['customer_by_id'].get(customer_id)
-        if customer is None:
-            customer_name = _parse_xml_text(element, 'cliente_nome')
-            if customer_name:
-                customer = maps['customer_by_name'].get(_normalize_lookup_key(customer_name))
-
-        supplier = None
-        supplier_id = _parse_xml_int(element, 'fornecedor_id')
-        if supplier_id is not None:
-            supplier = maps['supplier_by_id'].get(supplier_id)
-        if supplier is None:
-            supplier_name = _parse_xml_text(element, 'fornecedor_nome')
-            if supplier_name:
-                supplier = maps['supplier_by_name'].get(_normalize_lookup_key(supplier_name))
-
-        budget = None
-        budget_id = _parse_xml_int(element, 'orcamento_id')
-        if budget_id is not None:
-            budget = maps['budget_by_id'].get(budget_id)
-
-        return bank, category, customer, supplier, budget
-
-    def form_valid(self, form):
-        xml_bytes = form.cleaned_data['xml_file'].read()
-        try:
-            root = ElementTree.fromstring(xml_bytes)
-        except ElementTree.ParseError:
-            form.add_error('xml_file', 'Não foi possível ler o XML financeiro.')
-            return self.form_invalid(form)
-
-        if str(root.tag).split('}')[-1].lower() != 'financeiro':
-            form.add_error('xml_file', 'XML fora do padrão do financeiro.')
-            return self.form_invalid(form)
-
-        movement_nodes = root.findall('./movimentos/movimento')
-        if not movement_nodes:
-            form.add_error('xml_file', 'Nenhum movimento encontrado para importar.')
-            return self.form_invalid(form)
-
-        maps = self._lookup_maps()
-        rows = []
-        try:
-            for index, node in enumerate(movement_nodes, start=1):
-                description = _normalize_text(_parse_xml_text(node, 'descricao'))
-                if not description:
-                    raise forms.ValidationError(f'Movimento {index}: descrição é obrigatória.')
-
-                amount = _parse_xml_decimal(node, 'valor')
-                if amount is None or amount <= 0:
-                    raise forms.ValidationError(f'Movimento {index}: valor inválido.')
-
-                direction = _normalize_text(_parse_xml_text(node, 'direcao')).upper()
-                if direction not in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
-                    raise forms.ValidationError(f'Movimento {index}: direção deve ser IN ou OUT.')
-
-                source = _normalize_text(_parse_xml_text(node, 'origem')).upper() or self._default_source_for_direction(direction)
-                source = self._normalize_source(source, direction)
-                if not source:
-                    raise forms.ValidationError(f'Movimento {index}: origem inválida para a direção informada.')
-
-                launch_date = _parse_xml_date(node, 'data_lancamento') or timezone.localdate()
-                due_date = _parse_xml_date(node, 'data_vencimento') or launch_date
-                is_realized = _parse_xml_bool(node, 'realizado', default=False)
-
-                bank, category, customer, supplier, budget = self._resolve_related(node, maps, index)
-
-                if category and (category.direction or '').upper() != direction:
-                    raise forms.ValidationError(f'Movimento {index}: categoria incompatível com a direção.')
-
-                if direction == CashMovement.Direction.IN:
-                    supplier = None
-                    if customer is None:
-                        raise forms.ValidationError(f'Movimento {index}: cliente é obrigatório para entrada.')
-                else:
-                    customer = None
-
-                rows.append(
-                    {
-                        'description': description,
-                        'amount': amount,
-                        'direction': direction,
-                        'source': source,
-                        'launch_date': launch_date,
-                        'due_date': due_date,
-                        'is_realized': is_realized,
-                        'realized_at': timezone.now() if is_realized else None,
-                        'bank_account': bank,
-                        'category': category,
-                        'customer': customer,
-                        'supplier': supplier,
-                        'budget': budget,
-                    }
-                )
-        except forms.ValidationError as exc:
-            form.add_error('xml_file', exc.message)
-            return self.form_invalid(form)
-
-        with transaction.atomic():
-            for row in rows:
-                CashMovement.objects.create(**row)
-
-        messages.success(request=self.request, message=f'{len(rows)} lançamento(s) importado(s) no financeiro.')
-        return redirect('budgets:finance_dashboard')
-
-
 class FinanceInsightsView(FinanceDashboardView):
     template_name = 'budgets/finance_insights.html'
 
@@ -3635,91 +1024,6 @@ class FinanceInsightsView(FinanceDashboardView):
             reverse=True,
         )[:8]
 
-        customer_type_filter = (request.GET.get('customer_type') or '').strip().upper()
-        if customer_type_filter not in {Budget.CustomerType.PARTICULAR, Budget.CustomerType.INSURER, Budget.CustomerType.COMPANY}:
-            customer_type_filter = ''
-
-        customer_type_month_start = start_month
-        customer_type_month_end = end_month
-        budget_month_qs = Budget.objects.filter(
-            status=Budget.Status.AUTHORIZED,
-            approved_at__isnull=False,
-        ).only('approved_at', 'created_at', 'total_amount', 'customer_type')
-        if customer_type_filter:
-            budget_month_qs = budget_month_qs.filter(customer_type=customer_type_filter)
-        customer_type_budget_map = {}
-        customer_type_labels = {
-            Budget.CustomerType.PARTICULAR: 'Particular',
-            Budget.CustomerType.INSURER: 'Seguradora',
-            Budget.CustomerType.COMPANY: 'Empresa',
-        }
-        for budget in budget_month_qs.iterator():
-            ref_date = None
-            if budget.approved_at:
-                if timezone.is_aware(budget.approved_at):
-                    ref_date = timezone.localtime(budget.approved_at).date()
-                else:
-                    ref_date = budget.approved_at.date()
-            elif budget.created_at:
-                if timezone.is_aware(budget.created_at):
-                    ref_date = timezone.localtime(budget.created_at).date()
-                else:
-                    ref_date = budget.created_at.date()
-            if not ref_date or ref_date < customer_type_month_start or ref_date > customer_type_month_end:
-                continue
-            ct = budget.customer_type or ''
-            if ct not in customer_type_labels:
-                ct = ''
-            key = ct or 'BLANK'
-            row = customer_type_budget_map.setdefault(
-                key,
-                {
-                    'key': key,
-                    'label': customer_type_labels.get(ct) or 'Não classificado',
-                    'budget_count': 0,
-                    'approved_total': Decimal('0'),
-                    'received_total': Decimal('0'),
-                    'open_total': Decimal('0'),
-                },
-            )
-            row['budget_count'] += 1
-            row['approved_total'] += budget.total_amount or Decimal('0')
-
-        budget_ids_in_month = {b.id for b in budget_month_qs.all()}
-        if budget_ids_in_month:
-            cash_qs = CashMovement.objects.filter(
-                direction=CashMovement.Direction.IN,
-                budget_id__in=budget_ids_in_month,
-            ).only('budget_id', 'amount', 'is_realized', 'customer_type')
-            if customer_type_filter:
-                cash_qs = cash_qs.filter(customer_type=customer_type_filter)
-            for cash in cash_qs.iterator():
-                ct = cash.customer_type or ''
-                if ct not in customer_type_labels:
-                    ct = ''
-                key = ct or 'BLANK'
-                row = customer_type_budget_map.setdefault(
-                    key,
-                    {
-                        'key': key,
-                        'label': customer_type_labels.get(ct) or 'Não classificado',
-                        'budget_count': 0,
-                        'approved_total': Decimal('0'),
-                        'received_total': Decimal('0'),
-                        'open_total': Decimal('0'),
-                    },
-                )
-                if cash.is_realized:
-                    row['received_total'] += cash.amount or Decimal('0')
-                else:
-                    row['open_total'] += cash.amount or Decimal('0')
-
-        customer_type_ranking = sorted(customer_type_budget_map.values(), key=lambda r: r['approved_total'], reverse=True)
-        customer_type_labels_list = [r['label'] for r in customer_type_ranking]
-        customer_type_approved_values = [float(r['approved_total']) for r in customer_type_ranking]
-        customer_type_received_values = [float(r['received_total']) for r in customer_type_ranking]
-        customer_type_budget_counts = [r['budget_count'] for r in customer_type_ranking]
-
         context = {
             'today': today,
             'range_start': range_start,
@@ -3728,10 +1032,8 @@ class FinanceInsightsView(FinanceDashboardView):
             'filters': {
                 'direction': direction,
                 'source': source,
-                'customer_type': customer_type_filter,
             },
             'source_options': self._source_options(),
-            'customer_type_options': Budget.CustomerType.choices,
             'month_labels': month_labels,
             'expected_in_series': expected_in_series,
             'expected_out_series': expected_out_series,
@@ -3753,11 +1055,6 @@ class FinanceInsightsView(FinanceDashboardView):
             'insurer_budget_counts': [item['budget_count'] for item in insurer_ranking],
             'insurer_amount_values': [float(item['approved_total']) for item in insurer_ranking],
             'insurer_ranking': insurer_ranking,
-            'customer_type_ranking': customer_type_ranking,
-            'customer_type_labels_list': customer_type_labels_list,
-            'customer_type_approved_values': customer_type_approved_values,
-            'customer_type_received_values': customer_type_received_values,
-            'customer_type_budget_counts': customer_type_budget_counts,
             'status_labels': ['Em aberto', 'Realizado'],
             'status_values': [float(open_amount), float(realized_amount)],
             'receivable_open': receivable_open,
@@ -3862,100 +1159,7 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
             super()
             .get_queryset()
             .select_related('budget', 'budget__customer', 'budget__vehicle')
-            .prefetch_related(
-                'tasks',
-                'tasks__collaborator',
-                'budget__pieces',
-            )
         )
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        now_local = timezone.localtime(timezone.now())
-        paired = []
-        for wo in ctx['work_orders']:
-            paired.append((wo, compute_work_order_status(wo, now=now_local)))
-        ctx['work_orders_with_status'] = paired
-        return ctx
-
-
-def close_work_order_if_all_done(work_order):
-    """
-    Fecha automaticamente a WorkOrder (OS) se, e somente se,
-    a ULTIMA tarefa existente na OS (maior order) estiver DONE
-    E alem disso NAO HA NENHUMA tarefa pendente.
-
-    Regra conforme o usuario (sistema de producao - OS #592):
-        "A OS so pode ser finalizada apos a ultima tarefa QUE ESTIVER NELA for concluida.
-         Nao importa a etapa: se o cliente so contratou Desmontagem (1 etapa = order=1, a ultima
-         da OS), entao quando ela ficar DONE fecha e inativa a OS imediatamente."
-
-    Retorna True se a OS foi FECHADA agora; False caso contrario.
-    """
-    if work_order is None:
-        return False
-    if work_order.status == WorkOrder.Status.CLOSED:
-        return False
-
-    # PASSO 1: Achar a ORDER MÁXIMA existente DENTRO das tarefas da OS
-    max_order = (
-        WorkOrderTask.objects
-        .filter(work_order_id=work_order.pk)
-        .aggregate(max_order=Max('order'))
-        ['max_order']
-    )
-    if max_order is None:
-        return False
-
-    # PASSO 2: Pegar a tarefa da order MÁXIMA (a "última" da OS existente)
-    last_task = (
-        WorkOrderTask.objects
-        .filter(work_order_id=work_order.pk, order=max_order)
-        .only('status')
-        .first()
-    )
-    if last_task is None or last_task.status != WorkOrderTask.Status.DONE:
-        # Ultima tarefa da os NAO FOI CONCLUIDA ainda -> nao fecha nunca!
-        return False
-
-    # PASSO 3 (Blindagem): Garantir que NAO EXISTA nenhuma tarefa aberta
-    # (seguranca extra para nao fechar OS com tarefa pending ainda existente)
-    pending = (
-        WorkOrderTask.objects
-        .filter(work_order_id=work_order.pk)
-        .exclude(status=WorkOrderTask.Status.DONE)
-        .exists()
-    )
-    if pending:
-        return False
-
-    work_order.status = WorkOrder.Status.CLOSED
-    work_order.save(update_fields=['status', 'updated_at'])
-    return True
-
-
-def resolve_collaborator_from_user(user) -> Collaborator | None:
-    """
-    Resolve o objeto Collaborator associado a um CustomUser.
-
-    O sistema atual NAO possui ForeignKey direta entre CustomUser e Collaborator.
-    O vínculo padrão é através do EMAIL IGUAL (CustomUser.email == Collaborator.email),
-    com fallback por NOME exato caso o email nao esteja cadastrado.
-    Retorna None se não houver nenhum colaborador associado.
-    """
-    if user is None or not getattr(user, 'is_authenticated', False):
-        return None
-    email = (getattr(user, 'email', '') or '').strip()
-    if email:
-        by_email = Collaborator.objects.filter(email__iexact=email).first()
-        if by_email is not None:
-            return by_email
-    name = (getattr(user, 'name', '') or '').strip() or (getattr(user, 'first_name', '') or '').strip()
-    if name:
-        by_name = Collaborator.objects.filter(name__iexact=name).first()
-        if by_name is not None:
-            return by_name
-    return None
 
 
 class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
@@ -3970,31 +1174,62 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         CustomUser.Role.VISUAL,
     )
 
-    def dispatch(self, request, *args, **kwargs):
-        user = getattr(request, 'user', None)
-        if (
-            user
-            and getattr(user, 'is_authenticated', False)
-            and not getattr(user, 'is_superuser', False)
-            and getattr(user, 'role', None) == CustomUser.Role.VISUAL
-        ):
-            return redirect('budgets:kanban_tv')
-        if (
-            user
-            and getattr(user, 'is_authenticated', False)
-            and not getattr(user, 'is_superuser', False)
-            and getattr(user, 'role', None) == CustomUser.Role.OPERATIONAL
-        ):
-            return redirect('budgets:kanban_my_tasks')
-        return super().dispatch(request, *args, **kwargs)
-
     def _next_workday(self, day):
-        return _get_next_weekday(day)
+        next_day = day + timedelta(days=1)
+        while next_day.weekday() >= 5:
+            next_day = next_day + timedelta(days=1)
+        return next_day
 
     def _auto_pause_end_of_day(self):
-        """Refatorado: usa helper GLOBAL auto_pause_and_reschedule_after_cutoff que agora
-        cobre TANTO tarefas individuais QUANTO lotes (antes só tratava individuais)."""
-        auto_pause_and_reschedule_after_cutoff()
+        now = timezone.localtime(timezone.now())
+        cutoff = KANBAN_CUTOFF_TIME
+        today = now.date()
+        is_after_cutoff = now.time() >= cutoff
+        is_sunday = today.weekday() == 6
+        reschedule_today = today if not is_sunday else self._next_workday(today)
+        tomorrow = self._next_workday(today)
+
+        running_tasks = (
+            WorkOrderTask.objects.select_related('collaborator')
+            .filter(status=WorkOrderTask.Status.RUNNING)
+            .filter(allow_overtime=False)
+            .exclude(last_started_at__isnull=True)
+        )
+
+        if not running_tasks.exists():
+            return
+
+        for task in running_tasks:
+            last = timezone.localtime(task.last_started_at) if task.last_started_at else None
+            if last is None:
+                continue
+
+            started_day = last.date()
+            if started_day == today:
+                if not is_after_cutoff:
+                    continue
+                reschedule_date = tomorrow
+            else:
+                reschedule_date = reschedule_today
+
+            delta, effective_end = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
+            task.elapsed_seconds = int(task.elapsed_seconds or 0) + delta
+            task.last_started_at = None
+            task.status = WorkOrderTask.Status.PAUSED
+            task.scheduled_date = reschedule_date
+            task.actual_hours = (Decimal(task.elapsed_seconds) / Decimal('3600')).quantize(
+                Decimal('0.01'),
+                rounding=ROUND_HALF_UP,
+            )
+            task.save(
+                update_fields=[
+                    'elapsed_seconds',
+                    'last_started_at',
+                    'status',
+                    'scheduled_date',
+                    'actual_hours',
+                ]
+            )
 
     def dispatch(self, request, *args, **kwargs):
         self._auto_pause_end_of_day()
@@ -4012,14 +1247,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         is_workday = selected.weekday() < 6
         q = Q(status=WorkOrderTask.Status.RUNNING)
         if is_workday:
-            q = q | Q(
-                status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
-                scheduled_date=selected,
-            )
-        q = q | Q(
-            status=WorkOrderTask.Status.DONE,
-            completed_at__date=selected,
-        )
+            q = q | Q(scheduled_date=selected)
         return (
             super()
             .get_queryset()
@@ -4031,6 +1259,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
             )
             .filter(q)
             .filter(Q(work_order__budget__entry_date__isnull=True) | Q(work_order__budget__entry_date__lte=selected))
+            .exclude(status=WorkOrderTask.Status.DONE)
             .order_by('activity', 'order', 'id')
         )
 
@@ -4049,32 +1278,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         is_workday = selected.weekday() < 6
         tasks_by_activity = {}
         now = timezone.now()
-        now_local = timezone.localtime(now)
-        task_items = list(context.get('tasks', []))
-
-        batch_ids = list({t.batch_id for t in task_items if t.batch_id})
-        batch_stats = {}
-        if batch_ids:
-            batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
-            for b in batches_qs:
-                apply_batch_time_allocation(b, now=now, can_write_db=False)
-                btasks = list(b.tasks.all())
-                tot = len(btasks)
-                done = sum(1 for bt in btasks if bt.status == WorkOrderTask.Status.DONE)
-                batch_stats[b.id] = {
-                    'total': tot,
-                    'done': done,
-                    'id': b.id,
-                }
-        for task in task_items:
-            if task.batch_id and task.batch_id in batch_stats:
-                bs = batch_stats[task.batch_id]
-                task.display_batch_badge = f"📦 LOTE {bs['done']}/{bs['total']}"
-                task.display_batch_id = bs['id']
-            else:
-                task.display_batch_badge = ''
-                task.display_batch_id = None
-        for task in task_items:
+        for task in context.get('tasks', []):
             task.is_patio = False
             try:
                 planned_seconds = int((task.planned_hours or 0) * Decimal('3600'))
@@ -4086,20 +1290,6 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 extra = int((now - task.last_started_at).total_seconds())
             task.display_elapsed_seconds = int(task.elapsed_seconds or 0) + max(extra, 0)
             task.is_overdue = bool(task.planned_seconds and task.display_elapsed_seconds > task.planned_seconds)
-            blockers = get_task_sequence_blockers(task)
-            task.sequence_blockers = blockers
-            task.sequence_block_message = (
-                f'Conclua primeiro {blockers[0]}.'
-                if len(blockers) == 1
-                else ('Conclua primeiro: ' + ', '.join(blockers) + '.') if blockers else ''
-            )
-            wo_summary = compute_work_order_status(task.work_order, now=now_local)
-            task.os_state_code = wo_summary.state_code
-            task.os_state_label = wo_summary.state_label
-            task.os_is_blocked = wo_summary.is_blocked
-            task.os_parts_count = len(wo_summary.blocked_parts)
-            task.display_status_label = simplify_task_status_label(task.status)
-            task.display_elapsed_hms = seconds_to_hms(task.display_elapsed_seconds)
             tasks_by_activity.setdefault(task.activity, []).append(task)
 
         busy_work_order_ids = set(
@@ -4114,29 +1304,12 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                 .exclude(status=WorkOrderTask.Status.DONE)
                 .values_list('work_order_id', flat=True)
             )
-        busy_work_order_ids |= set(
-            WorkOrderTask.objects.filter(
-                status=WorkOrderTask.Status.DONE,
-                completed_at__date=selected,
-            ).values_list('work_order_id', flat=True)
-        )
 
         patio_work_orders = (
             WorkOrder.objects.select_related('budget', 'budget__vehicle', 'budget__customer')
             .filter(budget__status=Budget.Status.AUTHORIZED)
-            .filter(budget__delivered_at__isnull=True)
             .exclude(id__in=list(busy_work_order_ids))
             .annotate(
-                has_pending_tasks=Exists(
-                    WorkOrderTask.objects.filter(
-                        work_order_id=OuterRef('id'),
-                    ).exclude(status=WorkOrderTask.Status.DONE)
-                ),
-                has_any_tasks=Exists(
-                    WorkOrderTask.objects.filter(
-                        work_order_id=OuterRef('id'),
-                    )
-                ),
                 has_late_parts=Exists(
                     Piece.objects.filter(
                         budget_id=OuterRef('budget_id'),
@@ -4146,12 +1319,10 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                     )
                 )
             )
-            .filter(Q(has_pending_tasks=True) | Q(has_any_tasks=False))
             .order_by('-created_at')
         )
         patio_cards = []
         for wo in patio_work_orders:
-            wo_summary = compute_work_order_status(wo, now=now_local)
             patio_cards.append(
                 {
                     'id': f'patio-{wo.id}',
@@ -4169,12 +1340,6 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
                     'planned_seconds': 0,
                     'is_overdue': False,
                     'allow_overtime': False,
-                    'os_state_code': wo_summary.state_code,
-                    'os_state_label': wo_summary.state_label,
-                    'os_is_blocked': wo_summary.is_blocked,
-                    'os_parts_count': len(wo_summary.blocked_parts),
-                    'display_status_label': 'S · Não iniciado',
-                    'display_elapsed_hms': '',
                 }
             )
 
@@ -4219,395 +1384,6 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return context
 
 
-class WorkOrderKanbanVisualView(WorkOrderKanbanTodayView):
-    """
-    Kanban VISUAL (Smart TV) — MESMO conteúdo do Kanban do DIA, mas com interface
-    100% limpa, SEM sidebar/navbar do sistema, só para os operadores visualizarem
-    as tarefas de hoje na TV do pátio.
-    """
-
-    allowed_roles = WorkOrderKanbanTodayView.allowed_roles
-    template_name = 'budgets/kanban_tv.html'
-
-    def get_queryset(self):
-        today = timezone.localdate()
-        raw = (self.request.GET.get('date') or '').strip()
-        selected = today
-        if raw:
-            try:
-                selected = date.fromisoformat(raw)
-            except ValueError:
-                selected = today
-        is_workday = selected.weekday() < 6
-        q = Q(status=WorkOrderTask.Status.RUNNING)
-        if is_workday:
-            q = q | Q(
-                status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
-                scheduled_date=selected,
-            )
-        # ====== REGRA DE DONE: SÓ MOSTRA TAREFA CONCLUÍDA NO DIA SELECIONADO ======
-        q = q | Q(status=WorkOrderTask.Status.DONE, completed_at__date=selected)
-        return (
-            super(WorkOrderKanbanTodayView, self)
-            .get_queryset()
-            .select_related(
-                'work_order',
-                'work_order__budget',
-                'work_order__budget__vehicle',
-                'collaborator',
-            )
-            .filter(q)
-            .filter(Q(work_order__budget__entry_date__isnull=True) | Q(work_order__budget__entry_date__lte=selected))
-            .order_by('activity', 'order', 'id')
-        )
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        now = timezone.now()
-        batch_ids = list({t.batch_id for t in context.get('tasks', []) if t.batch_id})
-        if batch_ids:
-            batches_qs = WorkOrderTaskBatch.objects.filter(pk__in=batch_ids).prefetch_related('tasks')
-            for b in batches_qs:
-                apply_batch_time_allocation(b, now=now, can_write_db=False)
-        context['is_visual_mode'] = True
-        return context
-
-
-class WorkOrderOperationalMobileView(LoginRequiredMixin, RoleRequiredMixin, ListView):
-    """
-    Tela MOBILE dos COLABORADORES OPERACIONAIS.
-    - Mobile-first: cards verticais, botões GRANDES full width.
-    - NÃO reutiliza o layout do kanban gerencial (8 colunas horizontais).
-    - SÓ mostra as TAREFAS DO COLABORADOR LOGADO (collaborator == request.user).
-    - Regras do queryset:
-        * RUNNING de qualquer dia (ex: tarefa iniciada ontem)
-        * SCHEDULED / PAUSED com scheduled_date == HOJE
-    - TAMBÉM mostra no rodapé:
-        * Tarefas CONCLUÍDAS HOJE (com o valor de comissão para engajamento)
-        * TOTAL DAS COMISSÕES GANHAS HOJE (R$ X,XX)
-    """
-
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
-    model = WorkOrderTask
-    context_object_name = 'tasks'
-    template_name = 'budgets/kanban_operacional.html'
-    paginate_by = None
-
-    def _resolve_collaborator(self, user):
-        return resolve_collaborator_from_user(user)
-
-    def dispatch(self, request, *args, **kwargs):
-        if not request.user.is_authenticated:
-            return self.handle_no_permission()
-        collab = self._resolve_collaborator(request.user)
-        if collab is None and not request.user.is_superuser and not request.user.role in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE):
-            messages.error(
-                request,
-                'Usuário não vinculado a um colaborador. Solicite ao gerente que cadastre o seu email igual no cadastro de Colaboradores.',
-            )
-        # 🔧 Aplica a trava 17:48 (pausa + reagenda LOTES e individuais) no carregamento mobile do colaborador
-        try:
-            auto_pause_and_reschedule_after_cutoff()
-        except Exception:
-            pass
-        return super().dispatch(request, *args, **kwargs)
-
-    def get_queryset(self):
-        today = timezone.localdate()
-        collaborator = self._resolve_collaborator(self.request.user)
-        q = (
-            Q(status=WorkOrderTask.Status.RUNNING)
-            | (
-                Q(
-                    status__in=(WorkOrderTask.Status.SCHEDULED, WorkOrderTask.Status.PAUSED),
-                    scheduled_date=today,
-                )
-            )
-        )
-        base_filter = Q(collaborator=collaborator) if collaborator else Q(pk__in=[])
-        return (
-            WorkOrderTask.objects.select_related(
-                'work_order',
-                'work_order__budget',
-                'work_order__budget__vehicle',
-                'work_order__budget__customer',
-                'collaborator',
-                'service',
-            )
-            .filter(base_filter)
-            .filter(q)
-            .order_by(
-                Case(
-                    When(status=WorkOrderTask.Status.RUNNING, then=Value(0)),
-                    When(status=WorkOrderTask.Status.PAUSED, then=Value(1)),
-                    default=Value(2),
-                    output_field=IntegerField(),
-                ),
-                'scheduled_date',
-                'activity',
-                'order',
-                'id',
-            )
-        )
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        today = timezone.localdate()
-        now = timezone.now()
-
-        today_label = f'{today.strftime("%A")} · {today.strftime("%d/%m/%Y")}'
-        context['today_label'] = today_label
-        context['now_hms'] = now.strftime('%H:%M:%S')
-
-        user = self.request.user
-        collaborator = self._resolve_collaborator(user)
-        context['collaborator'] = collaborator
-        context['collaborator_unlinked'] = collaborator is None and not user.is_superuser and user.role not in (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-        tasks = list(context['tasks'])
-        tasks_without_batch = [t for t in tasks if not t.batch_id]
-        tasks_with_batch = [t for t in tasks if t.batch_id]
-        context['tasks'] = tasks_without_batch
-
-        batch_ids = list({t.batch_id for t in tasks_with_batch if t.batch_id})
-        my_batches = []
-        if collaborator and batch_ids:
-            batches_qs = (
-                WorkOrderTaskBatch.objects.select_related(
-                    'work_order',
-                    'work_order__budget',
-                    'work_order__budget__vehicle',
-                    'collaborator',
-                )
-                .filter(
-                    pk__in=batch_ids,
-                    collaborator=collaborator,
-                )
-                .prefetch_related('tasks')
-                .order_by('id')
-            )
-            for batch in batches_qs:
-                apply_batch_time_allocation(batch, now=now, can_write_db=True)
-                batch_tasks = list(batch.tasks.all())
-                done_count = sum(1 for bt in batch_tasks if bt.status == WorkOrderTask.Status.DONE)
-                total_count = len(batch_tasks)
-                planned_hours_total = sum(float(bt.planned_hours or 0) for bt in batch_tasks)
-                actual_hours_total = sum(float(bt.actual_hours or 0) for bt in batch_tasks)
-                try:
-                    batch.display_budget_number = batch.work_order.budget.display_number
-                    v = batch.work_order.budget.vehicle
-                    batch.display_plate = v.plate if v else ''
-                except Exception:
-                    batch.display_budget_number = getattr(batch.work_order, 'id', '-')
-                    batch.display_plate = ''
-                batch.display_tasks_done = done_count
-                batch.display_tasks_total = total_count
-                batch.display_total_planned_h = planned_hours_total
-                batch.display_total_actual_h = actual_hours_total
-                batch.display_status_label = simplify_task_status_label(batch.status)
-                elapsed_batch_s = int(actual_hours_total * 3600)
-                for bt in batch_tasks:
-                    if bt.status == WorkOrderTask.Status.RUNNING and bt.last_started_at:
-                        delta_run, _ = capped_work_delta_seconds(bt.last_started_at, now, bt.allow_overtime)
-                        elapsed_batch_s += int(delta_run)
-                batch.display_elapsed_hms = seconds_to_hms(elapsed_batch_s)
-                batch.display_elapsed_seconds = elapsed_batch_s
-                planned_batch_s = int(planned_hours_total * 3600) if planned_hours_total > 0 else None
-                batch.is_overdue = bool(planned_batch_s and elapsed_batch_s > planned_batch_s)
-                if batch.is_overdue:
-                    ov_s = elapsed_batch_s - planned_batch_s
-                    batch.overtime_hms = seconds_to_hms(ov_s)
-                    batch.overtime_planned_hms = seconds_to_hms(planned_batch_s)
-                    batch.overtime_elapsed_hms = seconds_to_hms(elapsed_batch_s)
-                else:
-                    batch.overtime_hms = ''
-                    batch.overtime_planned_hms = ''
-                    batch.overtime_elapsed_hms = ''
-                commission_batch = Decimal('0')
-                function_ok = collaborator.function not in (
-                    Collaborator.Function.MANAGER,
-                    Collaborator.Function.FINANCE,
-                )
-                if function_ok:
-                    for bt in batch_tasks:
-                        base_amt = bt.planned_amount or Decimal('0')
-                        svc = bt.service
-                        if svc and svc.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
-                            pct = Decimal(svc.commission_value or 0)
-                            commission_batch += (base_amt * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                        elif svc and svc.commission_mode == ServiceCatalog.CommissionMode.FIXED:
-                            commission_batch += Decimal(svc.commission_value or 0).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                        else:
-                            pct = Decimal(collaborator.commission_percent or 0)
-                            commission_batch += (base_amt * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                batch.display_estimated_commission = commission_batch
-                batch_tasks_enriched = []
-                for bt in sorted(batch_tasks, key=lambda x: (x.order or 0, x.id)):
-                    bt.display_bt_status_label = simplify_task_status_label(bt.status)
-                    bt_t = float(bt.actual_hours or 0) * 3600
-                    if bt.status == WorkOrderTask.Status.RUNNING and bt.last_started_at:
-                        dbt, _ = capped_work_delta_seconds(bt.last_started_at, now, bt.allow_overtime)
-                        bt_t += int(dbt)
-                    bt.display_bt_elapsed_hms = seconds_to_hms(int(bt_t))
-                    batch_tasks_enriched.append(bt)
-                batch.display_items = batch_tasks_enriched
-                my_batches.append(batch)
-        context['my_batches'] = my_batches
-
-        other_running = None
-        other_running_batch = None
-        if collaborator:
-            other_running = (
-                WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
-                .filter(
-                    collaborator=collaborator,
-                    status=WorkOrderTask.Status.RUNNING,
-                    batch_id__isnull=True,
-                )
-                .exclude(pk__in=[t.pk for t in tasks_without_batch])
-                .order_by('id')
-                .first()
-            )
-            other_running_batch = (
-                WorkOrderTaskBatch.objects.select_related('work_order', 'work_order__budget')
-                .filter(
-                    collaborator=collaborator,
-                    status=WorkOrderTaskBatch.Status.RUNNING,
-                )
-                .exclude(pk__in=[b.pk for b in my_batches])
-                .order_by('id')
-                .first()
-            )
-        running_count = 0
-        if any(t.status == WorkOrderTask.Status.RUNNING for t in tasks_without_batch):
-            running_count += sum(1 for t in tasks_without_batch if t.status == WorkOrderTask.Status.RUNNING)
-        elif other_running:
-            running_count += 1
-        if any(b.status == WorkOrderTaskBatch.Status.RUNNING for b in my_batches):
-            running_count += sum(1 for b in my_batches if b.status == WorkOrderTaskBatch.Status.RUNNING)
-        elif other_running_batch:
-            running_count += 1
-        context['has_other_running'] = bool(running_count > 0)
-        context['other_running_task'] = other_running
-        context['other_running_batch'] = other_running_batch
-
-        pending_indiv = len(tasks_without_batch)
-        pending_batch_pieces = sum(
-            max(0, (b.display_tasks_total or 0) - (b.display_tasks_done or 0))
-            for b in my_batches
-        )
-        context['pending_total_display'] = pending_indiv + pending_batch_pieces
-
-        for task in tasks_without_batch:
-            task.display_status_label = simplify_task_status_label(task.status)
-            task.display_elapsed_seconds = int(task.elapsed_seconds or 0)
-            if task.status == WorkOrderTask.Status.RUNNING and task.last_started_at:
-                delta, _ = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
-                task.display_elapsed_seconds += int(delta)
-            task.display_elapsed_hms = seconds_to_hms(task.display_elapsed_seconds)
-            try:
-                budget = task.work_order.budget
-                vehicle = budget.vehicle
-                customer_name = budget.customer.name if budget.customer else ''
-                plate = vehicle.plate if vehicle else ''
-                task.display_budget_number = budget.display_number
-                task.display_customer = customer_name
-                task.display_plate = plate
-            except Exception:
-                task.display_budget_number = getattr(task.work_order, 'id', '-')
-                task.display_customer = ''
-                task.display_plate = ''
-
-            if not collaborator:
-                task.estimated_commission = Decimal('0')
-            else:
-                function_ok = collaborator.function not in (
-                    Collaborator.Function.MANAGER,
-                    Collaborator.Function.FINANCE,
-                )
-                if not function_ok:
-                    task.estimated_commission = Decimal('0')
-                else:
-                    base_amount = task.planned_amount or Decimal('0')
-                    service = task.service
-                    if service and service.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
-                        percent = Decimal(service.commission_value or 0)
-                        task.estimated_commission = (base_amount * (percent / Decimal('100'))).quantize(
-                            Decimal('0.01'), rounding=ROUND_HALF_UP
-                        )
-                    elif service and service.commission_mode == ServiceCatalog.CommissionMode.FIXED:
-                        task.estimated_commission = Decimal(service.commission_value or 0).quantize(
-                            Decimal('0.01'), rounding=ROUND_HALF_UP
-                        )
-                    else:
-                        percent = Decimal(collaborator.commission_percent or 0)
-                        task.estimated_commission = (base_amount * (percent / Decimal('100'))).quantize(
-                            Decimal('0.01'), rounding=ROUND_HALF_UP
-                        )
-
-            # ========== OVERTIME (ATRASO vs PLANEJADO) ==========
-            planned_s = None
-            if getattr(task, 'planned_hours', None):
-                try:
-                    planned_s = int(float(task.planned_hours) * 3600)
-                except Exception:
-                    planned_s = None
-            task.display_planned_seconds = planned_s
-            elapsed_s = int(getattr(task, 'display_elapsed_seconds', 0) or 0)
-            task.is_overdue = bool(planned_s and elapsed_s > planned_s)
-            if task.is_overdue:
-                task.overtime_seconds = elapsed_s - planned_s
-                task.overtime_hms = seconds_to_hms(task.overtime_seconds)
-                # Exibe o tempo previsto e executado para facilitar o banner
-                task.overtime_planned_hms = seconds_to_hms(planned_s)
-                task.overtime_elapsed_hms = seconds_to_hms(elapsed_s)
-            else:
-                task.overtime_seconds = 0
-                task.overtime_hms = ''
-                task.overtime_planned_hms = ''
-                task.overtime_elapsed_hms = ''
-
-        done_today = []
-        total_commission_today = Decimal('0')
-        if collaborator:
-            done_today_qs = (
-                WorkOrderTask.objects.select_related('work_order', 'work_order__budget', 'service')
-                .filter(
-                    collaborator=collaborator,
-                    status=WorkOrderTask.Status.DONE,
-                    completed_at__date=today,
-                )
-                .order_by('-completed_at')
-            )
-            for t in done_today_qs:
-                try:
-                    budget = t.work_order.budget
-                    vehicle = budget.vehicle
-                    customer_name = budget.customer.name if budget.customer else ''
-                    plate = vehicle.plate if vehicle else ''
-                    t.display_budget_number = budget.display_number
-                    t.display_customer = customer_name
-                    t.display_plate = plate
-                except Exception:
-                    t.display_budget_number = getattr(t.work_order, 'id', '-')
-                    t.display_customer = ''
-                    t.display_plate = ''
-                t.display_elapsed_hms = seconds_to_hms(int(t.elapsed_seconds or 0))
-                commission_sum = (
-                    CommissionLine.objects.filter(task=t, collaborator=collaborator).aggregate(
-                        total=Coalesce(Sum('commission_amount'), Decimal('0'))
-                    )['total']
-                    or Decimal('0')
-                )
-                t.display_commission_today = commission_sum
-                total_commission_today += commission_sum
-                done_today.append(t)
-
-        context['done_today'] = done_today
-        context['total_commission_today'] = total_commission_today
-        return context
-
-
 class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
 
@@ -4615,64 +1391,6 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
         task = WorkOrderTask.objects.select_related('collaborator', 'work_order', 'work_order__budget').filter(pk=pk).first()
         if task is None:
             raise Http404('Tarefa não encontrada.')
-
-        # --------------------------
-        # REGRA DE NAO SIMULTANEIDADE (BACK-END / SEGURANCA REAL):
-        # Se colaborador da tarefa JA TEM OUTRA tarefa RUNNING em QUALQUER lugar
-        # (mesmo que de outra OS ou nao listada no kanban), NÃO DEIXA INICIAR.
-        # IMPOSSÍVEL de burlar por link/Postman/JS manual.
-        # --------------------------
-        if task.collaborator_id:
-            has_other_running = (
-                WorkOrderTask.objects.filter(
-                    collaborator_id=task.collaborator_id,
-                    status=WorkOrderTask.Status.RUNNING,
-                )
-                .exclude(pk=task.pk)
-                .exists()
-            )
-            if has_other_running:
-                other_task = (
-                    WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
-                    .filter(
-                        collaborator_id=task.collaborator_id,
-                        status=WorkOrderTask.Status.RUNNING,
-                    )
-                    .exclude(pk=task.pk)
-                    .order_by('id')
-                    .first()
-                )
-                other_label = ''
-                if other_task:
-                    try:
-                        bn = other_task.work_order.budget.display_number
-                    except Exception:
-                        bn = getattr(other_task.work_order, 'id', '?')
-                    other_label = f' OS #{bn} ({other_task.get_activity_display()})'
-                messages.error(
-                    request,
-                    'Não é permitido trabalhar em 2 tarefas ao mesmo tempo. '
-                    f'Pausar ou Finalize primeiro a tarefa em andamento:{other_label or " (tarefa ativa)"}.',
-                )
-                next_url = (request.POST.get('next') or '').strip()
-                if next_url:
-                    return redirect(next_url)
-                return redirect('budgets:kanban_today')
-
-        budget = getattr(task.work_order, 'budget', None)
-        if budget and getattr(budget, 'status', '') == BudgetStatus_AUTHORIZED:
-            has_pending = budget_has_pending_shop_parts(budget)
-            allow_bypass = bool(getattr(budget, 'allow_repair_without_parts', False))
-            if has_pending and not allow_bypass:
-                messages.error(
-                    request,
-                    'Bloqueado: Orçamento tem peças da oficina pendentes. Não é possível iniciar novas tarefas. '
-                    'Solicite ao gerente que marque "Liberar seguir sem peças" no orçamento.',
-                )
-                next_url = (request.POST.get('next') or '').strip()
-                if next_url:
-                    return redirect(next_url)
-                return redirect('budgets:kanban_today')
 
         today = timezone.localdate()
         entry_date = getattr(getattr(task.work_order, 'budget', None), 'entry_date', None)
@@ -4697,13 +1415,19 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
             messages.error(request, 'Selecione um colaborador antes de iniciar.')
             return redirect('budgets:kanban_today')
 
-        sequence_block_message = get_task_sequence_block_message(task)
-        if sequence_block_message:
-            messages.error(request, sequence_block_message)
-            next_url = (request.POST.get('next') or '').strip()
-            if next_url:
-                return redirect(next_url)
-            return redirect('budgets:kanban_today')
+        budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+        if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)):
+            has_pending_shop_parts = budget_has_pending_shop_parts(budget)
+            if has_pending_shop_parts:
+                messages.warning(
+                    request,
+                    'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
+                    'ou até liberar "seguir sem as peças".',
+                )
+                next_url = (request.POST.get('next') or '').strip()
+                if next_url:
+                    return redirect(next_url)
+                return redirect('budgets:kanban_today')
 
         has_running = WorkOrderTask.objects.filter(
             collaborator_id=task.collaborator_id,
@@ -4736,7 +1460,6 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
 
         if update_fields:
             task.save(update_fields=update_fields)
-            sync_shop_service_from_task(task)
         messages.success(request, 'Tarefa iniciada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
@@ -4779,7 +1502,6 @@ class WorkOrderTaskPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
         task.actual_hours = hours
 
         task.save(update_fields=['elapsed_seconds', 'last_started_at', 'status', 'actual_hours'])
-        sync_shop_service_from_task(task)
         messages.success(request, 'Tarefa pausada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
@@ -4828,7 +1550,6 @@ class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
         task.actual_hours = hours
 
         task.save(update_fields=['elapsed_seconds', 'last_started_at', 'completed_at', 'status', 'actual_hours'])
-        sync_shop_service_from_task(task)
         if task.collaborator_id and not CommissionLine.objects.filter(task=task, collaborator_id=task.collaborator_id).exists():
             percent = Decimal('0')
             base_amount = task.planned_amount or Decimal('0')
@@ -4867,12 +1588,7 @@ class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
                     base_amount=base_amount,
                     commission_amount=commission_amount,
                 )
-        # ============= FECHA A OS AUTOMATICAMENTE SE TODAS TAREFAS FOREM DONE =============
-        closed = close_work_order_if_all_done(task.work_order)
-        if closed:
-            messages.success(request, f'Tarefa finalizada. OS #{task.work_order.budget.display_number} foi FECHADA (todas etapas concluídas).')
-        else:
-            messages.success(request, 'Tarefa finalizada.')
+        messages.success(request, 'Tarefa finalizada.')
         next_url = (request.POST.get('next') or '').strip()
         if next_url:
             return redirect(next_url)
@@ -5154,18 +1870,8 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        # 🔧 Trava final de expediente 17:48: pausa + reagenda tarefas individuais e LOTES abertos
-        #    (aplica para TODO o sistema, nao so a OS aberta - 1 vez por minuto por thread)
-        try:
-            auto_pause_and_reschedule_after_cutoff()
-        except Exception:
-            pass
-        sync_xml_third_party_services(self.object.budget)
         tasks_open = self.object.tasks.exclude(status=WorkOrderTask.Status.DONE).select_related('collaborator')
         tasks_done = self.object.tasks.filter(status=WorkOrderTask.Status.DONE).select_related('collaborator')
-        visible_third_party = get_visible_third_party_services(self.object.budget)
-        third_party_open = [service for service in visible_third_party if service.status != ThirdPartyService.Status.DONE]
-        third_party_done = [service for service in visible_third_party if service.status == ThirdPartyService.Status.DONE]
 
         selected_collaborator_id = (self.request.GET.get('collaborator_id') or '').strip()
         selected_collaborator = None
@@ -5180,37 +1886,8 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             else:
                 selected_collaborator_id = ''
 
-        now_local = timezone.localtime(timezone.now())
-
-        batches_exist = self.object.batches.exists()
-        if batches_exist:
-            all_batches = WorkOrderTaskBatch.objects.filter(
-                work_order=self.object,
-            ).prefetch_related('tasks')
-            for b in all_batches:
-                apply_batch_time_allocation(b, now=timezone.now(), can_write_db=True)
-
-        os_status = compute_work_order_status(self.object, now=now_local)
-
-        task_open_summaries = []
-        for t in tasks_open:
-            elapsed_secs = get_elapsed_seconds_for_display(t, now=now_local)
-            task_open_summaries.append((t, elapsed_secs, seconds_to_hms(elapsed_secs), simplify_task_status_label(t.status)))
-        task_done_summaries = []
-        for t in tasks_done:
-            elapsed_secs = get_elapsed_seconds_for_display(t, now=now_local)
-            task_done_summaries.append((t, elapsed_secs, seconds_to_hms(elapsed_secs), simplify_task_status_label(t.status)))
-
-        active_elapsed_seconds = 0
-        active_elapsed_hms = ''
-        if os_status.active_task is not None:
-            active_elapsed_seconds = get_elapsed_seconds_for_display(os_status.active_task, now=now_local)
-            active_elapsed_hms = seconds_to_hms(active_elapsed_seconds)
-
         context['tasks_open'] = tasks_open
         context['tasks_done'] = tasks_done
-        context['task_open_summaries'] = task_open_summaries
-        context['task_done_summaries'] = task_done_summaries
         context['tasks_open_count'] = tasks_open.count()
         context['tasks_done_count'] = tasks_done.count()
         context['selected_collaborator_id'] = selected_collaborator_id
@@ -5219,29 +1896,7 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             function=Collaborator.Function.OPERATIONAL
         ).only('id', 'name')
         context['task_status_choices'] = WorkOrderTask.Status.choices
-        context['third_party_open'] = third_party_open
-        context['third_party_done'] = third_party_done
-        context['third_party_open_count'] = len(third_party_open)
-        context['third_party_done_count'] = len(third_party_done)
-        context['suppliers_active'] = Supplier.objects.filter(is_active=True).only('id', 'name')
-        context['third_party_status_choices'] = ThirdPartyService.Status.choices
-        context['today'] = timezone.localdate()
-        context['os_status'] = os_status
-        context['active_elapsed_seconds'] = active_elapsed_seconds
-        context['active_elapsed_hms'] = active_elapsed_hms
-        context['simplify_task_status_label'] = simplify_task_status_label
-        context['now_local'] = now_local
         return context
-
-
-def get_operational_collaborator(collaborator_id):
-    collaborator_id = (collaborator_id or '').strip()
-    if not collaborator_id:
-        return None
-    return Collaborator.objects.filter(
-        pk=collaborator_id,
-        function=Collaborator.Function.OPERATIONAL,
-    ).first()
 
 
 class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -5263,7 +1918,10 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
         had_error = False
 
         if collaborator_id:
-            collaborator = get_operational_collaborator(collaborator_id)
+            collaborator = Collaborator.objects.filter(
+                pk=collaborator_id,
+                function=Collaborator.Function.OPERATIONAL,
+            ).first()
             if collaborator is None:
                 had_error = True
                 messages.error(request, 'Colaborador inválido.')
@@ -5332,890 +1990,22 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
                 messages.error(request, 'Status inválido.')
             else:
                 if status == WorkOrderTask.Status.RUNNING:
-                    sequence_block_message = get_task_sequence_block_message(task)
-                    if sequence_block_message:
+                    budget = getattr(getattr(task, 'work_order', None), 'budget', None)
+                    if budget and not bool(getattr(budget, 'allow_repair_without_parts', False)) and budget_has_pending_shop_parts(budget):
                         had_error = True
-                        messages.error(request, sequence_block_message)
+                        messages.error(
+                            request,
+                            'Existem peças da oficina pendentes neste orçamento. O reparo está bloqueado até as peças chegarem '
+                            'ou até liberar "seguir sem as peças".',
+                        )
                 task.status = status
                 update_fields.append('status')
 
         if update_fields and not had_error:
             task.save(update_fields=sorted(set(update_fields)))
-            sync_shop_service_from_task(task)
             messages.success(request, 'Agendamento salvo.')
 
         return redirect('budgets:workorder_detail', pk=task.work_order_id)
-
-
-# =============================================================================
-# 🍱 SISTEMA DE LOTES DE TAREFAS (FASE 1: LOTE BÁSICO / 2 CLIQUES)
-# =============================================================================
-
-def _get_next_weekday(day: date) -> date:
-    """Retorna o PROXIMO DIA UTIL a partir de day (pula sábado=5 e domingo=6).
-    Exemplo: sex-feira dia 16 -> seg 19; terca dia 13 -> qua 14; dom dia 17 -> seg 18."""
-    next_day = day + timedelta(days=1)
-    while next_day.weekday() >= 5:
-        next_day = next_day + timedelta(days=1)
-    return next_day
-
-
-def auto_pause_and_reschedule_after_cutoff(now=None, write_db: bool = True):
-    """Aplica a TRAVA DE FINAL DE EXPEDIENTE 17:48 em TUDO (tarefas individuais E LOTES).
-
-    REGRA (igual o usuario descreveu, comportamento igual ja existia para tarefas individuais):
-    1. Horario >= 17:48 (KANBAN_CUTOFF_TIME) OU tarefa/lote RUNNING desde DIA ANTERIOR (ontem, etc)
-    2. allow_overtime=False (NAO AUTORIZADO hh extra)
-    3. PAUSA a tarefa/lote (status -> PAUSED)
-    4. GRAVA as horas ACUMULADAS ATE O MOMENTO (actual_hours += elapsed via capped_work_delta_seconds)
-    5. REAGENDA para PRIMEIRO DIA UTIL APOS HOJE (scheduled_date = proximo dia util).
-    6. No dia seguinte: tarefa aparece status PAUSED -> botao INICIAR fica ativo (igual usuario pediu).
-    """
-    if now is None:
-        now = timezone.localtime(timezone.now())
-    else:
-        now = timezone.localtime(now)
-
-    # 🔒 Idempotencia: se write_db=True e ja rodou nesse mesmo minuto (HH:MM), retorna cedo
-    # (mesmo que multiplas views o chamem no mesmo request, 1 pausa por minuto eh suficiente).
-    if write_db:
-        minute_key = f"{now.strftime('%Y%m%d%H%M')}_cutoff_ran"
-        already_ran = getattr(_cutoff_guard, minute_key, False)
-        if already_ran:
-            return
-        setattr(_cutoff_guard, minute_key, True)
-
-    cutoff = KANBAN_CUTOFF_TIME
-    today = now.date()
-    is_after_cutoff = now.time() >= cutoff
-    is_sunday = today.weekday() == 6
-
-    # proximo dia util a partir de hoje:
-    next_workday = _get_next_weekday(today)
-    # se hoje for sabado/feriado/nao util: reagendar para hoje (util) ou proximo
-    reschedule_today = today if not is_sunday else next_workday
-
-    # -------------------------------------------------------------------------
-    # PARTE 1: TAREFAS INDIVIDUAIS (batch_id=NULL — comportamento legado)
-    # -------------------------------------------------------------------------
-    try:
-        running_individual = list(
-            WorkOrderTask.objects.select_related('collaborator')
-            .filter(status=WorkOrderTask.Status.RUNNING)
-            .filter(allow_overtime=False)
-            .exclude(last_started_at__isnull=True)
-            .exclude(batch_id__isnull=False)   # individuais = NAO em lote
-        )
-    except Exception:
-        running_individual = []
-
-    if running_individual:
-        for task in running_individual:
-            try:
-                last = timezone.localtime(task.last_started_at) if task.last_started_at else None
-                if last is None:
-                    continue
-                started_day = last.date()
-                reschedule_date = reschedule_today
-                if started_day == today:
-                    if not is_after_cutoff:
-                        # ainda dentro do expediente: nao fazer nada
-                        continue
-                    # hoje e passou de 17:48 => reagendar amanha (proximo util)
-                    reschedule_date = next_workday
-
-                delta, _eff = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
-                task.elapsed_seconds = int(task.elapsed_seconds or 0) + int(delta or 0)
-                task.last_started_at = None
-                task.status = WorkOrderTask.Status.PAUSED
-                task.scheduled_date = reschedule_date
-                hrs = (Decimal(int(task.elapsed_seconds or 0)) / Decimal('3600')).quantize(
-                    Decimal('0.01'), rounding=ROUND_HALF_UP
-                )
-                task.actual_hours = hrs
-                if write_db:
-                    task.save(
-                        update_fields=[
-                            'elapsed_seconds',
-                            'last_started_at',
-                            'status',
-                            'scheduled_date',
-                            'actual_hours',
-                        ]
-                    )
-                    try:
-                        sync_shop_service_from_task(task)
-                    except Exception:
-                        pass
-            except Exception:
-                continue
-
-    # -------------------------------------------------------------------------
-    # PARTE 2: LOTES DE TAREFAS (WorkOrderTaskBatch.status == RUNNING)
-    # NOVO — Nao existia antes de hoje. Igual comportamento individual:
-    #   Se allow_overtime = qualquer tarefa allow_overtime=False => geral bloqueado
-    #   Pausa TODAS tarefas RUNNING do lote (capped_work_delta individual)
-    #   Batch.status -> PAUSED + scheduled_date = proximo dia util
-    #   Cada tarefa do batch RUNNING -> PAUSED + scheduled_date = mesmo prox dia util
-    # -------------------------------------------------------------------------
-    try:
-        running_batches = list(
-            WorkOrderTaskBatch.objects.select_related('work_order', 'collaborator')
-            .filter(status=WorkOrderTaskBatch.Status.RUNNING)
-            .prefetch_related('tasks')
-        )
-    except Exception:
-        running_batches = []
-
-    if running_batches:
-        for batch in running_batches:
-            try:
-                batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
-                if not batch_tasks:
-                    continue
-                all_allow_ot = all(bool(getattr(t, 'allow_overtime', False)) for t in batch_tasks)
-                if all_allow_ot:
-                    # todas autorizadas extra: nao pausar
-                    continue
-
-                started_at_utc = getattr(batch, 'started_at', None)
-                if not started_at_utc:
-                    # se lote RUNNING mas sem started_at, pegar min(last_started_at das tarefas)
-                    starts = [t.last_started_at for t in batch_tasks if getattr(t, 'last_started_at', None)]
-                    if starts:
-                        started_at_utc = min(starts)
-                    else:
-                        continue
-                started_at_local = timezone.localtime(started_at_utc)
-                started_day = started_at_local.date()
-
-                if started_day == today and not is_after_cutoff:
-                    # dentro do expediente ainda: nao pausar
-                    continue
-
-                if started_day == today:
-                    reschedule_date = next_workday
-                else:
-                    reschedule_date = reschedule_today
-
-                # (2.1) pausar tarefas RUNNING do batch (igual BatchPauseView):
-                paused_count = 0
-                for task in batch_tasks:
-                    if task.status != WorkOrderTask.Status.RUNNING:
-                        continue
-                    try:
-                        if not getattr(task, 'last_started_at', None):
-                            continue
-                        delta, _eff = capped_work_delta_seconds(task.last_started_at, now, bool(task.allow_overtime))
-                        task.elapsed_seconds = int(task.elapsed_seconds or 0) + int(delta or 0)
-                        task.last_started_at = None
-                        task.status = WorkOrderTask.Status.PAUSED
-                        task.scheduled_date = reschedule_date
-                        hrs = (Decimal(int(task.elapsed_seconds or 0)) / Decimal('3600')).quantize(
-                            Decimal('0.01'), rounding=ROUND_HALF_UP
-                        )
-                        task.actual_hours = hrs
-                        if write_db:
-                            task.save(
-                                update_fields=[
-                                    'elapsed_seconds',
-                                    'last_started_at',
-                                    'status',
-                                    'scheduled_date',
-                                    'actual_hours',
-                                ]
-                            )
-                            try:
-                                sync_shop_service_from_task(task)
-                            except Exception:
-                                pass
-                        paused_count += 1
-                    except Exception:
-                        continue
-
-                # (2.2) pausar o proprio batch + atualizar scheduled_date do lote:
-                if write_db and (paused_count > 0 or batch.status != WorkOrderTaskBatch.Status.PAUSED):
-                    try:
-                        updated = []
-                        batch.status = WorkOrderTaskBatch.Status.PAUSED
-                        updated.append('status')
-                        if getattr(batch, 'scheduled_date', None) != reschedule_date:
-                            batch.scheduled_date = reschedule_date
-                            updated.append('scheduled_date')
-                        if updated:
-                            updated.append('updated_at')
-                            batch.save(update_fields=updated)
-                    except Exception:
-                        pass
-            except Exception:
-                continue
-
-
-def apply_batch_time_allocation(batch, now=None, can_write_db: bool = False):
-    """FASE2: RATEIO TEMPORAL AUTOMATICO.
-
-    Recebe um batch com status RUNNING (tem started_at definido).
-    Calcula elapsed total desde batch.started_at usando capped_work_delta_seconds
-    (mesmo cutoff 17:48 / allow_overtime do resto do sistema).
-    Itera as tarefas do batch EM ORDEM (order, pk).
-    Se elapsed >= sum(planned_hours ate peca N) => peca N DONE (salva completed_at,
-    elapsed_seconds individual, actual_hours). Atualiza sync_shop_service_from_task.
-    A PRIMEIRA peca ainda NAO concluida fica status RUNNING (as outras SCHEDULED/AG).
-    Se elapsed > total_planned_hours do batch => marca batch = RUNNING ainda mas
-    os cards mostram is_overdue=True (atrasado). Nao fecha comissoes nem OS aqui
-    (isso so na action FinishView, igual FASE1).
-
-    Args:
-        batch (WorkOrderTaskBatch): objeto batch (COM tasks prefetch_related de preferencia).
-        now (datetime): timezone-aware agora (para testes). Default: timezone.now().
-
-    Returns:
-        Tuple[bool, dict]: (saiu_gravando_algo_no_banco, info {'running_index': int or None,
-                                                               'running_task_id': int or None,
-                                                               'completed_count': int,
-                                                               'remaining_seconds_in_current': int,
-                                                               'elapsed_total_s': int})
-    """
-    if batch is None or not getattr(batch, 'pk', None):
-        return False, {}
-    now = now or timezone.now()
-
-    batch_status = getattr(batch, 'status', WorkOrderTaskBatch.Status.SCHEDULED)
-    if batch_status == WorkOrderTaskBatch.Status.DONE:
-        return False, {}
-
-    started_at_batch = getattr(batch, 'started_at', None)
-    batch_tasks = list(getattr(batch, 'tasks', WorkOrderTask.objects.none()).all())
-    if not batch_tasks:
-        return False, {}
-
-    # 🔧 COLETA TODAS DATAS INDIVIDUAIS DAS PECAS (para fallback ou autostart):
-    task_candidates = []
-    any_task_running_or_done = False
-    any_task_actual = False
-    for t in batch_tasks:
-        lst = getattr(t, 'last_started_at', None)
-        cmp_t = getattr(t, 'completed_at', None)
-        actual_h = float(getattr(t, 'actual_hours', 0) or 0) or 0.0
-        if actual_h > 0:
-            any_task_actual = True
-        if lst is not None:
-            task_candidates.append(lst)
-            any_task_running_or_done = True
-        if cmp_t is not None:
-            task_candidates.append(cmp_t)
-            any_task_running_or_done = True
-        if getattr(t, 'status', '') in (WorkOrderTask.Status.RUNNING, WorkOrderTask.Status.DONE, WorkOrderTask.Status.PAUSED):
-            any_task_running_or_done = True
-
-    # 🔧 CASO ESPECIAL: batch.status ainda SCHEDULED or PAUSED, mas PEÇAS já foram
-    #    iniciadas individualmente (modo antigo FASE1 / Leo clicou no card individual).
-    #    NESSE CASO, atualizamos o status do BATCH para RUNNING e started_at = MIN datas
-    #    das tarefas (para rateio continuar contando do 1º clique).
-    need_save_batch_meta = False
-    if batch_status == WorkOrderTaskBatch.Status.SCHEDULED or batch_status == WorkOrderTaskBatch.Status.PAUSED:
-        if any_task_running_or_done or any_task_actual:
-            if not started_at_batch and task_candidates:
-                started_at_batch = min(task_candidates)
-                need_save_batch_meta = True
-            elif not started_at_batch and batch_status != WorkOrderTaskBatch.Status.SCHEDULED:
-                started_at_batch = now
-                need_save_batch_meta = True
-            if batch_status != WorkOrderTaskBatch.Status.RUNNING:
-                batch.status = WorkOrderTaskBatch.Status.RUNNING
-                need_save_batch_meta = True
-            if getattr(batch, 'started_at', None) != started_at_batch and started_at_batch is not None:
-                batch.started_at = started_at_batch
-                need_save_batch_meta = True
-
-    # Somente persiste (salva) se can_write_db=True. Views somente leitura NAO escrevem.
-    if need_save_batch_meta and can_write_db:
-        try:
-            changed_fields = ['updated_at']
-            if batch_status != WorkOrderTaskBatch.Status.RUNNING:
-                changed_fields.append('status')
-            if started_at_batch is not None:
-                changed_fields.append('started_at')
-            batch.save(update_fields=list(dict.fromkeys(changed_fields)))
-        except Exception:
-            pass
-
-    batch_status = getattr(batch, 'status', WorkOrderTaskBatch.Status.SCHEDULED)
-    if batch_status != WorkOrderTaskBatch.Status.RUNNING:
-        return False, {}
-
-    # 🔧 FALLBACK (caso started_at ainda None em batch RUNNING recente, usar min tarefas):
-    if not started_at_batch:
-        if task_candidates:
-            started_at_batch = min(task_candidates)
-            if can_write_db:
-                try:
-                    batch.started_at = started_at_batch
-                    batch.save(update_fields=['started_at'])
-                except Exception:
-                    pass
-    if not started_at_batch:
-        return False, {}
-
-    sorted_tasks = sorted(batch_tasks, key=lambda t: (getattr(t, 'order', 0) or 0, t.pk or 0))
-
-    # 🔧 TRAVA CUTOFF 17:48 NO RATEIO TEMPORAL (igual comportamento individual Start/Pause/Finish).
-    # allow_overtime = ALL(tarefas do batch tem Extra liberado).
-    # Se QUALQUER peça do lote tiver allow_overtime=False → capped_work_delta_seconds trava
-    # em 17:48 do dia e NAO ACUMULA MAIS HORAS (nao deixa peças "correr" de madrugada no rateio).
-    all_allow_overtime = True
-    if sorted_tasks:
-        all_allow_overtime = all(bool(getattr(t, 'allow_overtime', False)) for t in sorted_tasks)
-
-    delta_total_s, _eff_end = capped_work_delta_seconds(started_at_batch, now, all_allow_overtime)
-    elapsed_total_s = max(int(delta_total_s or 0), 0)
-
-    total_done = 0
-    tasks_to_save = []
-    running_index = None
-    running_task_id = None
-    remaining_in_current_s = 0
-    cumulative_s = 0
-
-    for idx, t in enumerate(sorted_tasks):
-        planned_hours_t = float(getattr(t, 'planned_hours', 0) or 0)
-        planned_s_t = max(int(planned_hours_t * 3600), 0)
-        planned_end_s = cumulative_s + planned_s_t
-
-        was_done = (t.status == WorkOrderTask.Status.DONE)
-        if elapsed_total_s >= planned_end_s or was_done:
-            # Essa peca esta FEITA (no tempo previsto ou ja tinha sido DONE manual)
-            if not was_done:
-                t.status = WorkOrderTask.Status.DONE
-                t.completed_at = now
-                t.elapsed_seconds = int(getattr(t, 'elapsed_seconds', 0) or 0) + max(planned_s_t, 1)
-                t.actual_hours = (
-                    (Decimal(t.elapsed_seconds) / Decimal('3600'))
-                    .quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                )
-                try:
-                    sync_shop_service_from_task(t, save=False)
-                except Exception:
-                    pass
-                tasks_to_save.append(t)
-            total_done += 1
-            cumulative_s = planned_end_s
-        else:
-            # Ainda nao chegou nessa
-            if running_index is None:
-                # Essa e a PEÇA ATUAL
-                running_index = idx
-                running_task_id = t.pk
-                used_in_current_s = max(elapsed_total_s - cumulative_s, 0)
-                remaining_in_current_s = max(planned_s_t - used_in_current_s, 0)
-                # Marca ela como RUNNING (ainda que estivesse SCHEDULED)
-                if t.status != WorkOrderTask.Status.RUNNING:
-                    t.status = WorkOrderTask.Status.RUNNING
-                    t.last_started_at = started_at_batch
-                    t.elapsed_seconds = int(getattr(t, 'elapsed_seconds', 0) or 0)
-                    tasks_to_save.append(t)
-                else:
-                    # Ja esta RUNNING, so confirma last_started_at = started_at do batch
-                    # se nao tiver (mantem individual do clique)
-                    if not getattr(t, 'last_started_at', None):
-                        t.last_started_at = started_at_batch
-                        tasks_to_save.append(t)
-                cumulative_s = planned_end_s
-            else:
-                # Ja temos uma peça RUNNING; as restantes ficam (ou voltam para) SCHEDULED
-                # a MENOS que estejam DONE (manual).
-                if t.status not in (WorkOrderTask.Status.DONE, WorkOrderTask.Status.SCHEDULED):
-                    t.status = WorkOrderTask.Status.SCHEDULED
-                    tasks_to_save.append(t)
-                cumulative_s = planned_end_s
-
-    # Garantir: se todas as tarefas sao DONE (chegou no total_planned_hours), atualiza status
-    batch_done_save = False
-    if total_done >= len(sorted_tasks) and len(sorted_tasks) > 0:
-        if batch.status != WorkOrderTaskBatch.Status.DONE:
-            batch.status = WorkOrderTaskBatch.Status.DONE
-            batch.finished_at = now
-            batch_done_save = True
-            tasks_to_save.append(('BATCH', batch))
-
-    wrote_db = False
-    if tasks_to_save and can_write_db:
-        try:
-            for item in tasks_to_save:
-                if isinstance(item, tuple) and item[0] == 'BATCH':
-                    b = item[1]
-                    b.save(update_fields=['status', 'finished_at'])
-                else:
-                    task_obj = item
-                    uf = ['status', 'elapsed_seconds', 'actual_hours']
-                    if task_obj.status == WorkOrderTask.Status.RUNNING:
-                        uf.append('last_started_at')
-                    if task_obj.status == WorkOrderTask.Status.DONE:
-                        uf.append('completed_at')
-                    task_obj.save(update_fields=uf)
-            wrote_db = True
-        except Exception:
-            wrote_db = False
-
-    return (
-        bool(wrote_db),
-        {
-            'running_index': running_index,
-            'running_task_id': running_task_id,
-            'completed_count': total_done,
-            'remaining_seconds_in_current': remaining_in_current_s,
-            'elapsed_total_s': elapsed_total_s,
-        },
-    )
-
-
-# =============================================================================
-def _batch_redirect(request, default_url, batch=None, work_order_pk=None):
-    next_url = (request.POST.get('next') or '').strip()
-    if next_url:
-        return redirect(next_url)
-    if batch and batch.work_order_id:
-        return redirect('budgets:workorder_detail', pk=batch.work_order_id)
-    if work_order_pk:
-        return redirect('budgets:workorder_detail', pk=work_order_pk)
-    return redirect(default_url)
-
-
-class WorkOrderTaskBatchCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
-    """Cria LOTE (batch) a partir de tarefas selecionadas (programacao da OS).
-    Regra: Todas selecionadas = mesma activity + mesmo collaborador (ou ambos NULL activity/collab -> ERRO)."""
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def post(self, request, pk):
-        work_order = WorkOrder.objects.filter(pk=pk).first()
-        if work_order is None:
-            raise Http404('OS não encontrada.')
-        redirect_url = reverse('budgets:workorder_detail', kwargs={'pk': work_order.pk})
-
-        raw_task_ids = (request.POST.get('task_ids') or '').strip()
-        selected_task_ids = []
-        for raw in raw_task_ids.split(','):
-            raw = raw.strip()
-            if raw.isdigit():
-                selected_task_ids.append(int(raw))
-        selected_task_ids = list(dict.fromkeys(selected_task_ids))
-        if len(selected_task_ids) < 2:
-            messages.error(request, 'Para criar um lote, selecione ao menos 2 tarefas.')
-            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
-
-        # 🔧 SYNC colaborador/datas das tarefas selecionadas (vindas dos selects/dates
-        # alterados NA TELA sem o usuario clicar em Salvar individual para cada tarefa).
-        # O JS do submit do form cria inputs hidden task_collab_NNN / task_date_NNN para
-        # cada checkbox marcada. Aplicamos no banco ANTES de validar as regras do lote,
-        # para validacao pegar colaborador ATUAL (nao do banco antigo).
-        for tid in selected_task_ids:
-            collab_raw = (request.POST.get(f'task_collab_{tid}') or '').strip()
-            date_raw = (request.POST.get(f'task_date_{tid}') or '').strip()
-            if not collab_raw and not date_raw:
-                continue
-            updates = {}
-            if collab_raw.isdigit():
-                try:
-                    cid = int(collab_raw)
-                    if Collaborator.objects.filter(pk=cid).exists():
-                        updates['collaborator_id'] = cid
-                except Exception:
-                    pass
-            if date_raw:
-                try:
-                    parsed_date = parse_date(date_raw)
-                    if parsed_date is not None:
-                        updates['scheduled_date'] = parsed_date
-                except Exception:
-                    pass
-            if updates:
-                try:
-                    WorkOrderTask.objects.filter(
-                        pk=tid,
-                        work_order_id=work_order.pk,
-                    ).update(**updates)
-                except Exception:
-                    pass
-
-        tasks = list(
-            WorkOrderTask.objects.filter(
-                work_order_id=work_order.pk,
-                pk__in=selected_task_ids,
-            )
-            .exclude(status=WorkOrderTask.Status.DONE)
-            .select_related('collaborator')
-        )
-        if not tasks:
-            messages.error(request, 'Nenhuma tarefa elegível (não concluída) para criar lote.')
-            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
-
-        activities = {t.activity for t in tasks if t.activity}
-        if len(activities) != 1:
-            messages.error(request, 'Todas as tarefas do lote precisam ser da MESMA etapa (Desmontagem / Funilaria / etc).')
-            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
-        activity = next(iter(activities))
-
-        collabs = {t.collaborator_id for t in tasks if t.collaborator_id}
-        if len(collabs) == 0:
-            messages.error(request, 'Atribua um colaborador para TODAS as tarefas antes de criar o lote.')
-            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
-        if len(collabs) != 1:
-            messages.error(request, 'Todas as tarefas do lote precisam ter o MESMO colaborador.')
-            return _batch_redirect(request, redirect_url, work_order_pk=work_order.pk)
-        collaborator_id = next(iter(collabs))
-        collaborator = tasks[0].collaborator
-        scheduled_date = next((t.scheduled_date for t in tasks if t.scheduled_date), None)
-
-        # Desassocia de batches ANTERIORES (se tiver)
-        ids = [t.id for t in tasks]
-        WorkOrderTask.objects.filter(id__in=ids).update(batch=None)
-
-        batch = WorkOrderTaskBatch.objects.create(
-            work_order=work_order,
-            activity=activity,
-            collaborator_id=collaborator_id,
-            scheduled_date=scheduled_date,
-            status=WorkOrderTaskBatch.Status.SCHEDULED,
-        )
-        WorkOrderTask.objects.filter(id__in=ids).update(batch=batch)
-
-        messages.success(
-            request,
-            f'Lote #{batch.id} criado: {batch.tasks_count} tarefas de {batch.get_activity_display()} · {collaborator.name if collaborator else ""}.',
-        )
-        return _batch_redirect(request, redirect_url, batch=batch)
-
-
-class WorkOrderTaskBatchStartView(LoginRequiredMixin, RoleRequiredMixin, View):
-    """▶️ Iniciar TODAS as tarefas do lote de uma vez (1 clique)."""
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
-
-    def post(self, request, pk):
-        batch = WorkOrderTaskBatch.objects.select_related(
-            'work_order', 'work_order__budget', 'collaborator'
-        ).filter(pk=pk).first()
-        if batch is None:
-            raise Http404('Lote não encontrado.')
-        redirect_kanban = 'budgets:kanban_today'
-        tasks = list(
-            batch.tasks.exclude(status=WorkOrderTask.Status.DONE)
-            .order_by('order')
-            .select_related('collaborator', 'work_order', 'work_order__budget')
-        )
-        if not tasks:
-            messages.error(request, 'Nenhuma tarefa elegível para iniciar neste lote.')
-            return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        # Bloqueio de simultaneidade a nivel COLABORADOR (batch.collaborator):
-        # Garante NAO TEM NENHUMA tarefa RUNNING fora do batch p/ este colaborador.
-        if batch.collaborator_id:
-            has_other = (
-                WorkOrderTask.objects.filter(
-                    collaborator_id=batch.collaborator_id,
-                    status=WorkOrderTask.Status.RUNNING,
-                )
-                .exclude(batch_id=batch.pk)
-                .exists()
-            )
-            if has_other:
-                other = (
-                    WorkOrderTask.objects.select_related('work_order', 'work_order__budget')
-                    .filter(
-                        collaborator_id=batch.collaborator_id,
-                        status=WorkOrderTask.Status.RUNNING,
-                    )
-                    .exclude(batch_id=batch.pk)
-                    .first()
-                )
-                lbl = ''
-                if other:
-                    try:
-                        lbl = f' OS #{other.work_order.budget.display_number} ({other.get_activity_display()})'
-                    except Exception:
-                        lbl = ''
-                messages.error(
-                    request,
-                    'Não é permitido 2 tarefas ao mesmo tempo para este colaborador. '
-                    f'Finalize/pause a tarefa ativa primeiro.{lbl}',
-                )
-                return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        # Bloqueio peças pendentes (orçamento):
-        budget = getattr(batch.work_order, 'budget', None)
-        if budget and getattr(budget, 'status', '') == BudgetStatus_AUTHORIZED:
-            if budget_has_pending_shop_parts(budget) and not bool(getattr(budget, 'allow_repair_without_parts', False)):
-                messages.error(request, 'Bloqueado: peças pendentes no orçamento. Marque "Liberar sem peças".')
-                return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        today = timezone.localdate()
-        entry_date = getattr(budget, 'entry_date', None) if budget else None
-        cutoff_time_blocked = False
-        now = timezone.now()
-        now_local = timezone.localtime(now)
-        if now_local.time() >= KANBAN_CUTOFF_TIME:
-            allow_ot = all(bool(t.allow_overtime) for t in tasks)
-            if not allow_ot:
-                cutoff_time_blocked = True
-        if cutoff_time_blocked:
-            messages.error(request, 'Após 17:48, só inicie o lote com Extra liberado em todas as tarefas.')
-            return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        started = 0
-        for task in tasks:
-            if task.status == WorkOrderTask.Status.RUNNING:
-                continue
-            if task.status == WorkOrderTask.Status.DONE:
-                continue
-            # sequence block (POR TAREFA, p/ manter seguranca individual):
-            seq_msg = get_task_sequence_block_message(task)
-            if seq_msg:
-                messages.error(request, seq_msg)
-                continue
-            if entry_date and today < entry_date:
-                continue
-            if task.scheduled_date and task.scheduled_date > today:
-                continue
-            if task.collaborator_id is None:
-                continue
-            upd = []
-            if task.started_at is None:
-                task.started_at = now
-                upd.append('started_at')
-            if task.last_started_at is None:
-                task.last_started_at = now
-                upd.append('last_started_at')
-            task.status = WorkOrderTask.Status.RUNNING
-            upd.append('status')
-            if upd:
-                task.save(update_fields=upd)
-                sync_shop_service_from_task(task)
-                started += 1
-
-        if started > 0:
-            batch.status = WorkOrderTaskBatch.Status.RUNNING
-            batch.started_at = batch.started_at or now
-            batch.save(update_fields=['status', 'started_at', 'updated_at'])
-
-        if started == 0:
-            messages.info(request, 'Nenhuma tarefa do lote foi iniciada (verifique datas/colaborador/ordem).')
-        else:
-            messages.success(request, f'Lote iniciado: {started} tarefa(s) agora em andamento.')
-        return _batch_redirect(request, redirect_kanban, batch=batch)
-
-
-class WorkOrderTaskBatchPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
-    """⏸️ Pausar TODAS as tarefas RUNNING do lote."""
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
-
-    def post(self, request, pk):
-        batch = WorkOrderTaskBatch.objects.select_related('work_order').filter(pk=pk).first()
-        if batch is None:
-            raise Http404('Lote não encontrado.')
-        redirect_kanban = 'budgets:kanban_today'
-        tasks = list(
-            batch.tasks.filter(status=WorkOrderTask.Status.RUNNING)
-            .order_by('order')
-            .select_related('work_order', 'work_order__budget')
-        )
-        if not tasks:
-            messages.error(request, 'Nenhuma tarefa em andamento neste lote para pausar.')
-            return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        now = timezone.now()
-        paused = 0
-        for task in tasks:
-            if task.last_started_at is None:
-                continue
-            delta, _ = capped_work_delta_seconds(task.last_started_at, now, task.allow_overtime)
-            task.elapsed_seconds = int(task.elapsed_seconds or 0) + delta
-            task.last_started_at = None
-            task.status = WorkOrderTask.Status.PAUSED
-            hours = (Decimal(task.elapsed_seconds) / Decimal('3600')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            task.actual_hours = hours
-            task.save(update_fields=['elapsed_seconds', 'last_started_at', 'status', 'actual_hours'])
-            sync_shop_service_from_task(task)
-            paused += 1
-
-        if paused > 0:
-            batch.status = WorkOrderTaskBatch.Status.PAUSED
-            batch.save(update_fields=['status', 'updated_at'])
-
-        messages.success(request, f'Lote pausado: {paused} tarefa(s) pausada(s).')
-        return _batch_redirect(request, redirect_kanban, batch=batch)
-
-
-class WorkOrderTaskBatchFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
-    """✅ Finalizar TODAS as tarefas RUNNING/PAUSED do lote (comissão individual p/ cada + fecha OS no fim)."""
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
-
-    def post(self, request, pk):
-        batch = WorkOrderTaskBatch.objects.select_related(
-            'work_order', 'work_order__budget', 'collaborator'
-        ).filter(pk=pk).first()
-        if batch is None:
-            raise Http404('Lote não encontrado.')
-        redirect_kanban = 'budgets:kanban_today'
-
-        # 🔧 Blindagem anti-double-click (2 cliques Finalizar Todas muito rapidamente):
-        # Lote já está DONE? Não processe nada (mesmo que o exist() na comissão evite duplicações,
-        # evita loops inúteis de 25 tasks + sync_shop_service em cada).
-        if batch.status == WorkOrderTaskBatch.Status.DONE:
-            try:
-                label = batch.work_order.budget.display_number
-            except Exception:
-                label = str(batch.work_order_id)
-            messages.info(request, f'Lote #{batch.id} já foi finalizado anteriormente (OS #{label}).')
-            return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        tasks = list(
-            batch.tasks.exclude(status=WorkOrderTask.Status.DONE)
-            .order_by('order')
-            .select_related('work_order', 'work_order__budget', 'collaborator', 'service')
-        )
-        if not tasks:
-            messages.error(request, 'Nenhuma tarefa elegível para finalizar neste lote.')
-            return _batch_redirect(request, redirect_kanban, batch=batch)
-
-        now = timezone.now()
-        finished = 0
-        for task in tasks:
-            if task.status not in (WorkOrderTask.Status.RUNNING, WorkOrderTask.Status.PAUSED):
-                # Para lote básico (FASE 1): Aceitamos SCHEDULED e marcamos DONE com actual=planned (evita dor usuario).
-                # FASE 2 (rateio) vai ficar mais rigoroso.
-                task.status = WorkOrderTask.Status.RUNNING
-                task.started_at = task.started_at or now
-                task.last_started_at = now
-            # finaliza a tarefa (igual FinishView):
-            if task.status == WorkOrderTask.Status.RUNNING:
-                delta, effective_end = capped_work_delta_seconds(task.last_started_at or now, now, task.allow_overtime)
-                elapsed = int(task.elapsed_seconds or 0) + delta
-                task.elapsed_seconds = elapsed
-                task.last_started_at = None
-                task.completed_at = effective_end or now
-                task.status = WorkOrderTask.Status.DONE
-                hrs = (Decimal(elapsed) / Decimal('3600')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                if hrs <= 0 and task.planned_hours:
-                    hrs = task.planned_hours  # evita zero por pouco tempo
-                task.actual_hours = hrs
-            task.save(update_fields=['elapsed_seconds', 'last_started_at', 'completed_at', 'status', 'actual_hours'])
-            sync_shop_service_from_task(task)
-            # comissao individual (IGUAL FinishView):
-            if task.collaborator_id and not CommissionLine.objects.filter(task=task, collaborator_id=task.collaborator_id).exists():
-                pct = Decimal('0')
-                base = task.planned_amount or Decimal('0')
-                comm = Decimal('0')
-                collab = task.collaborator
-                if collab and collab.function in (Collaborator.Function.MANAGER, Collaborator.Function.FINANCE):
-                    pct = Decimal('0')
-                    comm = Decimal('0')
-                else:
-                    svc = task.service
-                    if svc and svc.commission_mode == ServiceCatalog.CommissionMode.PERCENT:
-                        pct = Decimal(svc.commission_value or 0)
-                        comm = (base * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                    elif svc and svc.commission_mode == ServiceCatalog.CommissionMode.FIXED:
-                        pct = Decimal('0')
-                        comm = Decimal(svc.commission_value or 0).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                    else:
-                        pct = Decimal(collab.commission_percent or 0) if collab else Decimal('0')
-                        comm = (base * (pct / Decimal('100'))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                if comm > 0:
-                    CommissionLine.objects.create(
-                        task=task,
-                        collaborator=task.collaborator,
-                        percent=pct,
-                        base_amount=base,
-                        commission_amount=comm,
-                    )
-            finished += 1
-
-        if finished > 0:
-            batch.status = WorkOrderTaskBatch.Status.DONE
-            batch.finished_at = now
-            batch.save(update_fields=['status', 'finished_at', 'updated_at'])
-
-        # FECHA OS AUTOMATICAMENTE (se MAX order for DONE + blindagem):
-        wo = batch.work_order
-        closed = close_work_order_if_all_done(wo) if finished > 0 else False
-        try:
-            label = wo.budget.display_number
-        except Exception:
-            label = str(wo.id)
-        if finished == 0:
-            messages.info(request, 'Nenhuma tarefa do lote foi finalizada.')
-        elif closed:
-            messages.success(request, f'Lote finalizado: {finished} tarefa(s). OS #{label} foi FECHADA automaticamente.')
-        else:
-            messages.success(request, f'Lote finalizado: {finished} tarefa(s) concluída(s).')
-        return _batch_redirect(request, redirect_kanban, batch=batch)
-
-
-class WorkOrderTaskBulkAssignView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def post(self, request, pk):
-        work_order = WorkOrder.objects.filter(pk=pk).first()
-        if work_order is None:
-            raise Http404('OS não encontrada.')
-
-        next_url = (request.POST.get('next') or '').strip()
-        redirect_url = next_url or reverse('budgets:workorder_detail', kwargs={'pk': work_order.pk})
-
-        collaborator = get_operational_collaborator(request.POST.get('bulk_collaborator_id'))
-        if collaborator is None:
-            messages.error(request, 'Selecione um colaborador operacional válido para a atribuição em lote.')
-            return redirect(redirect_url)
-
-        raw_task_ids = (request.POST.get('task_ids') or '').strip()
-        selected_task_ids = []
-        for raw_task_id in raw_task_ids.split(','):
-            raw_task_id = raw_task_id.strip()
-            if raw_task_id.isdigit():
-                selected_task_ids.append(int(raw_task_id))
-        selected_task_ids = list(dict.fromkeys(selected_task_ids))
-
-        if not selected_task_ids:
-            messages.error(request, 'Selecione ao menos uma tarefa para atribuição em lote.')
-            return redirect(redirect_url)
-
-        tasks = list(
-            WorkOrderTask.objects.filter(
-                work_order_id=work_order.pk,
-                pk__in=selected_task_ids,
-            ).exclude(status=WorkOrderTask.Status.DONE)
-        )
-        if not tasks:
-            messages.error(request, 'Nenhuma tarefa elegível foi encontrada para esta atribuição em lote.')
-            return redirect(redirect_url)
-
-        updated_count = 0
-        for task in tasks:
-            if task.collaborator_id == collaborator.id:
-                continue
-            task.collaborator = collaborator
-            task.save(update_fields=['collaborator'])
-            sync_shop_service_from_task(task)
-            updated_count += 1
-
-        ignored_count = len(selected_task_ids) - len(tasks)
-        if updated_count:
-            messages.success(
-                request,
-                f'{updated_count} tarefa(s) atualizada(s) para {collaborator.name}.',
-            )
-        else:
-            messages.info(
-                request,
-                f'As {len(tasks)} tarefa(s) elegíveis já estavam atribuídas para {collaborator.name}.',
-            )
-
-        if ignored_count > 0:
-            messages.info(
-                request,
-                f'{ignored_count} tarefa(s) foram ignoradas por não pertencerem a esta OS ou já estarem concluídas.',
-            )
-
-        return redirect(redirect_url)
 
 
 class PieceCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
@@ -6449,71 +2239,29 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        work_order = get_budget_work_order(self.object)
-        if work_order is not None:
-            sync_xml_third_party_services(self.object)
         context['pieces_parts'] = self.object.pieces.all()
         context['photos'] = self.object.photos.all()
         context['third_party_form'] = ThirdPartyServiceForm()
         context['today'] = timezone.localdate()
-        context['work_order'] = work_order
-        context['delivery_status'] = budget_delivery_status(self.object)
-        user_role = getattr(getattr(self.request, 'user', None), 'role', None)
-        context['can_manage_delivery'] = user_role in (
-            CustomUser.Role.MANAGER,
-            CustomUser.Role.FINANCE,
-        )
-        context['can_access_finance'] = user_role in (
-            CustomUser.Role.MANAGER,
-            CustomUser.Role.FINANCE,
-        )
-        context['administrative_closure_status'] = budget_administrative_closure_status(
-            self.object,
-            self.request.user,
-        )
-        context['administrative_closure_form'] = AdministrativeClosureForm(
-            initial={
-                'delivery_date': context['administrative_closure_status']['suggested_delivery_date'],
-                'confirm_no_commission': True,
-            }
-        )
-        context['administrative_closure_open'] = (self.request.GET.get('admin_close') or '').strip() == '1'
-        finance_open_movements = context['delivery_status'].get('finance_open_movements') or []
-        context['delivery_finance_url'] = ''
-        if finance_open_movements and context['can_access_finance']:
-            context['delivery_finance_url'] = (
-                reverse('budgets:finance_dashboard') + f'?edit={finance_open_movements[0].id}'
-            )
+        try:
+            context['work_order'] = self.object.work_order
+        except WorkOrder.DoesNotExist:
+            context['work_order'] = None
 
-        visible_third_party = get_visible_third_party_services(self.object)
         manual_third_party = [
             {'description': s.description, 'total_amount': s.amount}
-            for s in visible_third_party
+            for s in self.object.third_party_services.all()
         ]
         manual_third_party_total = sum([s['total_amount'] for s in manual_third_party], Decimal('0'))
-        manual_keys = {
-            third_party_identity(s['description'], s['total_amount'])
-            for s in manual_third_party
-        }
 
         xml = self.object.source_xml or ''
         if xml:
             try:
                 service_lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
-                third_party_xml = [s for s in service_lines if s.get('is_third_party') and not is_office_managed_service(s.get('description'))]
-                context['service_lines'] = annotate_service_lines_completion(
-                    self.object,
-                    [
-                        s for s in service_lines
-                        if not s.get('is_third_party') or is_office_managed_service(s.get('description'))
-                    ],
-                )
-                missing_third_party_xml = [
-                    s for s in third_party_xml
-                    if third_party_identity(s.get('description'), s.get('total_amount', Decimal('0'))) not in manual_keys
-                ]
-                third_party_xml_total = sum([s.get('total_amount', Decimal('0')) for s in missing_third_party_xml], Decimal('0'))
-                context['third_party_services'] = manual_third_party + missing_third_party_xml
+                third_party_xml = [s for s in service_lines if s.get('is_third_party')]
+                context['service_lines'] = [s for s in service_lines if not s.get('is_third_party')]
+                third_party_xml_total = sum([s.get('total_amount', Decimal('0')) for s in third_party_xml], Decimal('0'))
+                context['third_party_services'] = manual_third_party + third_party_xml
                 context['third_party_services_total'] = manual_third_party_total + third_party_xml_total
             except Exception:
                 context['service_lines'] = []
@@ -6524,111 +2272,6 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
             context['third_party_services'] = manual_third_party
             context['third_party_services_total'] = manual_third_party_total
         return context
-
-
-class BudgetDeliverView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def post(self, request, pk):
-        budget = Budget.objects.select_related('customer', 'vehicle').filter(pk=pk).first()
-        if budget is None:
-            raise Http404('Orçamento não encontrado.')
-
-        if budget.is_delivered:
-            messages.info(request, 'Este veículo já foi entregue.')
-            return redirect('budgets:budget_detail', pk=budget.pk)
-
-        status = budget_delivery_status(budget)
-        if not status['can_deliver']:
-            blocker_text = ' '.join(status['blockers'])
-            messages.error(request, f'Não foi possível entregar o veículo. {blocker_text}')
-            return redirect('budgets:budget_detail', pk=budget.pk)
-
-        budget.delivered_at = timezone.now()
-        budget.delivered_by = request.user
-        budget.save(update_fields=['delivered_at', 'delivered_by'])
-        messages.success(request, 'Veículo entregue com sucesso.')
-        return redirect('budgets:budget_detail', pk=budget.pk)
-
-
-class BudgetAdministrativeCloseView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER,)
-
-    def post(self, request, pk):
-        budget = Budget.objects.select_related('customer', 'vehicle').filter(pk=pk).first()
-        if budget is None:
-            raise Http404('Orçamento não encontrado.')
-
-        if budget.is_delivered:
-            messages.info(request, 'Este veículo já foi entregue.')
-            return redirect('budgets:budget_detail', pk=budget.pk)
-
-        closure_status = budget_administrative_closure_status(budget, request.user)
-        if not closure_status['can_administratively_close']:
-            blocker_text = ' '.join(closure_status['blockers'])
-            messages.error(request, f'Não foi possível finalizar administrativamente. {blocker_text}')
-            return redirect(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}) + '?admin_close=1')
-
-        form = AdministrativeClosureForm(request.POST)
-        if not form.is_valid():
-            error_text = ' '.join(
-                [
-                    error
-                    for errors in form.errors.values()
-                    for error in errors
-                ]
-            )
-            messages.error(request, f'Não foi possível finalizar administrativamente. {error_text}')
-            return redirect(reverse('budgets:budget_detail', kwargs={'pk': budget.pk}) + '?admin_close=1')
-
-        delivery_date = form.cleaned_data['delivery_date']
-        delivery_datetime = timezone.make_aware(
-            datetime.combine(delivery_date, dt_time(12, 0))
-        )
-        work_order = closure_status['work_order']
-
-        with transaction.atomic():
-            budget.delivered_at = delivery_datetime
-            budget.delivered_by = request.user
-            budget.administrative_closure = True
-            budget.administrative_closed_at = timezone.now()
-            budget.administrative_closed_by = request.user
-            budget.administrative_closure_reason = form.cleaned_data['reason']
-            budget.save(
-                update_fields=[
-                    'delivered_at',
-                    'delivered_by',
-                    'administrative_closure',
-                    'administrative_closed_at',
-                    'administrative_closed_by',
-                    'administrative_closure_reason',
-                ]
-            )
-            if work_order is not None:
-                if work_order.status != WorkOrder.Status.CLOSED:
-                    work_order.status = WorkOrder.Status.CLOSED
-                    work_order.save(update_fields=['status'])
-                # Blindagem: fecha TODAS as tarefas PENDING da OS como DONE (sem horas extras).
-                # Garante que, mesmo que o Blocker #6 seja alterado no futuro,
-                # nenhuma tarefa fique como PENDING em uma OS CLOSED.
-                pending_tasks = list(
-                    work_order.tasks
-                    .exclude(status=WorkOrderTask.Status.DONE)
-                    .only('id', 'status', 'completed_at', 'completed_by')
-                )
-                if pending_tasks:
-                    now = timezone.now()
-                    for task in pending_tasks:
-                        task.status = WorkOrderTask.Status.DONE
-                        task.completed_at = task.completed_at or now
-                        task.completed_by = task.completed_by or request.user
-                    WorkOrderTask.objects.bulk_update(
-                        pending_tasks,
-                        ['status', 'completed_at', 'completed_by'],
-                    )
-
-        messages.success(request, 'Finalização administrativa registrada com sucesso. Comissão não foi gerada.')
-        return redirect('budgets:budget_detail', pk=budget.pk)
 
 
 class BudgetPhotoCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
@@ -6673,7 +2316,6 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
     template_name = 'budgets/budget_form.html'
     fields = (
         'status',
-        'customer_type',
         'refusal_reason_code',
         'refusal_reason',
         'entry_date',
@@ -6696,21 +2338,23 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         base_total = self.object.total_amount
         if xml:
             try:
-                _, _, _, parsed_total_amount, _, _, _, *_ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
+                _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
                 if parsed_total_amount > 0:
                     base_total = parsed_total_amount
             except Exception:
                 base_total = self.object.total_amount
 
-        return base_total + get_budget_extra_third_party_total(self.object)
+        third_party_total = sum(
+            [s.amount for s in self.object.third_party_services.all().only('amount')],
+            Decimal('0'),
+        )
+        return base_total + third_party_total
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['computed_total_amount'] = self._compute_total_amount()
         context['today'] = timezone.localdate()
         context['bank_accounts'] = BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')
-        pending_finance = self.request.session.get(pending_budget_finance_session_key(self.object.pk))
-        context['pending_budget_finance'] = pending_finance
         can_access_finance = bool(
             getattr(self.request, 'user', None)
             and getattr(self.request.user, 'role', None)
@@ -6718,50 +2362,23 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         )
         needs_finance = bool(
             can_access_finance
-            and (self.object.status == Budget.Status.AUTHORIZED or pending_finance)
+            and self.object.status == Budget.Status.AUTHORIZED
             and not CashMovement.objects.filter(budget=self.object).exists()
         )
         context['needs_finance'] = needs_finance
-        force_show_modal = (self.request.GET.get('finance') or '').strip() == '1'
-        skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
-        skip_modal = self.request.session.get(skip_flag_key) is True and not force_show_modal
-        auto_show_modal = (
+        show_finance_modal = (self.request.GET.get('finance') or '').strip() == '1'
+        show_finance_modal = bool(
             can_access_finance
-            and needs_finance
+            and show_finance_modal
             and self.object.status == Budget.Status.AUTHORIZED
-            and not skip_modal
+            and not CashMovement.objects.filter(budget=self.object).exists()
         )
-        show_finance_modal = bool(force_show_modal or auto_show_modal)
         context['show_finance_modal'] = show_finance_modal
-        pending_data = deserialize_pending_budget_data(pending_finance) if pending_finance else {}
-        context['finance_default_due_date'] = (
-            pending_data.get('expected_delivery_date')
-            or pending_data.get('entry_date')
-            or self.object.expected_delivery_date
-            or self.object.entry_date
-            or timezone.localdate()
-        )
+        context['finance_default_due_date'] = self.object.expected_delivery_date or self.object.entry_date or timezone.localdate()
         return context
-
-    def get(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        if request.GET.get('discard_finance') == '1':
-            request.session.pop(pending_budget_finance_session_key(self.object.pk), None)
-            skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
-            if not CashMovement.objects.filter(budget=self.object).exists():
-                request.session[skip_flag_key] = True
-            else:
-                request.session.pop(skip_flag_key, None)
-            return redirect('budgets:budget_update', pk=self.object.pk)
-        return super().get(request, *args, **kwargs)
 
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
-        pending_payload = self.request.session.get(pending_budget_finance_session_key(self.object.pk))
-        if self.request.method == 'GET' and pending_payload:
-            pending_data = deserialize_pending_budget_data(pending_payload)
-            for field, value in pending_data.items():
-                form.initial[field] = value
         return form
 
     def form_valid(self, form):
@@ -6804,20 +2421,6 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
                 form.instance.approved_at = timezone.now()
         else:
             form.instance.approved_at = None
-
-        needs_finance_modal = False
-        pending_key = None
-        if status == Budget.Status.AUTHORIZED and not CashMovement.objects.filter(budget=self.object).exists():
-            user = getattr(self.request, 'user', None)
-            if user and getattr(user, 'role', None) in (
-                CustomUser.Role.MANAGER,
-                CustomUser.Role.FINANCE,
-                CustomUser.Role.ESTIMATOR,
-            ):
-                needs_finance_modal = True
-                pending_key = pending_budget_finance_session_key(self.object.pk)
-                self.request.session[pending_key] = serialize_pending_budget_data(form.cleaned_data)
-
         response = super().form_valid(form)
         if transitioned_to_authorized:
             messages.success(self.request, 'Orçamento aprovado.')
@@ -6834,22 +2437,89 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
                 'Atenção: orçamento aprovado com peças da oficina pendentes. O reparo fica bloqueado até as peças chegarem '
                 'ou até liberar "seguir sem as peças".',
             )
-        if self.object.status == Budget.Status.AUTHORIZED:
-            ensure_work_order_for_budget(self.object)
+        if self.object.status == Budget.Status.AUTHORIZED and not WorkOrder.objects.filter(budget=self.object).exists():
+            xml = self.object.source_xml or ''
+            vehicle_image_url = ''
+            if getattr(self.object.vehicle, 'image_file', None):
+                try:
+                    if self.object.vehicle.image_file:
+                        vehicle_image_url = self.object.vehicle.image_file.url
+                except Exception:
+                    vehicle_image_url = ''
+            if not vehicle_image_url:
+                vehicle_image_url = self.object.vehicle.image_url or ''
+            work_order = WorkOrder.objects.create(
+                budget=self.object,
+                vehicle_image_url=vehicle_image_url,
+                created_at=self.object.created_at,
+            )
+            if xml:
+                try:
+                    lines = extract_service_lines(xml.encode('utf-8', errors='replace'))
+                except Exception:
+                    lines = []
+            else:
+                lines = []
 
-        if needs_finance_modal:
-            messages.info(self.request, 'Confirme o financeiro para concluir a aprovação do orçamento.')
-            skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
-            self.request.session.pop(skip_flag_key, None)
-            url = reverse('budgets:budget_update', kwargs={'pk': self.object.pk})
-            return redirect(f'{url}?finance=1')
-        else:
-            if status != Budget.Status.AUTHORIZED:
-                skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
-                self.request.session.pop(skip_flag_key, None)
-            if CashMovement.objects.filter(budget=self.object).exists():
-                skip_flag_key = f'_skip_finance_modal_{self.object.pk}'
-                self.request.session.pop(skip_flag_key, None)
+            services = list(ServiceCatalog.objects.all().only('id', 'name'))
+            services = [s for s in services if (s.name or '').strip()]
+            services.sort(key=lambda s: len((s.name or '').strip()), reverse=True)
+
+            def match_service(description):
+                d = (description or '').strip().lower()
+                if not d:
+                    return None
+                for s in services:
+                    n = (s.name or '').strip().lower()
+                    if n and n in d:
+                        return s
+                return None
+
+            order = 0
+            activity_specs = [
+                (WorkOrderTask.Activity.DISMANTLING, 'desmontagem_hours', 'desmontagem_amount'),
+                (WorkOrderTask.Activity.BODYWORK, 'funilaria_hours', 'funilaria_amount'),
+                (WorkOrderTask.Activity.PREPARATION, 'preparacao_hours', 'preparacao_amount'),
+                (WorkOrderTask.Activity.PAINTING, 'pintura_hours', 'pintura_amount'),
+                (WorkOrderTask.Activity.ASSEMBLY, 'montagem_hours', 'montagem_amount'),
+            ]
+
+            for activity, hours_key, amount_key in activity_specs:
+                for s in [x for x in lines if not x.get('is_third_party')]:
+                    hours = s.get(hours_key, Decimal('0'))
+                    amount = s.get(amount_key, Decimal('0'))
+                    if hours and hours > 0:
+                        order += 10
+                        code = s.get('code') or ''
+                        desc = s.get('description') or ''
+                        task_desc = desc
+                        if code:
+                            task_desc = f'{desc} (Cód: {code})'
+                        matched_service = match_service(task_desc)
+                        WorkOrderTask.objects.create(
+                            work_order=work_order,
+                            activity=activity,
+                            service=matched_service,
+                            description=task_desc,
+                            planned_hours=hours,
+                            planned_amount=amount,
+                            order=order,
+                        )
+
+            order += 10
+            WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.POLISHING, order=order)
+            order += 10
+            WorkOrderTask.objects.create(work_order=work_order, activity=WorkOrderTask.Activity.DELIVERY_PREP, order=order)
+
+        if transitioned_to_authorized and not CashMovement.objects.filter(budget=self.object).exists():
+            user = getattr(self.request, 'user', None)
+            if user and getattr(user, 'role', None) in (
+                CustomUser.Role.MANAGER,
+                CustomUser.Role.FINANCE,
+                CustomUser.Role.ESTIMATOR,
+            ):
+                url = reverse('budgets:budget_update', kwargs={'pk': self.object.pk})
+                return redirect(f'{url}?finance=1')
 
         return response
 
@@ -6865,10 +2535,7 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if budget is None:
             raise Http404('Orçamento não encontrado.')
 
-        pending_payload = request.session.get(pending_budget_finance_session_key(budget.pk))
-        pending_data = deserialize_pending_budget_data(pending_payload) if pending_payload else None
-
-        if budget.status != Budget.Status.AUTHORIZED and not pending_data:
+        if budget.status != Budget.Status.AUTHORIZED:
             messages.error(request, 'O orçamento precisa estar Autorizado para registrar o financeiro.')
             return redirect('budgets:budget_update', pk=budget.pk)
 
@@ -6877,8 +2544,6 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
             return redirect('budgets:budget_update', pk=budget.pk)
 
         kind = (request.POST.get('kind') or '').strip().upper()
-        has_entry = (request.POST.get('has_entry') or '1').strip() == '1'
-        has_franchise = (request.POST.get('has_franchise') or '1').strip() == '1'
         total = budget.total_amount or Decimal('0')
         today = timezone.localdate()
         bank_account_id_raw = (request.POST.get('bank_account_id') or '').strip()
@@ -6886,6 +2551,7 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
             bank_account_id = int(bank_account_id_raw) if bank_account_id_raw else None
         except ValueError:
             bank_account_id = None
+        bank_account = None
         if not bank_account_id:
             messages.error(request, 'Selecione o banco/conta para os lançamentos deste orçamento.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
@@ -6893,25 +2559,6 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if bank_account is None:
             messages.error(request, 'Banco/conta inválido.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
-
-        raw_customer_type = (request.POST.get('customer_type') or '').strip().upper()
-        if not raw_customer_type:
-            if kind == 'SEGURADORA':
-                raw_customer_type = Budget.CustomerType.INSURER
-            elif kind == 'PARTICULAR':
-                raw_customer_type = Budget.CustomerType.PARTICULAR
-            else:
-                raw_customer_type = budget.customer_type or Budget.CustomerType.PARTICULAR
-        valid_customer_types = {Budget.CustomerType.PARTICULAR, Budget.CustomerType.INSURER, Budget.CustomerType.COMPANY}
-        if raw_customer_type not in valid_customer_types:
-            if budget.customer_type and budget.customer_type in valid_customer_types:
-                raw_customer_type = budget.customer_type
-            else:
-                raw_customer_type = (
-                    Budget.CustomerType.INSURER
-                    if kind == 'SEGURADORA'
-                    else Budget.CustomerType.PARTICULAR
-                )
 
         def parse_money(value):
             raw = (value or '').strip()
@@ -6923,64 +2570,20 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                 raw = raw.replace('.', '').replace(',', '.')
             elif ',' in raw:
                 raw = raw.replace(',', '.')
-            try:
-                return Decimal(raw)
-            except Exception:
-                return Decimal('0')
+            return Decimal(raw)
 
         def parse_date(value, default_date):
             raw = (value or '').strip()
             if not raw:
                 return default_date
-            try:
-                return date.fromisoformat(raw)
-            except Exception:
-                return default_date
-
-        def _resolve_cash_movement_source(kind_value, movement_kind_value):
-            if raw_customer_type == Budget.CustomerType.INSURER:
-                if movement_kind_value in ('seguradora',):
-                    return CashMovement.Source.INSURERS
-                return CashMovement.Source.PARTICULAR
-            if raw_customer_type == Budget.CustomerType.COMPANY:
-                return CashMovement.Source.COMPANY
-            return CashMovement.Source.PARTICULAR
+            return date.fromisoformat(raw)
 
         try:
             with transaction.atomic():
-                if pending_data:
-                    old_status = budget.status
-                    budget.status = pending_data.get('status') or budget.status
-                    budget.refusal_reason_code = pending_data.get('refusal_reason_code') or ''
-                    budget.refusal_reason = pending_data.get('refusal_reason') or ''
-                    budget.entry_date = pending_data.get('entry_date')
-                    budget.repair_start_date = pending_data.get('repair_start_date')
-                    budget.expected_delivery_date = pending_data.get('expected_delivery_date')
-                    budget.allow_repair_without_parts = bool(pending_data.get('allow_repair_without_parts'))
-                    if not budget.customer_type:
-                        pending_customer_type = (pending_data.get('customer_type') or '').strip().upper()
-                        if pending_customer_type in valid_customer_types:
-                            budget.customer_type = pending_customer_type
-                    if budget.status == Budget.Status.AUTHORIZED:
-                        if old_status != Budget.Status.AUTHORIZED or not budget.approved_at:
-                            budget.approved_at = timezone.now()
-                    else:
-                        budget.approved_at = None
-                    budget.customer_type = raw_customer_type or budget.customer_type
-                    budget.save()
-                    if budget.status != Budget.Status.AUTHORIZED:
-                        raise ValueError('O orçamento precisa estar Autorizado para registrar o financeiro.')
-                    ensure_work_order_for_budget(budget)
-                else:
-                    budget.customer_type = raw_customer_type or budget.customer_type
-                    budget.save(update_fields=['customer_type'])
-
                 if kind == 'PARTICULAR':
-                    entry_amount = Decimal('0') if not has_entry else parse_money(request.POST.get('entry_amount'))
+                    entry_amount = parse_money(request.POST.get('entry_amount'))
                     entry_due = parse_date(request.POST.get('entry_due_date'), today)
-                    is_received = bool(has_entry) and (
-                        (request.POST.get('entry_received') or '').strip().lower() in ('1', 'true', 'on', 'yes')
-                    )
+                    is_received = (request.POST.get('entry_received') or '').strip().lower() in ('1', 'true', 'on', 'yes')
 
                     if entry_amount < 0:
                         raise ValueError('Valor de entrada inválido.')
@@ -6992,10 +2595,9 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
-                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=_resolve_cash_movement_source(kind, 'entrada'),
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Entrada',
                             amount=entry_amount,
                             launch_date=today,
@@ -7011,10 +2613,9 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
-                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=_resolve_cash_movement_source(kind, 'saldo'),
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Saldo',
                             amount=remainder,
                             launch_date=today,
@@ -7022,15 +2623,13 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                             is_realized=False,
                         )
                 elif kind == 'SEGURADORA':
-                    franchise_amount = Decimal('0') if not has_franchise else parse_money(request.POST.get('franchise_amount'))
+                    franchise_amount = parse_money(request.POST.get('franchise_amount'))
                     franchise_due = parse_date(request.POST.get('franchise_due_date'), today)
-                    franchise_received = bool(has_franchise) and (
-                        (request.POST.get('franchise_received') or '').strip().lower() in (
-                            '1',
-                            'true',
-                            'on',
-                            'yes',
-                        )
+                    franchise_received = (request.POST.get('franchise_received') or '').strip().lower() in (
+                        '1',
+                        'true',
+                        'on',
+                        'yes',
                     )
                     insurer_due = parse_date(
                         request.POST.get('insurer_due_date'),
@@ -7048,10 +2647,9 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
-                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=_resolve_cash_movement_source(kind, 'franquia'),
+                            source=CashMovement.Source.PARTICULAR,
                             description=f'Orçamento #{budget.display_number} - Franquia',
                             amount=franchise_amount,
                             launch_date=today,
@@ -7063,10 +2661,9 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                         CashMovement.objects.create(
                             budget=budget,
                             customer=budget.customer,
-                            customer_type=budget.customer_type,
                             bank_account=bank_account,
                             direction=CashMovement.Direction.IN,
-                            source=_resolve_cash_movement_source(kind, 'seguradora'),
+                            source=CashMovement.Source.INSURERS,
                             description=f'Orçamento #{budget.display_number} - Seguradora',
                             amount=insurer_amount,
                             launch_date=today,
@@ -7074,17 +2671,11 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
                             is_realized=False,
                         )
                 else:
-                    raise ValueError('Tipo inválido. Escolha Particular ou Seguradora.')
+                    raise ValueError('Tipo inválido.')
         except Exception as exc:
-            err = str(exc)
-            if not err:
-                err = 'Não foi possível registrar o financeiro.'
-            messages.error(request, f'Erro no financeiro: {err}')
+            messages.error(request, str(exc) or 'Não foi possível registrar o financeiro.')
             return redirect(f'{reverse("budgets:budget_update", kwargs={"pk": budget.pk})}?finance=1')
 
-        request.session.pop(pending_budget_finance_session_key(budget.pk), None)
-        skip_flag_key = f'_skip_finance_modal_{budget.pk}'
-        request.session.pop(skip_flag_key, None)
         messages.success(request, 'Financeiro registrado.')
         return redirect('budgets:budget_detail', pk=budget.pk)
 
@@ -7093,25 +2684,6 @@ class BudgetDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
     model = Budget
     template_name = 'budgets/budget_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
-
-    def post(self, request, *args, **kwargs):
-        try:
-            self.object = self.get_object()
-        except Http404:
-            messages.error(request, 'Orçamento não encontrado.')
-            return redirect('budgets:budget_list')
-
-        try:
-            self.object.delete()
-        except ProtectedError:
-            messages.error(
-                request,
-                'Este orçamento possui vínculos e não pode ser excluído. Remova antes os registros financeiros ou complementos relacionados.',
-            )
-            return redirect('budgets:budget_detail', pk=self.object.pk)
-
-        messages.success(request, 'Orçamento removido.')
-        return redirect(self.get_success_url())
 
     def get_success_url(self):
         return reverse('budgets:budget_list')
@@ -7141,102 +2713,36 @@ class ThirdPartyServiceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         if budget is None:
             raise Http404('Orçamento não encontrado.')
 
-        next_url = (request.POST.get('next') or '').strip()
-        if not next_url.startswith('/'):
-            next_url = ''
-
         form = ThirdPartyServiceForm(request.POST)
         if not form.is_valid():
             messages.error(request, 'Não foi possível salvar o serviço terceiro.')
-            if next_url:
-                return redirect(next_url)
             return redirect('budgets:budget_detail', pk=budget.pk)
 
-        status = form.cleaned_data['status']
-        completed_at = timezone.now() if status == ThirdPartyService.Status.DONE else None
-
-        service = ThirdPartyService.objects.create(
+        ThirdPartyService.objects.create(
             budget=budget,
-            supplier_id=form.cleaned_data.get('supplier_id'),
             description=form.cleaned_data['description'],
             amount=form.cleaned_data['amount'],
-            scheduled_date=form.cleaned_data.get('scheduled_date'),
-            status=status,
-            completed_at=completed_at,
-            is_shop_service=bool(form.cleaned_data.get('is_shop_service')),
         )
 
-        after_third_party_service_saved(service)
+        base_total = Decimal('0')
+        xml = budget.source_xml or ''
+        if xml:
+            try:
+                _, _, _, parsed_total_amount, _, _, _ = parse_cilia_xml(xml.encode('utf-8', errors='replace'))
+                base_total = parsed_total_amount
+            except Exception:
+                base_total = budget.total_amount
+        else:
+            base_total = budget.total_amount
+
+        third_party_total = sum(
+            [s.amount for s in ThirdPartyService.objects.filter(budget_id=budget.id).only('amount')],
+            Decimal('0'),
+        )
+        budget.total_amount = base_total + third_party_total
+        budget.save(update_fields=['total_amount'])
         messages.success(request, 'Serviço terceiro salvo.')
-        if next_url:
-            return redirect(next_url)
         return redirect('budgets:budget_detail', pk=budget.pk)
-
-
-class ThirdPartyServiceUpdateView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def post(self, request, pk):
-        service = ThirdPartyService.objects.select_related('budget').filter(pk=pk).first()
-        if service is None:
-            raise Http404('Serviço terceiro não encontrado.')
-
-        next_url = (request.POST.get('next') or '').strip()
-        if not next_url.startswith('/'):
-            next_url = ''
-
-        form = ThirdPartyServiceForm(request.POST)
-        if not form.is_valid():
-            messages.error(request, 'Não foi possível atualizar o serviço terceiro.')
-            if next_url:
-                return redirect(next_url)
-            return redirect('budgets:budget_detail', pk=service.budget_id)
-
-        service.supplier_id = form.cleaned_data.get('supplier_id')
-        service.description = form.cleaned_data['description']
-        service.amount = form.cleaned_data['amount']
-        service.scheduled_date = form.cleaned_data.get('scheduled_date')
-        service.status = form.cleaned_data['status']
-        service.is_shop_service = bool(form.cleaned_data.get('is_shop_service'))
-        service.completed_at = timezone.now() if service.status == ThirdPartyService.Status.DONE else None
-        service.save(
-            update_fields=[
-                'supplier',
-                'description',
-                'amount',
-                'scheduled_date',
-                'status',
-                'is_shop_service',
-                'completed_at',
-            ]
-        )
-        after_third_party_service_saved(service)
-        messages.success(request, 'Serviço terceiro atualizado.')
-        if next_url:
-            return redirect(next_url)
-        return redirect('budgets:budget_detail', pk=service.budget_id)
-
-
-class ThirdPartyServiceFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def post(self, request, pk):
-        service = ThirdPartyService.objects.select_related('budget').filter(pk=pk).first()
-        if service is None:
-            raise Http404('Serviço terceiro não encontrado.')
-
-        next_url = (request.POST.get('next') or '').strip()
-        if not next_url.startswith('/'):
-            next_url = ''
-
-        service.status = ThirdPartyService.Status.DONE
-        service.completed_at = timezone.now()
-        service.save(update_fields=['status', 'completed_at'])
-        after_third_party_service_saved(service)
-        messages.success(request, 'Serviço terceiro finalizado.')
-        if next_url:
-            return redirect(next_url)
-        return redirect('budgets:budget_detail', pk=service.budget_id)
 
 
 class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
@@ -7244,319 +2750,207 @@ class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
     form_class = CiliaXMLUploadForm
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
+    def _xml_debug_summary(self, xml_bytes):
+        try:
+            root = ElementTree.fromstring(xml_bytes)
+        except ElementTree.ParseError:
+            return 'XML inválido'
+
+        cpf_values = []
+        for el in root.iter():
+            tag = str(el.tag).split('}')[-1].lower() if el.tag else ''
+            if tag != 'cpf':
+                continue
+            raw = ''.join(el.itertext()).strip()
+            raw = raw or el.attrib.get('value', '')
+            cpf_values.append(raw.strip())
+
+        plate_values = []
+        for el in root.iter():
+            tag = str(el.tag).split('}')[-1].lower() if el.tag else ''
+            if tag != 'placa':
+                continue
+            raw = ''.join(el.itertext()).strip()
+            raw = raw or el.attrib.get('value', '')
+            plate_values.append(raw.strip())
+
+        cpf_status = 'não encontrado'
+        if cpf_values:
+            cpf_status = 'encontrado vazio'
+            for v in cpf_values:
+                digits = ''.join([c for c in v if c.isdigit()])
+                if digits:
+                    cpf_status = f'encontrado ({len(digits)} dígitos)'
+                    break
+
+        plate_status = 'não encontrado'
+        if plate_values:
+            plate_status = 'encontrado vazio'
+            for v in plate_values:
+                normalized = ''.join([c for c in v.upper() if c.isalnum()])
+                if normalized:
+                    plate_status = f'encontrado ({len(normalized)} chars)'
+                    break
+
+        return f'Debug: cpf={cpf_status}; placa={plate_status}'
+
     def form_valid(self, form):
         xml_file = form.cleaned_data['xml_file']
         xml_bytes = xml_file.read()
-        import_job = XMLImportJob.objects.create(
-            provider=XMLImportJob.Provider.MANUAL,
-            file_name=xml_file.name,
-            status=XMLImportJob.Status.PENDING,
-        )
+        xml_created_at = parse_xml_created_at(xml_bytes)
 
         try:
-            result = import_cilia_xml_bytes(
-                xml_bytes=xml_bytes,
-                job=import_job,
-            )
-        except CiliaImportDuplicateError as exc:
-            form.add_error('xml_file', str(exc))
+            (
+                parsed_customer,
+                parsed_vehicle,
+                parsed_pieces,
+                parsed_total_amount,
+                breakdown,
+                cilia_number,
+                cilia_version,
+            ) = parse_cilia_xml(xml_bytes)
+        except ElementTree.ParseError:
+            form.add_error('xml_file', 'Não foi possível ler o XML. Verifique o arquivo.')
             return self.form_invalid(form)
-        except CiliaImportValidationError as exc:
-            form.add_error(None, str(exc))
-            return self.form_invalid(form)
-        except CiliaImportError as exc:
-            form.add_error(None, str(exc))
+        except Exception:
+            form.add_error('xml_file', 'Erro ao processar o XML. Tente novamente.')
             return self.form_invalid(form)
 
-        if not result.parsed_customer_document:
+        if cilia_number and Budget.objects.filter(cilia_number=cilia_number).exists():
+            form.add_error('xml_file', f'Este XML já foi importado (Orçamento #{cilia_number}).')
+            return self.form_invalid(form)
+
+        if not parsed_vehicle.plate:
+            tags = []
+            try:
+                tags = extract_tag_names(xml_bytes)
+            except Exception:
+                tags = []
+            details = 'XML sem placa do veículo.'
+            details = f'{details} {self._xml_debug_summary(xml_bytes)}'
+            if tags:
+                details = f'{details} Tags detectadas: {", ".join(tags)}'
+            form.add_error(None, details)
+            return self.form_invalid(form)
+
+        budget = None
+        for attempt in range(6):
+            try:
+                with transaction.atomic():
+                    customer = None
+                    vehicle = Vehicle.objects.filter(plate=parsed_vehicle.plate).select_related('customer').first()
+
+                    if parsed_customer.document_cpf_cnpj:
+                        customer, _ = Customer.objects.get_or_create(
+                            document_cpf_cnpj=parsed_customer.document_cpf_cnpj,
+                            defaults={
+                                'name': parsed_customer.name,
+                                'phone': parsed_customer.phone,
+                                'email': parsed_customer.email,
+                            },
+                        )
+                    else:
+                        if vehicle is not None:
+                            customer = vehicle.customer
+                        else:
+                            customer = Customer.objects.create(
+                                name=parsed_customer.name,
+                                document_cpf_cnpj=f'TEMP-{uuid4().hex[:12]}',
+                                phone=parsed_customer.phone,
+                                email=parsed_customer.email,
+                            )
+
+                    if vehicle is None:
+                        vehicle = Vehicle.objects.create(
+                            customer=customer,
+                            plate=parsed_vehicle.plate,
+                            brand=parsed_vehicle.brand,
+                            model=parsed_vehicle.model,
+                            color=parsed_vehicle.color,
+                            year=parsed_vehicle.year,
+                            image_url=parsed_vehicle.image_url,
+                        )
+                    else:
+                        if parsed_customer.document_cpf_cnpj and vehicle.customer_id != customer.id:
+                            vehicle.customer = customer
+                            vehicle.save(update_fields=['customer'])
+
+                    if cilia_number:
+                        budget = Budget.objects.filter(cilia_number=cilia_number).select_for_update().first()
+                        if budget:
+                            budget.customer = customer
+                            budget.vehicle = vehicle
+                            budget.cilia_version = cilia_version
+                            budget.pieces.all().delete()
+                        else:
+                            budget = Budget.objects.create(
+                                customer=customer,
+                                vehicle=vehicle,
+                                cilia_number=cilia_number,
+                                cilia_version=cilia_version,
+                            )
+                    else:
+                        budget = Budget.objects.create(customer=customer, vehicle=vehicle)
+                    budget.source_xml = xml_bytes.decode('utf-8', errors='replace')
+
+                    total = Decimal('0')
+                    for p in parsed_pieces:
+                        Piece.objects.create(
+                            budget=budget,
+                            name=p.name,
+                            cost_price=p.cost_price,
+                            provider_type=p.provider_type,
+                        )
+                        total += p.cost_price
+
+                    third_party_total = sum(
+                        [s.amount for s in budget.third_party_services.all().only('amount')],
+                        Decimal('0'),
+                    )
+                    budget.total_amount = (parsed_total_amount if parsed_total_amount > 0 else total) + third_party_total
+                    budget.shop_parts_total = breakdown.get('shop_parts_total', Decimal('0'))
+                    budget.services_total = breakdown.get('services_total', Decimal('0'))
+                    budget.labor_total = breakdown.get('labor_total', Decimal('0'))
+                    budget.discount_total = breakdown.get('discount_total', Decimal('0'))
+                    budget.markup_total = breakdown.get('markup_total', Decimal('0'))
+                    budget.save(
+                        update_fields=[
+                            'customer',
+                            'vehicle',
+                            'cilia_number',
+                            'cilia_version',
+                            'total_amount',
+                            'shop_parts_total',
+                            'services_total',
+                            'labor_total',
+                            'discount_total',
+                            'markup_total',
+                            'source_xml',
+                        ]
+                    )
+                    if xml_created_at is not None:
+                        budget.created_at = xml_created_at
+                        budget.save(update_fields=['created_at'])
+                break
+            except OperationalError as exc:
+                if 'locked' not in str(exc).lower():
+                    raise
+                if attempt >= 5:
+                    form.add_error(None, 'Banco de dados ocupado (SQLite). Tente novamente em alguns segundos.')
+                    return self.form_invalid(form)
+                time.sleep(0.2 * (attempt + 1))
+
+        if not parsed_customer.document_cpf_cnpj:
             messages.warning(
                 self.request,
                 'XML sem CPF/CNPJ do cliente. Cadastro temporário criado (edite o cliente e informe o documento).',
             )
+        if budget is None:
+            form.add_error(None, 'Não foi possível concluir a importação. Tente novamente.')
+            return self.form_invalid(form)
 
-        messages.success(self.request, f'Orçamento importado com sucesso (ID: {result.budget.pk}).')
+        messages.success(self.request, f'Orçamento importado com sucesso (ID: {budget.pk}).')
         return super().form_valid(form)
 
     def get_success_url(self):
         return reverse('budgets:budget_list')
-
-
-class XMLImportJobListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
-    model = XMLImportJob
-    template_name = 'budgets/import_job_list.html'
-    context_object_name = 'jobs'
-    paginate_by = 25
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def _status_filter(self):
-        status = (self.request.GET.get('status') or '').strip().upper()
-        valid_statuses = {choice[0] for choice in XMLImportJob.Status.choices}
-        if status in valid_statuses:
-            return status
-        return ''
-
-    def _provider_filter(self):
-        provider = (self.request.GET.get('provider') or '').strip().upper()
-        valid_providers = {choice[0] for choice in XMLImportJob.Provider.choices}
-        if provider in valid_providers:
-            return provider
-        return ''
-
-    def _search_term(self):
-        return (self.request.GET.get('search') or '').strip()
-
-    def get_queryset(self):
-        queryset = (
-            super()
-            .get_queryset()
-            .select_related('budget', 'budget__customer', 'budget__vehicle')
-        )
-
-        status = self._status_filter()
-        if status:
-            queryset = queryset.filter(status=status)
-
-        provider = self._provider_filter()
-        if provider:
-            queryset = queryset.filter(provider=provider)
-
-        search = self._search_term()
-        if search:
-            search_query = (
-                Q(file_name__icontains=search)
-                | Q(error_message__icontains=search)
-                | Q(budget__customer__name__icontains=search)
-                | Q(budget__vehicle__plate__icontains=search)
-            )
-            if search.isdigit():
-                search_query |= Q(cilia_number=int(search))
-            queryset = queryset.filter(search_query)
-
-        return queryset
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        all_jobs = XMLImportJob.objects.all()
-        context['status_filter'] = self._status_filter()
-        context['provider_filter'] = self._provider_filter()
-        context['search_filter'] = self._search_term()
-        context['status_choices'] = XMLImportJob.Status.choices
-        context['provider_choices'] = XMLImportJob.Provider.choices
-        context['job_counts'] = {
-            'total': all_jobs.count(),
-            'pending': all_jobs.filter(status=XMLImportJob.Status.PENDING).count(),
-            'processing': all_jobs.filter(status=XMLImportJob.Status.PROCESSING).count(),
-            'imported': all_jobs.filter(status=XMLImportJob.Status.IMPORTED).count(),
-            'duplicate': all_jobs.filter(status=XMLImportJob.Status.DUPLICATE).count(),
-            'error': all_jobs.filter(status=XMLImportJob.Status.ERROR).count(),
-        }
-        query = self.request.GET.copy()
-        query.pop('page', None)
-        context['current_query_without_page'] = query.urlencode()
-        return context
-
-
-class XMLImportJobDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
-    model = XMLImportJob
-    template_name = 'budgets/import_job_detail.html'
-    context_object_name = 'job'
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def get_queryset(self):
-        return (
-            super()
-            .get_queryset()
-            .select_related('budget', 'budget__customer', 'budget__vehicle')
-        )
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        job = context['job']
-        context['can_reprocess'] = bool(
-            job.raw_xml and job.status in (XMLImportJob.Status.ERROR, XMLImportJob.Status.DUPLICATE)
-        )
-        context['can_delete_duplicate'] = job.status == XMLImportJob.Status.DUPLICATE
-        return context
-
-
-class XMLImportJobReprocessView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def post(self, request, pk):
-        job = (
-            XMLImportJob.objects
-            .select_related('budget', 'budget__customer', 'budget__vehicle')
-            .filter(pk=pk)
-            .first()
-        )
-        if job is None:
-            raise Http404('Importação não encontrada.')
-
-        if not (job.raw_xml or '').strip():
-            messages.error(request, 'Este job não possui o XML bruto salvo para reprocessamento.')
-            return redirect('budgets:import_job_detail', pk=job.pk)
-
-        try:
-            result = import_cilia_xml_bytes(
-                xml_bytes=job.raw_xml.encode('utf-8', errors='replace'),
-                job=job,
-            )
-        except CiliaImportDuplicateError as exc:
-            messages.error(request, f'Importação continua duplicada. {exc}')
-            return redirect('budgets:import_job_detail', pk=job.pk)
-        except CiliaImportValidationError as exc:
-            messages.error(request, f'Não foi possível reprocessar o XML. {exc}')
-            return redirect('budgets:import_job_detail', pk=job.pk)
-        except CiliaImportError as exc:
-            messages.error(request, f'Não foi possível reprocessar o XML. {exc}')
-            return redirect('budgets:import_job_detail', pk=job.pk)
-
-        if not result.parsed_customer_document:
-            messages.warning(
-                request,
-                'XML sem CPF/CNPJ do cliente. Cadastro temporário criado (edite o cliente e informe o documento).',
-            )
-
-        messages.success(
-            request,
-            f'Importação reprocessada com sucesso para o orçamento #{result.budget.display_number}.',
-        )
-        return redirect('budgets:import_job_detail', pk=job.pk)
-
-
-class XMLImportJobDeleteDuplicateView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
-
-    def post(self, request, pk):
-        job = XMLImportJob.objects.filter(pk=pk).first()
-        if job is None:
-            raise Http404('Importação não encontrada.')
-
-        if job.status != XMLImportJob.Status.DUPLICATE:
-            messages.error(request, 'Somente registros duplicados podem ser excluídos por esta ação.')
-            return redirect('budgets:import_job_detail', pk=job.pk)
-
-        file_name = job.file_name
-        job.delete()
-        messages.success(request, f'Registro duplicado "{file_name}" excluído da listagem.')
-
-        next_url = (request.POST.get('next') or '').strip()
-        if next_url:
-            return redirect(next_url)
-        return redirect('budgets:import_job_list')
-
-
-class DailyProgrammingReportView(LoginRequiredMixin, RoleRequiredMixin, View):
-    allowed_roles = (
-        CustomUser.Role.MANAGER,
-        CustomUser.Role.FINANCE,
-        CustomUser.Role.ESTIMATOR,
-        CustomUser.Role.OPERATIONAL,
-    )
-
-    def get(self, request):
-        today = timezone.localdate()
-        raw = (request.GET.get('date') or '').strip()
-        selected = today
-        if raw:
-            try:
-                selected = date.fromisoformat(raw)
-            except ValueError:
-                selected = today
-
-        tasks = (
-            WorkOrderTask.objects.filter(scheduled_date=selected)
-            .select_related(
-                'collaborator',
-                'service',
-                'work_order',
-                'work_order__budget',
-                'work_order__budget__vehicle',
-                'work_order__budget__customer',
-            )
-            .order_by(
-                'collaborator__name',
-                'order',
-                'work_order__budget__cilia_number',
-                'work_order__budget__id',
-            )
-        )
-
-        unassigned_tasks = []
-        grouped = {}
-        for t in tasks:
-            collab = t.collaborator
-            entry = {
-                'id': t.id,
-                'activity_code': t.activity,
-                'activity_label': t.get_activity_display(),
-                'description': t.description or (t.service.name if t.service else ''),
-                'planned_hours': t.planned_hours or Decimal('0'),
-                'status_code': t.status,
-                'status_label': t.get_status_display(),
-                'work_order_id': t.work_order.id if t.work_order else None,
-                'budget_id': t.work_order.budget.id if t.work_order and t.work_order.budget else None,
-                'budget_display': t.work_order.budget.display_number if t.work_order and t.work_order.budget else '',
-                'plate': t.work_order.budget.vehicle.plate if t.work_order and t.work_order.budget and t.work_order.budget.vehicle else '',
-                'vehicle_model': t.work_order.budget.vehicle.model if t.work_order and t.work_order.budget and t.work_order.budget.vehicle else '',
-                'customer_name': t.work_order.budget.customer.name if t.work_order and t.work_order.budget and t.work_order.budget.customer else '',
-            }
-            if collab is None:
-                unassigned_tasks.append(entry)
-            else:
-                key = collab.id
-                if key not in grouped:
-                    grouped[key] = {
-                        'collaborator_id': collab.id,
-                        'collaborator_name': collab.name,
-                        'collaborator_photo': collab.photo_url,
-                        'collaborator_function': collab.get_function_display(),
-                        'tasks': [],
-                        'total_hours': Decimal('0'),
-                        'budget_count': set(),
-                    }
-                grouped[key]['tasks'].append(entry)
-                grouped[key]['total_hours'] += entry['planned_hours']
-                if entry['budget_id']:
-                    grouped[key]['budget_count'].add(entry['budget_id'])
-
-        collaborator_rows = sorted(
-            (
-                {
-                    'collaborator_id': g['collaborator_id'],
-                    'collaborator_name': g['collaborator_name'],
-                    'collaborator_photo': g['collaborator_photo'],
-                    'collaborator_function': g['collaborator_function'],
-                    'tasks': g['tasks'],
-                    'total_hours': g['total_hours'],
-                    'budget_count': len(g['budget_count']),
-                }
-                for g in grouped.values()
-            ),
-            key=lambda r: r['collaborator_name'],
-        )
-
-        unassigned_hours = sum((Decimal(str(t['planned_hours'])) for t in unassigned_tasks), Decimal('0'))
-        total_hours = sum((r['total_hours'] for r in collaborator_rows), Decimal('0')) + unassigned_hours
-        total_tasks = sum((len(r['tasks']) for r in collaborator_rows), 0) + len(unassigned_tasks)
-        total_budgets = set()
-        for r in collaborator_rows:
-            for t in r['tasks']:
-                if t['budget_id']:
-                    total_budgets.add(t['budget_id'])
-        for t in unassigned_tasks:
-            if t['budget_id']:
-                total_budgets.add(t['budget_id'])
-
-        context = {
-            'today': today,
-            'selected_date': selected,
-            'collaborator_rows': collaborator_rows,
-            'unassigned_tasks': unassigned_tasks,
-            'unassigned_hours': unassigned_hours,
-            'total_hours': total_hours,
-            'total_tasks': total_tasks,
-            'total_budgets': len(total_budgets),
-            'now': timezone.localtime(timezone.now()),
-        }
-        return render(request, 'budgets/report_daily_programming.html', context)

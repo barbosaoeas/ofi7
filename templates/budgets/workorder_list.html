@@ -4,95 +4,38 @@
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Ordens de Serviço (OS)</h1>
+    <h1 class='text-2xl font-semibold text-[#D4AF37]'>Ordens de Serviço (OS)</h1>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-[#262626] bg-[#1A1A1A]'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-slate-50 text-amber-700'>
+      <thead class='bg-[#141414] text-[#D4AF37]'>
         <tr>
-          <th class='px-3 py-3 font-semibold'>OS</th>
-          <th class='px-3 py-3 font-semibold'>Situação</th>
-          <th class='px-3 py-3 font-semibold'>Seção Atual</th>
-          <th class='px-3 py-3 font-semibold'>Início</th>
-          <th class='px-3 py-3 font-semibold'>Tipo</th>
-          <th class='px-3 py-3 font-semibold'>Cliente</th>
-          <th class='px-3 py-3 font-semibold'>Veículo</th>
-          <th class='px-3 py-3 font-semibold'>Criada</th>
-          <th class='px-3 py-3 font-semibold'></th>
+          <th class='px-4 py-3 font-semibold'>OS</th>
+          <th class='px-4 py-3 font-semibold'>Status</th>
+          <th class='px-4 py-3 font-semibold'>Cliente</th>
+          <th class='px-4 py-3 font-semibold'>Veículo</th>
+          <th class='px-4 py-3 font-semibold'>Criada</th>
+          <th class='px-4 py-3 font-semibold'></th>
         </tr>
       </thead>
-      <tbody class='divide-y divide-slate-200'>
-        {% for wo, os in work_orders_with_status %}
-          <tr class='{% if os.state_code == "B" %}bg-red-50/60{% elif os.state_code == "L" %}bg-orange-50/50{% elif os.state_code == "A" %}bg-emerald-50/40{% elif os.state_code == "P" %}bg-amber-50/40{% elif os.state_code == "C" %}bg-indigo-50/40{% else %}hover:bg-slate-50{% endif %}'>
-            <td class='px-3 py-3 font-medium text-slate-900 whitespace-nowrap'>
-              <a href='{% url "budgets:budget_detail" wo.budget.pk %}' class='hover:underline hover:text-amber-700 transition-colors' title='Abrir Orçamento #{{ wo.budget.display_number }}'>
-                #{{ wo.budget.display_number }}
-              </a>
-              <a href='{% url "budgets:budget_update" wo.budget.pk %}' class='ml-1 text-xs text-slate-400 hover:text-[#D4AF37]' title='Editar Orçamento #{{ wo.budget.display_number }}'>✏️</a>
-            </td>
-            <td class='px-3 py-3 whitespace-nowrap'>
-              <div class='flex flex-col gap-1'>
-                <div class='flex items-center gap-2'>
-                  {% if os.state_code == 'B' %}
-                    <span class='inline-flex items-center gap-1 rounded border border-red-500 bg-red-500 px-2 py-0.5 text-xs font-bold text-white' title='Bloqueada - Aguardando {{ os.blocked_parts|length }} peça{{ os.blocked_parts|length|pluralize }}'>⛔{{ os.blocked_parts|length }}</span>
-                    <span class='font-semibold text-red-700'>{{ os.state_label }}</span>
-                  {% elif os.state_code == 'L' %}
-                    <span class='inline-flex items-center gap-1 rounded border border-orange-500 bg-orange-500 px-2 py-0.5 text-xs font-bold text-white' title='Liberado sem peças (bypass gerente)'>🔓</span>
-                    <span class='font-semibold text-orange-700'>{{ os.state_label }}</span>
-                  {% elif os.state_code == 'A' %}
-                    <span class='inline-flex items-center gap-1 rounded border border-emerald-500 bg-emerald-500 px-2 py-0.5 text-xs font-bold text-white' title='Em andamento'>❚A</span>
-                    <span class='font-semibold text-emerald-700'>{{ os.state_label }}</span>
-                    {% if os.total_tasks %}<span class='text-xs text-slate-500'>({{ os.done_tasks }}/{{ os.total_tasks }})</span>{% endif %}
-                  {% elif os.state_code == 'P' %}
-                    <span class='inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-xs font-bold text-slate-900' title='Pausado'>❚P</span>
-                    <span class='font-semibold text-amber-800'>{{ os.state_label }}</span>
-                    {% if os.total_tasks %}<span class='text-xs text-slate-500'>({{ os.done_tasks }}/{{ os.total_tasks }})</span>{% endif %}
-                  {% elif os.state_code == 'C' %}
-                    <span class='inline-flex items-center gap-1 rounded border border-indigo-500 bg-indigo-500 px-2 py-0.5 text-xs font-bold text-white' title='Concluída'>❚C</span>
-                    <span class='font-semibold text-indigo-700'>{{ os.state_label }}</span>
-                  {% else %}
-                    <span class='inline-flex items-center gap-1 rounded border border-slate-400 bg-slate-500 px-2 py-0.5 text-xs font-bold text-white' title='Não iniciado'>❚N</span>
-                    <span class='font-semibold text-slate-600'>{{ os.state_label }}</span>
-                    {% if os.total_tasks %}<span class='text-xs text-slate-500'>({{ os.done_tasks }}/{{ os.total_tasks }})</span>{% endif %}
-                  {% endif %}
-                </div>
-                {% if os.total_tasks and os.state_code != 'C' and os.progress_percent > 0 %}
-                  <div class='w-40 h-1.5 rounded-full bg-slate-200 overflow-hidden'>
-                    <div class='h-full {% if os.state_code == "B" %}bg-red-500{% elif os.state_code == "L" %}bg-orange-500{% elif os.state_code == "A" %}bg-emerald-500{% elif os.state_code == "P" %}bg-amber-500{% else %}bg-slate-400{% endif %}' style='width: {{ os.progress_percent }}%'></div>
-                  </div>
-                {% endif %}
-              </div>
-            </td>
-            <td class='px-3 py-3 text-slate-700'>{{ os.section_label }}</td>
-            <td class='px-3 py-3 text-slate-600 whitespace-nowrap text-xs'>
-              {% if os.start_display %}{{ os.start_display }}{% else %}-{% endif %}
-            </td>
-            <td class='px-3 py-3 whitespace-nowrap'>
-              {% with ct=wo.budget.customer_type %}
-                {% if ct == 'INSURER' %}
-                  <span class='rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800'>Seguradora</span>
-                {% elif ct == 'COMPANY' %}
-                  <span class='rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800'>Empresa</span>
-                {% elif ct == 'PARTICULAR' %}
-                  <span class='rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800'>Particular</span>
-                {% else %}
-                  <span class='rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800'>Não classificado</span>
-                {% endif %}
-              {% endwith %}
-            </td>
-            <td class='px-3 py-3 text-slate-900'>{{ wo.budget.customer.name }}</td>
-            <td class='px-3 py-3 text-slate-600 whitespace-nowrap'>{{ wo.budget.vehicle.plate }}</td>
-            <td class='px-3 py-3 text-slate-500 whitespace-nowrap text-xs'>{{ wo.created_at|date:'d/m/Y H:i' }}</td>
-            <td class='px-3 py-3 text-right whitespace-nowrap'>
-              <a href='{% url "budgets:workorder_detail" wo.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 hover:border-[#D4AF37] text-xs font-medium'>
+      <tbody class='divide-y divide-[#262626]'>
+        {% for wo in work_orders %}
+          <tr class='hover:bg-[#121212]'>
+            <td class='px-4 py-3'>#{{ wo.budget.display_number }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ wo.get_status_display }}</td>
+            <td class='px-4 py-3'>{{ wo.budget.customer.name }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ wo.budget.vehicle.plate }}</td>
+            <td class='px-4 py-3 text-[#A3A3A3]'>{{ wo.created_at|date:'d/m/Y H:i' }}</td>
+            <td class='px-4 py-3 text-right'>
+              <a href='{% url "budgets:workorder_detail" wo.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
                 Ver
               </a>
             </td>
           </tr>
         {% empty %}
           <tr>
-            <td class='px-4 py-6 text-slate-500 text-center' colspan='9'>Nenhuma OS cadastrada.</td>
+            <td class='px-4 py-6 text-[#A3A3A3]' colspan='6'>Nenhuma OS cadastrada.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -100,16 +43,17 @@
   </div>
 
   {% if is_paginated %}
-    <div class='mt-6 flex items-center justify-between text-sm text-slate-500'>
+    <div class='mt-6 flex items-center justify-between text-sm text-[#A3A3A3]'>
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>
   {% endif %}
 {% endblock %}
+

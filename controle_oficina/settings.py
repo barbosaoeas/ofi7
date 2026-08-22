@@ -10,107 +10,26 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 '''
 
-import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def load_env_file(file_path):
-    path = Path(file_path)
-    if not path.exists() or not path.is_file():
-        return
-
-    for raw_line in path.read_text(encoding='utf-8').splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line.startswith('export '):
-            line = line[7:].strip()
-        if '=' not in line:
-            continue
-        key, value = line.split('=', 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-            value = value[1:-1]
-        os.environ[key] = value
-
-
-def env_bool(name, default=False):
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return str(raw).strip().lower() in {'1', 'true', 'yes', 'on'}
-
-
-load_env_file(BASE_DIR / '.env')
-load_env_file(BASE_DIR / '.env.exemplo')
-load_env_file(BASE_DIR / '.env.example')
-# ------------------------------------------------------------------
-# Fallback SHELL SCRIPT (padrao do usuario no PythonAnywhere):
-#   /home/<USER>/.secrets/oficina_env.sh  OU  {PROJETO}/.secrets/oficina_env.sh
-# Ja carrega TUDO aqui no settings, NAO PRECISA ficar no fallback de views.py
-# (resolve problema de workers uWSGI sem as variaveis no environ, mesmo shell
-# interativo tendo-as).
-# ------------------------------------------------------------------
-_user_home = Path(os.path.expanduser("~"))
-load_env_file(BASE_DIR / '.secrets' / 'oficina_env.sh')
-load_env_file(_user_home / '.secrets' / 'oficina_env.sh')
-extra_env_file = os.getenv('OFICINA_ENV_FILE', '').strip()
-if extra_env_file:
-    load_env_file(extra_env_file)
-
-
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-93e%i7btsid3a6q(_#^s(kw11rqg!o$2*tsoj8qfxb)_nm6t$m')
+SECRET_KEY = 'django-insecure-93e%i7btsid3a6q(_#^s(kw11rqg!o$2*tsoj8qfxb)_nm6t$m'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env_bool('DJANGO_DEBUG', True)
+DEBUG = True
 
 ALLOWED_HOSTS = [
     '127.0.0.1',
     'localhost',
     'ofi7ipojuca.pythonanywhere.com',
 ]
-if os.getenv('DJANGO_ALLOWED_HOSTS', '').strip():
-    ALLOWED_HOSTS += [h.strip() for h in os.getenv('DJANGO_ALLOWED_HOSTS').split(',') if h.strip()]
-
-
-# ============================================================
-#  [IA / LLM] Configuracao Inteligencia Artificial (OpenAI + Local Ollama)
-# ============================================================
-# Obter do OpenAI: https://platform.openai.com/api-keys
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '').strip()
-# Modelo padrao OpenAI (gpt-4o-mini = MELHOR custo-beneficio do mercado ~R$0,03 por 100k tokens de saida)
-OPENAI_DEFAULT_MODEL = os.getenv('OPENAI_DEFAULT_MODEL', 'gpt-4o-mini').strip()
-# Temperatura: 0 = muito serio/sempre mesmo resultado, 1 = criativo/varia mais
-OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.3'))
-# Timeout maximo (segundos) para uma chamada ao OpenAI
-OPENAI_TIMEOUT = int(os.getenv('OPENAI_TIMEOUT', '120'))
-# Priorizar IA nuvem (OpenAI) se a chave existir? True = Sim, False = Tentar Local Ollama primeiro
-LLM_PREFER_CLOUD_IF_KEY = env_bool('LLM_PREFER_CLOUD_IF_KEY', True)
-# Ativar Ollama (IA LOCAL)?
-#   - Notebook (local/WSL/Windows): DEIXE True (funciona em 127.0.0.1:11434).
-#   - PythonAnywhere / HEROKU / NUVEM QUALQUER: SEMPRE False (Ollama NAO roda em nuvem).
-# Detecta automaticamente PythonAnywhere: se a pasta '/home' existir e o hostname tiver
-# 'pythonanywhere' OU a env var 'PYTHONANYWHERE_DOMAIN' existir -> desliga Ollama.
-_auto_pa = (
-    bool(os.getenv('PYTHONANYWHERE_DOMAIN', '')) or
-    '.pythonanywhere.' in str(os.getenv('HOSTNAME', '')) or
-    (os.path.exists('/home') and 'ofi7ipojuca' in str(os.listdir('/home')))  # seu user PA
-)
-LLM_ENABLE_OLLAMA_LOCAL = env_bool('LLM_ENABLE_OLLAMA_LOCAL', False if _auto_pa else True)
-# Arquivo/diretorio para cache de analises e memoria de conversa
-LLM_CACHE_DIR = os.getenv('LLM_CACHE_DIR', '').strip() or str(BASE_DIR / 'storage' / 'llm_cache')
-os.makedirs(LLM_CACHE_DIR, exist_ok=True)
-# ============================================================
 
 
 # Application definition
@@ -136,7 +55,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'core.middleware.ForceDefaultPasswordChangeMiddleware',
 ]
 
 ROOT_URLCONF = 'controle_oficina.urls'
@@ -177,25 +95,7 @@ DATABASES = {
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'users.validators.RoleBasedPasswordValidator',
-    },
-]
-
-SESSION_COOKIE_HTTPONLY = True
-CSRF_COOKIE_HTTPONLY = True
-X_FRAME_OPTIONS = 'DENY'
-SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_BROWSER_XSS_FILTER = True
-
-if not DEBUG:
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = True
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+AUTH_PASSWORD_VALIDATORS = []
 
 
 # Internationalization
@@ -224,19 +124,6 @@ AUTH_USER_MODEL = 'users.CustomUser'
 LOGIN_URL = 'users:login'
 LOGIN_REDIRECT_URL = 'core:dashboard'
 LOGOUT_REDIRECT_URL = 'core:public_index'
-
-
-DROPBOX_CILIA_ENABLED = env_bool('DROPBOX_CILIA_ENABLED', default=False)
-DROPBOX_ACCESS_TOKEN = os.getenv('DROPBOX_ACCESS_TOKEN', '').strip()
-DROPBOX_REFRESH_TOKEN = os.getenv('DROPBOX_REFRESH_TOKEN', '').strip()
-DROPBOX_APP_KEY = os.getenv('DROPBOX_APP_KEY', '').strip()
-DROPBOX_APP_SECRET = os.getenv('DROPBOX_APP_SECRET', '').strip()
-DROPBOX_CILIA_INPUT_PATH = os.getenv('DROPBOX_CILIA_INPUT_PATH', '/xml-cilia/entrada').strip() or '/xml-cilia/entrada'
-DROPBOX_CILIA_PROCESSED_PATH = os.getenv('DROPBOX_CILIA_PROCESSED_PATH', '/xml-cilia/processados').strip() or '/xml-cilia/processados'
-DROPBOX_CILIA_ERROR_PATH = os.getenv('DROPBOX_CILIA_ERROR_PATH', '/xml-cilia/erro').strip() or '/xml-cilia/erro'
-DROPBOX_TOKEN_STATE_FILE = os.getenv('DROPBOX_TOKEN_STATE_FILE', '').strip()
-if not DROPBOX_TOKEN_STATE_FILE:
-    DROPBOX_TOKEN_STATE_FILE = str(BASE_DIR / 'data' / 'dropbox_token_state.json')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

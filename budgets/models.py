@@ -1,5 +1,4 @@
 from django.db import models
-from decimal import Decimal
 
 from customers.models import Customer, Vehicle
 
@@ -37,32 +36,22 @@ class Budget(models.Model):
     )
     complement_sequence = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    customer_type = models.CharField(max_length=20, choices=CustomerType.choices, null=True, blank=True)
     refusal_reason_code = models.CharField(max_length=40, choices=RefusalReasonCode.choices, blank=True)
     refusal_reason = models.CharField(max_length=255, blank=True)
     approved_at = models.DateTimeField(null=True, blank=True)
     entry_date = models.DateField(null=True, blank=True)
     repair_start_date = models.DateField(null=True, blank=True)
     expected_delivery_date = models.DateField(null=True, blank=True)
-    allow_repair_without_parts = models.BooleanField(default=False)
-    delivered_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(blank=True, null=True)
     delivered_by = models.ForeignKey(
         'users.CustomUser',
         on_delete=models.SET_NULL,
-        null=True,
         blank=True,
+        null=True,
         related_name='delivered_budgets',
     )
-    administrative_closure = models.BooleanField(default=False)
-    administrative_closed_at = models.DateTimeField(null=True, blank=True)
-    administrative_closed_by = models.ForeignKey(
-        'users.CustomUser',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='administratively_closed_budgets',
-    )
-    administrative_closure_reason = models.TextField(blank=True)
+    allow_repair_without_parts = models.BooleanField(default=False)
+    customer_type = models.CharField(max_length=20, choices=CustomerType.choices, blank=True, null=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     shop_parts_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     services_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -90,48 +79,6 @@ class Budget(models.Model):
         if self.cilia_number:
             return f'Orçamento #{self.cilia_number}'
         return f'Orçamento #{self.pk}'
-
-    @property
-    def is_delivered(self):
-        return bool(self.delivered_at)
-
-
-class XMLImportJob(models.Model):
-    class Provider(models.TextChoices):
-        MANUAL = 'MANUAL', 'Manual'
-        DROPBOX = 'DROPBOX', 'Dropbox'
-
-    class Status(models.TextChoices):
-        PENDING = 'PENDING', 'Pendente'
-        PROCESSING = 'PROCESSING', 'Processando'
-        IMPORTED = 'IMPORTED', 'Importado'
-        DUPLICATE = 'DUPLICATE', 'Duplicado'
-        ERROR = 'ERROR', 'Erro'
-
-    provider = models.CharField(max_length=20, choices=Provider.choices, default=Provider.MANUAL)
-    external_file_id = models.CharField(max_length=255, blank=True)
-    file_name = models.CharField(max_length=255)
-    file_hash = models.CharField(max_length=64, blank=True)
-    cilia_number = models.PositiveIntegerField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    error_message = models.TextField(blank=True)
-    raw_xml = models.TextField(blank=True)
-    budget = models.ForeignKey(
-        Budget,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='xml_import_jobs',
-    )
-    detected_at = models.DateTimeField(auto_now_add=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ('-detected_at', '-id')
-
-    def __str__(self):
-        return f'{self.get_provider_display()} - {self.file_name}'
 
 
 class Piece(models.Model):
@@ -169,30 +116,21 @@ class Piece(models.Model):
 
 
 class ThirdPartyService(models.Model):
-    class Status(models.TextChoices):
-        SCHEDULED = 'SCHEDULED', 'Agendado'
-        IN_PROGRESS = 'IN_PROGRESS', 'Em andamento'
-        DONE = 'DONE', 'Concluido'
-
     budget = models.ForeignKey(Budget, on_delete=models.CASCADE, related_name='third_party_services')
-    supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='third_party_services')
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     expense_movement = models.ForeignKey(
         'CashMovement',
         on_delete=models.SET_NULL,
-        null=True,
         blank=True,
+        null=True,
         related_name='third_party_services',
     )
-    description = models.CharField(max_length=255)
-    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    scheduled_date = models.DateField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
     is_shop_service = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ('status', 'scheduled_date', 'id')
+        ordering = ('-created_at',)
 
     def __str__(self):
         return self.description
@@ -332,8 +270,14 @@ class WorkOrderTask(models.Model):
     activity = models.CharField(max_length=20, choices=Activity.choices)
     service = models.ForeignKey(ServiceCatalog, on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
     description = models.CharField(max_length=255, blank=True)
-    batch = models.ForeignKey('WorkOrderTaskBatch', on_delete=models.SET_NULL, null=True, blank=True, related_name='tasks')
     collaborator = models.ForeignKey('users.Collaborator', on_delete=models.PROTECT, null=True, blank=True)
+    batch = models.ForeignKey(
+        'WorkOrderTaskBatch',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name='tasks',
+    )
     scheduled_date = models.DateField(null=True, blank=True)
     planned_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     planned_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
@@ -356,6 +300,15 @@ class WorkOrderTask(models.Model):
 
 
 class WorkOrderTaskBatch(models.Model):
+    class Activity(models.TextChoices):
+        DISMANTLING = 'DISMANTLING', 'Desmontagem'
+        BODYWORK = 'BODYWORK', 'Funilaria'
+        PREPARATION = 'PREPARATION', 'Preparação'
+        PAINTING = 'PAINTING', 'Pintura'
+        ASSEMBLY = 'ASSEMBLY', 'Montagem'
+        POLISHING = 'POLISHING', 'Polimento'
+        DELIVERY_PREP = 'DELIVERY_PREP', 'Prep Entrega'
+
     class Status(models.TextChoices):
         SCHEDULED = 'SCHEDULED', 'Agendado'
         RUNNING = 'RUNNING', 'Em andamento'
@@ -363,50 +316,24 @@ class WorkOrderTaskBatch(models.Model):
         DONE = 'DONE', 'Concluído'
 
     work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name='batches')
-    activity = models.CharField(max_length=20, choices=WorkOrderTask.Activity.choices)
-    collaborator = models.ForeignKey('users.Collaborator', on_delete=models.PROTECT, null=True, blank=True)
-    scheduled_date = models.DateField(null=True, blank=True)
+    activity = models.CharField(max_length=20, choices=Activity.choices)
+    scheduled_date = models.DateField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.SCHEDULED)
-    started_at = models.DateTimeField(null=True, blank=True)
-    finished_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    finished_at = models.DateTimeField(blank=True, null=True)
+    collaborator = models.ForeignKey(
+        'users.Collaborator',
+        on_delete=models.PROTECT,
+        blank=True,
+        null=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ('-created_at',)
         verbose_name = 'Lote de Tarefas (OS)'
         verbose_name_plural = 'Lotes de Tarefas (OS)'
-
-    def __str__(self):
-        return f'Lote #{self.id} · {self.get_activity_display()} · {self.work_order}'
-
-    @property
-    def tasks_count(self):
-        return WorkOrderTask.objects.filter(batch_id=self.pk).count()
-
-    @property
-    def tasks_done_count(self):
-        return WorkOrderTask.objects.filter(batch_id=self.pk, status=WorkOrderTask.Status.DONE).count()
-
-    @property
-    def display_status_label(self):
-        return self.get_status_display()
-
-    @property
-    def total_planned_hours(self):
-        from django.db.models import Sum
-        res = WorkOrderTask.objects.filter(batch_id=self.pk).aggregate(
-            s=Sum('planned_hours')
-        )['s']
-        return res or Decimal('0')
-
-    @property
-    def total_actual_hours(self):
-        from django.db.models import Sum
-        res = WorkOrderTask.objects.filter(batch_id=self.pk).aggregate(
-            s=Sum('actual_hours')
-        )['s']
-        return res or Decimal('0')
+        ordering = ('-created_at',)
 
 
 class CommissionLine(models.Model):
@@ -441,6 +368,11 @@ class CashMovement(models.Model):
         INSURER = 'INSURER', 'Seguradoras (legado)'
         OTHER = 'OTHER', 'Empresa (legado)'
 
+    class CustomerType(models.TextChoices):
+        PARTICULAR = 'PARTICULAR', 'Particular'
+        INSURER = 'INSURER', 'Seguradora'
+        COMPANY = 'COMPANY', 'Empresa'
+
     category = models.ForeignKey(
         'CashCategory',
         on_delete=models.SET_NULL,
@@ -450,11 +382,11 @@ class CashMovement(models.Model):
     )
     budget = models.ForeignKey(Budget, on_delete=models.PROTECT, null=True, blank=True, related_name='cash_movements')
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_movements')
-    customer_type = models.CharField(max_length=20, choices=Budget.CustomerType.choices, null=True, blank=True)
     bank_account = models.ForeignKey('BankAccount', on_delete=models.PROTECT, null=True, blank=True, related_name='movements')
     supplier = models.ForeignKey('Supplier', on_delete=models.SET_NULL, null=True, blank=True, related_name='movements')
     direction = models.CharField(max_length=10, choices=Direction.choices, default=Direction.IN)
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.COMPANY)
+    customer_type = models.CharField(max_length=20, choices=CustomerType.choices, blank=True, null=True)
     description = models.CharField(max_length=255, blank=True)
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     launch_date = models.DateField(null=True, blank=True)

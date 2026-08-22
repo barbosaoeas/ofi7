@@ -7,20 +7,20 @@
     <script src='https://cdn.tailwindcss.com'></script>
     <style>
       input[type='date'] {
-        color-scheme: light;
+        color-scheme: dark;
       }
       input[type='date']::-webkit-calendar-picker-indicator {
-        opacity: 0.7;
-        cursor: pointer;
+        filter: invert(78%) sepia(56%) saturate(750%) hue-rotate(2deg) brightness(105%) contrast(95%);
+        opacity: 1;
       }
     </style>
   </head>
-  <body class='bg-slate-50 text-slate-900 font-sans antialiased'>
+  <body class='bg-[#0D0D0D] text-[#F5F5F5] font-sans antialiased'>
     <div class='min-h-screen'>
       {% if user.is_authenticated and not user.is_superuser and user.role == 'VISUAL' and request.resolver_match.view_name == 'budgets:kanban_today' %}
       {% else %}
-        <header class='sticky top-0 z-50 border-b border-[#262626] bg-[#141414] text-[#F5F5F5]'>
-          <div class='mx-auto flex max-w-[96%] 2xl:max-w-[1700px] items-center justify-between px-4 py-4 gap-3 flex-wrap'>
+        <header class='sticky top-0 z-50 border-b border-[#262626] bg-[#141414]'>
+          <div class='mx-auto flex max-w-6xl items-center justify-between px-4 py-4'>
             <a href='{% url "core:public_index" %}' class='flex items-center gap-3 text-lg font-semibold tracking-wide'>
               {% if system_settings and system_settings.logo %}
                 <img src='{{ system_settings.logo.url }}' alt='Logo' class='h-9 w-9 rounded-md border border-[#262626] bg-[#0D0D0D] object-contain p-1' />
@@ -41,15 +41,10 @@
                   </a>
                 {% endif %}
 
-                {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' or role == 'ESTIMATOR' %}
+                {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' %}
                   <a href='{% url "budgets:finance_dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
                     Financeiro
                   </a>
-                  <a href='{% url "budgets:performance_dashboard" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
-                    Desempenho
-                  </a>
-                {% endif %}
-                {% if user.is_superuser or role != 'OPERATIONAL' and role != 'VISUAL' %}
                   <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
                     OS
                   </a>
@@ -72,9 +67,6 @@
                       Relatórios
                     </label>
                     <div class='absolute right-0 z-10 mt-2 hidden w-56 overflow-hidden rounded-md border border-[#262626] bg-[#1A1A1A] shadow-lg peer-checked:block'>
-                      <a href='{% url "budgets:report_daily_programming" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
-                        Programação diária
-                      </a>
                       <a href='{% url "budgets:commission_open_list" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
                         Comissões
                       </a>
@@ -132,29 +124,21 @@
                 <a href='{% url "users:login" %}' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 hover:border-[#D4AF37]'>
                   Entrar
                 </a>
+                <a href='{% url "users:register" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 font-semibold text-[#0D0D0D]'>
+                  Cadastre-se
+                </a>
               {% endif %}
             </nav>
           </div>
         </header>
       {% endif %}
 
-      <main class='{% block main_class %}mx-auto max-w-[96%] 2xl:max-w-[1700px] px-4 py-8{% endblock %}'>
+      <main class='{% block main_class %}mx-auto max-w-6xl px-4 py-8{% endblock %}'>
         {% if messages %}
-          <div id='app-messages' class='mb-6 space-y-2'>
+          <div class='mb-6 space-y-2'>
             {% for message in messages %}
-              <div
-                data-app-message='1'
-                class='rounded-lg border px-4 py-3 text-sm shadow-sm transition-opacity duration-300 {% if "success" in message.tags %}border-green-200 bg-green-50 text-green-800{% elif "error" in message.tags %}border-red-200 bg-red-50 text-red-800{% elif "warning" in message.tags %}border-amber-200 bg-amber-50 text-amber-800{% else %}border-sky-200 bg-sky-50 text-sky-800{% endif %}'
-                role='alert'
-              >
-                <div class='flex items-start justify-between gap-3'>
-                  <div class='font-medium'>
-                    {{ message }}
-                  </div>
-                  <button type='button' data-app-message-close='1' class='text-xs opacity-70 hover:opacity-100'>
-                    Fechar
-                  </button>
-                </div>
+              <div class='rounded-lg border border-[#262626] bg-[#1A1A1A] px-4 py-3 text-sm'>
+                {{ message }}
               </div>
             {% endfor %}
           </div>
@@ -219,27 +203,6 @@
         }
 
         function bind() {
-          document.querySelectorAll("[data-app-message='1']").forEach(function (el) {
-            if (el.getAttribute('data-bound') === '1') return;
-            el.setAttribute('data-bound', '1');
-            var closeBtn = el.querySelector("[data-app-message-close='1']");
-            if (closeBtn) {
-              closeBtn.addEventListener('click', function () {
-                el.classList.add('opacity-0');
-                window.setTimeout(function () {
-                  el.remove();
-                }, 250);
-              });
-            }
-            window.setTimeout(function () {
-              if (!document.body.contains(el)) return;
-              el.classList.add('opacity-0');
-              window.setTimeout(function () {
-                if (document.body.contains(el)) el.remove();
-              }, 250);
-            }, 5000);
-          });
-
           document.querySelectorAll('input[data-mask]').forEach(function (el) {
             el.addEventListener('input', function () {
               applyMaskToInput(el);

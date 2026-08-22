@@ -6,21 +6,7 @@
   <div class='mx-auto max-w-md rounded-xl border border-slate-200 bg-white p-6'>
     <h1 class='text-2xl font-semibold text-amber-700'>Entrar</h1>
 
-    <div id='recent-logins-section' class='mt-6 hidden'>
-      <div class='mb-3 flex items-center justify-between'>
-        <p class='text-sm font-medium text-amber-700'>Ultimos acessos neste computador</p>
-        <button
-          type='button'
-          id='clear-recent-logins'
-          class='text-xs text-slate-500 transition hover:text-slate-900'
-        >
-          Limpar
-        </button>
-      </div>
-      <div id='recent-logins-list' class='grid gap-3 sm:grid-cols-2'></div>
-    </div>
-
-    <form method='post' class='mt-6 space-y-4' id='login-form'>
+    <form method='post' class='mt-6 space-y-4'>
       {% csrf_token %}
 
       {% if form.non_field_errors %}
@@ -29,7 +15,7 @@
         </div>
       {% endif %}
 
-      <div id='login-email-block'>
+      <div>
         <label class='mb-1 block text-sm text-amber-700' for='{{ form.username.id_for_label }}'>{{ form.username.label }}</label>
         <input
           class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none'
@@ -39,34 +25,11 @@
           value='{{ form.username.value|default_if_none:"" }}'
           placeholder='seu@email.com'
           autocomplete='email'
-          list='recent-logins-datalist'
           required
         />
-        <datalist id='recent-logins-datalist'></datalist>
         {% if form.username.errors %}
           <div class='mt-1 text-sm text-amber-700'>{{ form.username.errors }}</div>
         {% endif %}
-      </div>
-
-      <div id='selected-login-card' class='hidden rounded-xl border border-[#D4AF37] bg-gradient-to-r from-[#1D1606] to-[#121212] px-4 py-3 shadow-lg shadow-sm'>
-        <div class='flex items-center justify-between gap-3'>
-          <div class='flex items-center gap-3'>
-            <div id='selected-login-avatar' class='flex h-11 w-11 items-center justify-center rounded-full border border-[#D4AF37]/40 bg-amber-50 text-sm font-bold text-amber-800'></div>
-            <div>
-              <div class='text-xs uppercase tracking-wide text-slate-500'>Entrando com</div>
-              <div id='selected-login-name' class='mt-1 text-sm font-semibold text-slate-900'></div>
-              <div id='selected-login-email' class='mt-1 text-xs text-slate-500'></div>
-              <div id='selected-login-last-used' class='mt-1 text-[11px] text-amber-700'></div>
-            </div>
-          </div>
-          <button
-            type='button'
-            id='change-selected-login'
-            class='rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 hover:border-[#D4AF37]'
-          >
-            Trocar
-          </button>
-        </div>
       </div>
 
       <div>
@@ -95,222 +58,4 @@
       <a class='text-amber-700 hover:underline' href='{% url "users:register" %}'>Cadastre-se</a>
     </p>
   </div>
-
-  <script>
-    (function () {
-      var storageKey = 'controle-oficina-recent-logins';
-      var maxItems = 4;
-      var section = document.getElementById('recent-logins-section');
-      var list = document.getElementById('recent-logins-list');
-      var clearButton = document.getElementById('clear-recent-logins');
-      var form = document.getElementById('login-form');
-      var emailBlock = document.getElementById('login-email-block');
-      var emailInput = document.getElementById('{{ form.username.id_for_label }}');
-      var passwordInput = document.getElementById('{{ form.password.id_for_label }}');
-      var datalist = document.getElementById('recent-logins-datalist');
-      var selectedLoginCard = document.getElementById('selected-login-card');
-      var selectedLoginAvatar = document.getElementById('selected-login-avatar');
-      var selectedLoginName = document.getElementById('selected-login-name');
-      var selectedLoginEmail = document.getElementById('selected-login-email');
-      var selectedLoginLastUsed = document.getElementById('selected-login-last-used');
-      var changeSelectedLoginButton = document.getElementById('change-selected-login');
-      var selectedEmail = '';
-
-      if (
-        !form || !emailInput || !passwordInput || !section || !list || !clearButton || !datalist ||
-        !emailBlock || !selectedLoginCard || !selectedLoginAvatar || !selectedLoginName || !selectedLoginEmail ||
-        !selectedLoginLastUsed || !changeSelectedLoginButton
-      ) {
-        return;
-      }
-
-      function getItems() {
-        try {
-          var raw = localStorage.getItem(storageKey);
-          var parsed = raw ? JSON.parse(raw) : [];
-          if (!Array.isArray(parsed)) return [];
-          return parsed.filter(function (item) {
-            return item && typeof item.email === 'string' && item.email.trim();
-          }).map(function (item) {
-            return {
-              email: item.email.trim().toLowerCase(),
-              lastUsedAt: Number(item.lastUsedAt || 0) || 0
-            };
-          });
-        } catch (error) {
-          return [];
-        }
-      }
-
-      function saveItems(items) {
-        localStorage.setItem(storageKey, JSON.stringify(items.slice(0, maxItems)));
-      }
-
-      function getLabel(email) {
-        var localPart = (email.split('@')[0] || '').replace(/[._-]+/g, ' ').trim();
-        if (!localPart) return 'Login recente';
-        return localPart.replace(/\b\w/g, function (char) {
-          return char.toUpperCase();
-        });
-      }
-
-      function getInitials(email) {
-        var parts = getLabel(email).split(/\s+/).filter(Boolean);
-        if (!parts.length) return 'LG';
-        if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-        return (parts[0][0] + parts[1][0]).toUpperCase();
-      }
-
-      function formatLastUsed(timestamp) {
-        if (!timestamp) return 'Sem registro de acesso';
-        var date = new Date(timestamp);
-        if (isNaN(date.getTime())) return 'Sem registro de acesso';
-        var now = new Date();
-        var sameDay = date.toDateString() === now.toDateString();
-        if (sameDay) {
-          return 'Ultimo acesso hoje as ' + date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        }
-        return 'Ultimo acesso em ' + date.toLocaleDateString('pt-BR') + ' as ' + date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      }
-
-      function setSelectedState(item) {
-        var hasSelected = !!(item && item.email);
-        selectedEmail = hasSelected ? item.email : '';
-        emailInput.value = hasSelected ? item.email : '';
-        emailInput.readOnly = hasSelected;
-        emailBlock.classList.toggle('hidden', hasSelected);
-        selectedLoginCard.classList.toggle('hidden', !hasSelected);
-
-        if (hasSelected) {
-          selectedLoginAvatar.textContent = getInitials(item.email);
-          selectedLoginName.textContent = getLabel(item.email);
-          selectedLoginEmail.textContent = item.email;
-          selectedLoginLastUsed.textContent = formatLastUsed(item.lastUsedAt);
-        } else {
-          selectedLoginAvatar.textContent = '';
-          selectedLoginName.textContent = '';
-          selectedLoginEmail.textContent = '';
-          selectedLoginLastUsed.textContent = '';
-        }
-      }
-
-      function selectLogin(email) {
-        var item = getItems().find(function (entry) {
-          return entry.email === email;
-        });
-        if (!item) {
-          item = { email: email };
-        }
-        setSelectedState(item);
-        emailInput.value = email;
-        passwordInput.focus();
-      }
-
-      function clearSelectedLogin() {
-        setSelectedState(null);
-        passwordInput.value = '';
-        emailInput.readOnly = false;
-        emailInput.focus();
-      }
-
-      function render() {
-        var items = getItems();
-        list.innerHTML = '';
-        datalist.innerHTML = '';
-
-        if (!items.length) {
-          section.classList.add('hidden');
-          return;
-        }
-
-        section.classList.remove('hidden');
-
-        items.forEach(function (item) {
-          var option = document.createElement('option');
-          option.value = item.email;
-          datalist.appendChild(option);
-
-          var button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left transition hover:border-[#D4AF37] hover:bg-white hover:shadow-lg hover:shadow-sm';
-          button.dataset.email = item.email;
-          button.addEventListener('click', function () {
-            selectLogin(item.email);
-            render();
-          });
-
-          var content = document.createElement('div');
-          content.className = 'flex items-center gap-3';
-
-          var avatar = document.createElement('div');
-          avatar.className = 'flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-[#1D1D1D] text-sm font-bold text-amber-800';
-          avatar.textContent = getInitials(item.email);
-
-          var textWrap = document.createElement('div');
-          textWrap.className = 'min-w-0 flex-1';
-
-          var title = document.createElement('div');
-          title.className = 'text-sm font-semibold text-slate-900';
-          title.textContent = getLabel(item.email);
-
-          var subtitle = document.createElement('div');
-          subtitle.className = 'mt-1 text-xs text-slate-500';
-          subtitle.textContent = item.email;
-
-          var helper = document.createElement('div');
-          helper.className = 'mt-2 text-[11px] text-amber-700';
-          helper.textContent = formatLastUsed(item.lastUsedAt);
-
-          textWrap.appendChild(title);
-          textWrap.appendChild(subtitle);
-          textWrap.appendChild(helper);
-          content.appendChild(avatar);
-          content.appendChild(textWrap);
-          button.appendChild(content);
-          list.appendChild(button);
-        });
-
-        Array.prototype.forEach.call(list.querySelectorAll('button[data-email]'), function (button) {
-          var isSelected = selectedEmail && button.dataset.email === selectedEmail;
-          button.classList.toggle('border-[#D4AF37]', !!isSelected);
-          button.classList.toggle('bg-white', !!isSelected);
-        });
-      }
-
-      clearButton.addEventListener('click', function () {
-        localStorage.removeItem(storageKey);
-        clearSelectedLogin();
-        render();
-        emailInput.focus();
-      });
-
-      changeSelectedLoginButton.addEventListener('click', function () {
-        clearSelectedLogin();
-        render();
-      });
-
-      form.addEventListener('submit', function () {
-        var email = (emailInput.value || '').trim().toLowerCase();
-        if (!email) return;
-
-        var items = getItems().filter(function (item) {
-          return item.email !== email;
-        });
-        items.unshift({ email: email, lastUsedAt: Date.now() });
-        saveItems(items);
-      });
-
-      var initialEmail = (emailInput.value || '').trim().toLowerCase();
-      if (initialEmail) {
-        selectLogin(initialEmail);
-      } else {
-        var recentItems = getItems();
-        if (recentItems.length) {
-          setSelectedState(recentItems[0]);
-          passwordInput.focus();
-        }
-      }
-      render();
-    })();
-  </script>
 {% endblock %}

@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('budgets', '0026_thirdpartyservice_workflow_fields'),
+        ('budgets', '0025_cashmovement_customer_launch_date'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

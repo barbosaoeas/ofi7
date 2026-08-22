@@ -38,40 +38,14 @@ class CustomAuthenticationForm(AuthenticationForm):
 
 
 class SimplePasswordChangeForm(PasswordChangeForm):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        user = getattr(self, 'user', None)
-        is_visual = (
-            user
-            and not getattr(user, 'is_superuser', False)
-            and getattr(user, 'role', None) == 'VISUAL'
-        )
-        if is_visual:
-            self.fields['new_password1'].help_text = (
-                'Perfil Visual (Smart TV). Senha pode ser simples para fácil digitação (ex: tv1234).'
-            )
-        else:
-            self.fields['new_password1'].help_text = (
-                'Use pelo menos 8 caracteres. Não pode ser só números, não pode ser igual ao e-mail e não pode ser uma senha comum (ex: 12345678, senha). '
-                '(Perfil Visual permite senha mais simples.)'
-            )
-
     def clean_new_password1(self):
         password = (self.cleaned_data.get('new_password1') or '').strip()
-        user = getattr(self, 'user', None)
-        is_visual = (
-            user
-            and not getattr(user, 'is_superuser', False)
-            and getattr(user, 'role', None) == 'VISUAL'
-        )
-        if is_visual:
-            if not password:
-                raise ValidationError('Informe uma senha para o perfil Visual.')
-            return password
-        if len(password) < 8:
-            raise ValidationError('Use pelo menos 8 caracteres na senha.')
-        if password.isdigit():
-            raise ValidationError('A senha não pode ser composta apenas por números. Adicione letras e/ou símbolos.')
+        if not password.isdigit():
+            raise ValidationError('Use somente numeros na senha.')
+        if len(password) < 6:
+            raise ValidationError('Use pelo menos 6 numeros.')
+        if len(password) > 8:
+            raise ValidationError('Use no maximo 8 numeros.')
         return password
 
 

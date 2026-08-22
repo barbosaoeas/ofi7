@@ -4,274 +4,69 @@
 
 {% block title %}OS #{{ work_order.budget.display_number }} | Controle Oficina{% endblock %}
 
-{% block head_extra %}
-  {% if os_status.should_auto_refresh %}
-    <noscript>
-      <meta http-equiv="refresh" content="6" />
-    </noscript>
-  {% endif %}
-{% endblock %}
-
 {% block main_class %}mx-auto max-w-7xl px-4 py-8{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
     <div>
-      <h1 class='text-2xl font-semibold text-amber-700'>
-        <a href='{% url "budgets:budget_update" work_order.budget.pk %}' class='hover:underline hover:decoration-[#D4AF37] hover:decoration-2 underline-offset-4 transition-colors' title='Editar orçamento rapidamente'>
-          OS #{{ work_order.budget.display_number }}
-        </a>
-        <a href='{% url "budgets:budget_update" work_order.budget.pk %}' class='ml-2 text-xs font-normal text-slate-500 hover:text-[#D4AF37]'>✏️ editar orçamento</a>
-      </h1>
-      <p class='mt-1 text-sm text-slate-500'>Criada em {{ work_order.created_at|date:'d/m/Y H:i' }}</p>
+      <h1 class='text-2xl font-semibold text-[#D4AF37]'>OS #{{ work_order.budget.display_number }}</h1>
+      <p class='mt-1 text-sm text-[#A3A3A3]'>Criada em {{ work_order.created_at|date:'d/m/Y H:i' }}</p>
     </div>
     <div class='flex flex-wrap gap-3'>
-      <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
         Abrir Orçamento
       </a>
-      <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 text-slate-800 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:workorder_list" %}' class='rounded-md border border-[#404040] bg-[#262626] px-4 py-2 hover:border-[#D4AF37]'>
         Voltar
       </a>
     </div>
   </div>
 
-  {% with os=os_status %}
-    {% if os.state_code == 'B' %}
-      <div class='mt-6 rounded-xl border-2 border-red-500 bg-red-50 p-6 shadow-sm'>
-        <div class='flex flex-wrap items-center justify-between gap-3'>
-          <div class='flex items-center gap-3'>
-            <span class='text-3xl'>⛔</span>
-            <div>
-              <div class='text-lg font-bold text-red-800'>
-                Aguardando Peças — {{ os.blocked_parts|length }} peça{{ os.blocked_parts|length|pluralize }} da oficina pendente{{ os.blocked_parts|length|pluralize }}
-              </div>
-              <div class='mt-1 text-sm text-red-700'>
-                Programação e início de novas tarefas estão bloqueados até as peças chegarem ou o gerente liberar o bypass.
-              </div>
-            </div>
-          </div>
-          <a href='{% url "budgets:budget_detail" work_order.budget.pk %}' class='rounded-md border border-red-400 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100'>
-            🔓 Abrir Orçamento (liberar bypass)
-          </a>
-        </div>
-        <ul class='mt-4 space-y-2 text-sm text-red-800'>
-          {% for part in os.blocked_parts %}
-            <li class='flex items-start gap-2'>
-              <span>•</span>
-              <span><strong>{{ part.name }}</strong>{% if part.expected_arrival_date %} — Previsão: {{ part.expected_arrival_date|date:'d/m/Y' }}{% else %} — Sem previsão de chegada{% endif %}</span>
-            </li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% elif os.state_code == 'L' %}
-      <div class='mt-6 rounded-xl border-2 border-orange-400 bg-orange-50 p-6 shadow-sm'>
-        <div class='flex flex-wrap items-center justify-between gap-3'>
-          <div class='flex items-center gap-3'>
-            <span class='text-3xl'>🔓</span>
-            <div>
-              <div class='text-lg font-bold text-orange-800'>
-                Liberado sem peças (autorizado pelo gerente)
-              </div>
-              <div class='mt-1 text-sm text-orange-700'>
-                {{ os.blocked_parts|length }} peça{{ os.blocked_parts|length|pluralize }} ainda pendente{{ os.blocked_parts|length|pluralize }} — colaboradores podem trabalhar.
-              </div>
-            </div>
-          </div>
-        </div>
-        <ul class='mt-4 space-y-1 text-xs text-orange-800 opacity-90'>
-          {% for part in os.blocked_parts %}
-            <li>• {{ part.name }}{% if part.expected_arrival_date %} (prev. {{ part.expected_arrival_date|date:'d/m/Y' }}){% endif %}</li>
-          {% endfor %}
-        </ul>
-      </div>
-    {% elif os.state_code == 'C' %}
-      <div class='mt-6 rounded-xl border-2 border-indigo-400 bg-indigo-50 p-5 shadow-sm'>
-        <div class='flex items-center gap-3'>
-          <span class='text-3xl'>🏁</span>
-          <div>
-            <div class='text-lg font-bold text-indigo-800'>Todas as tarefas concluídas</div>
-            <div class='mt-1 text-sm text-indigo-700'>{{ os.done_tasks }}/{{ os.total_tasks }} tarefas finalizadas.</div>
-          </div>
-        </div>
-      </div>
-    {% elif os.state_code == 'N' %}
-      <div class='mt-6 rounded-xl border-2 border-slate-300 bg-slate-50 p-5 shadow-sm'>
-        <div class='flex items-center gap-3'>
-          <span class='text-3xl'>⚪</span>
-          <div>
-            <div class='text-lg font-bold text-slate-800'>Não iniciado</div>
-            <div class='mt-1 text-sm text-slate-700'>{{ os.total_tasks }} tarefa{{ os.total_tasks|pluralize }} aguardando início{% if os.active_task %} — Próxima atividade: <strong>{{ os.active_task.get_activity_display }}</strong>{% if os.active_task.collaborator %} ({{ os.active_task.collaborator.name }}){% endif %}{% endif %}</div>
-          </div>
-        </div>
-      </div>
-    {% elif os.state_code == 'P' and os.active_task %}
-      <div class='mt-6 rounded-xl border-2 border-amber-400 bg-amber-50 p-5 shadow-sm'>
-        <div class='flex flex-wrap items-center justify-between gap-3'>
-          <div class='flex items-center gap-3'>
-            <span class='text-3xl'>🟡</span>
-            <div>
-              <div class='text-lg font-bold text-amber-900'>
-                Pausado · <span class='uppercase tracking-wide'>{{ os.active_task.get_activity_display }}</span>
-                {% if os.active_task.collaborator %}· {{ os.active_task.collaborator.name }}{% endif %}
-              </div>
-              <div class='mt-1 text-sm text-amber-800'>
-                ⏱️ Tempo gasto: <strong>{{ active_elapsed_hms }}</strong>{% if os.active_task.last_started_at %} · última retomada: {{ os.active_task.last_started_at|date:'d/m/Y H:i' }}{% endif %}
-              </div>
-            </div>
-          </div>
-          <div class='text-right'>
-            <div class='text-xs uppercase tracking-wide text-amber-700'>Progresso OS</div>
-            <div class='text-lg font-semibold text-amber-900'>{{ os.done_tasks }}/{{ os.total_tasks }} ({{ os.progress_percent }}%)</div>
-          </div>
-        </div>
-      </div>
-    {% elif os.state_code == 'A' and os.active_task %}
-      <div class='mt-6 rounded-xl border-2 border-emerald-500 bg-emerald-50 p-5 shadow-sm'>
-        <div class='flex flex-wrap items-center justify-between gap-3'>
-          <div class='flex items-center gap-3'>
-            <span class='text-3xl'>🟢</span>
-            <div>
-              <div class='text-lg font-bold text-emerald-900'>
-                Em andamento · <span class='uppercase tracking-wide'>{{ os.active_task.get_activity_display }}</span>
-                {% if os.active_task.collaborator %}· {{ os.active_task.collaborator.name }}{% endif %}
-              </div>
-              <div class='mt-1 text-sm text-emerald-800'>
-                ⏱️ Tempo gasto: <strong>{{ active_elapsed_hms }}</strong>{% if os.active_task.last_started_at %} · Início atual: {{ os.active_task.last_started_at|date:'d/m/Y H:i' }}{% endif %}
-              </div>
-            </div>
-          </div>
-          <div class='text-right'>
-            <div class='text-xs uppercase tracking-wide text-emerald-700'>Progresso OS</div>
-            <div class='text-lg font-semibold text-emerald-900'>{{ os.done_tasks }}/{{ os.total_tasks }} ({{ os.progress_percent }}%)</div>
-          </div>
-        </div>
-      </div>
-    {% endif %}
-
-    {% if os.total_tasks > 0 %}
-      <div class='mt-4'>
-        <div class='flex items-center justify-between text-xs text-slate-600 mb-1'>
-          <span>Progresso total</span>
-          <span>{{ os.done_tasks }}/{{ os.total_tasks }} tarefas concluídas · {{ os.progress_percent }}%</span>
-        </div>
-        <div class='h-2 w-full rounded-full bg-slate-200 overflow-hidden'>
-          <div class='h-full rounded-full {% if os.state_code == "C" %}bg-indigo-600{% elif os.state_code == "B" %}bg-red-500{% elif os.state_code == "L" %}bg-orange-500{% else %}bg-emerald-500{% endif %}' style='width: {{ os.progress_percent }}%'></div>
-        </div>
-      </div>
-    {% endif %}
-  {% endwith %}
-
   <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-3'>
-    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:col-span-2'>
-      <h2 class='text-lg font-semibold text-amber-700'>Dados</h2>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6 md:col-span-2'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Dados</h2>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm md:grid-cols-3'>
         <div>
-          <dt class='text-slate-500'>Status</dt>
-          <dd class='mt-1 flex flex-wrap items-center gap-2'>
-            {% with os=os_status %}
-              {% if os.state_code == 'B' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-red-500 bg-red-100 px-2 py-1 text-xs font-bold text-red-900' title='Bloqueada: faltam peças'>❚ B</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-red-700'>⛔ Aguardando peças</strong></span>
-              {% elif os.state_code == 'L' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-orange-400 bg-orange-100 px-2 py-1 text-xs font-bold text-orange-900' title='Liberado sem peças'>❚ L</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-orange-700'>🔓 Lib. sem peças</strong></span>
-              {% elif os.state_code == 'A' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-emerald-500 bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-900' title='Em andamento'>❚ A</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-emerald-700'>Em andamento</strong> ({{ os.done_tasks }}/{{ os.total_tasks }})</span>
-              {% elif os.state_code == 'P' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-bold text-amber-900' title='Pausado'>❚ P</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-amber-700'>Pausado</strong></span>
-              {% elif os.state_code == 'N' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-slate-400 bg-slate-100 px-2 py-1 text-xs font-bold text-slate-800' title='Não iniciado'>❚ N</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-slate-700'>Não iniciado</strong></span>
-              {% elif os.state_code == 'C' %}
-                <span class='inline-flex items-center gap-1 rounded-md border border-indigo-500 bg-indigo-100 px-2 py-1 text-xs font-bold text-indigo-900' title='Concluída'>❚ C</span>
-                <span class='text-slate-900'>{{ work_order.get_status_display }} · <strong class='text-indigo-700'>Concluída 100%</strong></span>
-              {% else %}
-                <span class='text-slate-900'>{{ work_order.get_status_display }}</span>
-              {% endif %}
-            {% endwith %}
-          </dd>
+          <dt class='text-[#A3A3A3]'>Status</dt>
+          <dd class='mt-1'>{{ work_order.get_status_display }}</dd>
         </div>
         <div>
-          <dt class='text-slate-500'>Tipo cliente</dt>
-          <dd class='mt-1'>
-            {% with ct=work_order.budget.customer_type %}
-              {% if ct == 'INSURER' %}
-                <span class='rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs text-sky-800'>Seguradora</span>
-              {% elif ct == 'COMPANY' %}
-                <span class='rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-800'>Empresa</span>
-              {% elif ct == 'PARTICULAR' %}
-                <span class='rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-800'>Particular</span>
-              {% else %}
-                <span class='rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800'>Não classificado</span>
-              {% endif %}
-            {% endwith %}
-          </dd>
+          <dt class='text-[#A3A3A3]'>Cliente</dt>
+          <dd class='mt-1'>{{ work_order.budget.customer.name }}</dd>
         </div>
         <div>
-          <dt class='text-slate-500'>Cliente</dt>
-          <dd class='mt-1 text-slate-900'>{{ work_order.budget.customer.name }}</dd>
-        </div>
-        <div>
-          <dt class='text-slate-500'>Veículo</dt>
-          <dd class='mt-1 text-slate-900'>{{ work_order.budget.vehicle.plate }}</dd>
+          <dt class='text-[#A3A3A3]'>Veículo</dt>
+          <dd class='mt-1'>{{ work_order.budget.vehicle.plate }}</dd>
         </div>
       </dl>
       <div class='mt-6'>
-        <div class='text-sm text-slate-500'>Atualizada</div>
-        <div class='mt-1 text-sm text-slate-700'>{{ work_order.updated_at|date:'d/m/Y H:i' }}</div>
+        <div class='text-sm text-[#A3A3A3]'>Atualizada</div>
+        <div class='mt-1 text-sm'>{{ work_order.updated_at|date:'d/m/Y H:i' }}</div>
       </div>
     </div>
 
-    <div class='rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
-      <h2 class='text-lg font-semibold text-amber-700'>Foto</h2>
+    <div class='rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Foto</h2>
       <div class='mt-4'>
         {% if work_order.vehicle_image_url %}
-          <a href='{{ work_order.vehicle_image_url }}' target='_blank' class='block overflow-hidden rounded-lg border border-slate-200 hover:border-[#D4AF37]'>
+          <a href='{{ work_order.vehicle_image_url }}' target='_blank' class='block overflow-hidden rounded-lg border border-[#262626] hover:border-[#D4AF37]'>
             <img src='{{ work_order.vehicle_image_url }}' alt='Veículo' class='h-48 w-full object-cover' />
           </a>
         {% else %}
-          <div class='rounded-lg border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500'>Sem imagem</div>
+          <div class='rounded-lg border border-[#262626] bg-[#141414] px-4 py-6 text-sm text-[#A3A3A3]'>Sem imagem</div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  {% if os_status.should_auto_refresh %}
-    <div data-auto-refresh-banner='1' class='mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-300 bg-sky-50 px-4 py-3 shadow-sm no-print'>
-      <div class='flex flex-wrap items-center gap-3'>
-        <span class='text-[20px] leading-none'>🔄</span>
-        <div>
-          <div class='text-sm font-semibold text-sky-900'>
-            Atualizando automaticamente em
-            <span data-countdown='1' class='font-mono text-base font-bold text-sky-700'>6</span>
-            s — (Lotes / execução em andamento)
-          </div>
-          <div class='text-xs text-sky-700'>
-            Status das tarefas do kanban (Leo mobile) aparecem aqui em tempo real.
-          </div>
-        </div>
-      </div>
-      <div class='flex gap-2'>
-        <button type='button' data-toggle-refresh='1' class='rounded-md border border-sky-400 bg-white px-3 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-100'>
-          ⏸ Pausar auto-refresh
-        </button>
-        <button type='button' onclick='location.reload()' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100'>
-          🔃 Atualizar agora
-        </button>
-      </div>
-    </div>
-  {% endif %}
-
-  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
+  <div class='mt-6 rounded-xl border border-[#262626] bg-[#1A1A1A] p-6'>
     <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-amber-700'>Tarefas</h2>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Tarefas</h2>
       <div class='flex items-center gap-3 no-print'>
         <form method='get' class='flex items-end gap-2'>
           <div>
-            <label class='block text-xs text-slate-500' for='id_task_collaborator'>Colaborador</label>
-            <select id='id_task_collaborator' name='collaborator_id' class='mt-1 w-56 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' onchange='this.form.submit()'>
+            <label class='block text-xs text-[#A3A3A3]' for='id_task_collaborator'>Colaborador</label>
+            <select id='id_task_collaborator' name='collaborator_id' class='mt-1 w-56 rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' onchange='this.form.submit()'>
               <option value=''>Todos</option>
               {% for c in collaborators_operational %}
                 <option value='{{ c.id }}' {% if selected_collaborator and selected_collaborator.id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -279,170 +74,37 @@
             </select>
           </div>
         </form>
-        <button type='button' onclick='window.print()' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]'>
+        <button type='button' onclick='window.print()' class='rounded-md border border-[#404040] bg-[#262626] px-3 py-2 text-sm hover:border-[#D4AF37]'>
           Imprimir
         </button>
       </div>
     </div>
-    <div class='mt-1 text-sm text-slate-500'>
+    <div class='mt-1 text-sm text-[#A3A3A3]'>
       {{ tasks_open_count }} abertas · {{ tasks_done_count }} concluídas{% if selected_collaborator %} · {{ selected_collaborator.name }}{% endif %}
     </div>
 
-    <div data-bulk-panel='1' class='mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 no-print {% if os_status.is_blocked %}opacity-70{% endif %}'>
-      <form method='post' action='{% url "budgets:workorder_task_bulk_assign" work_order.pk %}' class='flex flex-wrap items-end gap-3'>
-        {% csrf_token %}
-        <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-        <input type='hidden' name='task_ids' value='' data-bulk-task-ids='1' />
-        {% if os_status.is_blocked %}<p class='w-full text-xs font-semibold text-red-700'>⚠️ Programação em massa desabilitada: OS bloqueada por peças pendentes.</p>{% endif %}
-        <div class='min-w-[150px]'>
-          <div class='text-xs uppercase tracking-wide text-slate-500'>Selecionadas</div>
-          <div class='mt-1 text-sm text-slate-900'><span data-bulk-selected-count='1'>0</span> tarefa(s)</div>
-        </div>
-        <div class='min-w-[240px]'>
-          <label class='block text-xs uppercase tracking-wide text-slate-500' for='id_bulk_collaborator_id'>Atribuir para</label>
-          <select id='id_bulk_collaborator_id' name='bulk_collaborator_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' required {% if os_status.is_blocked %}disabled{% endif %}>
-            <option value=''>Selecione</option>
-            {% for c in collaborators_operational %}
-              <option value='{{ c.id }}'>{{ c.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class='flex flex-wrap gap-2'>
-          <button type='button' data-bulk-select-all='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]' {% if os_status.is_blocked %}disabled{% endif %}>
-            Selecionar todas
-          </button>
-          <button type='button' data-bulk-clear='1' class='rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:border-[#D4AF37]' {% if os_status.is_blocked %}disabled{% endif %}>
-            Limpar
-          </button>
-          <button type='submit' data-bulk-submit='1' disabled class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] disabled:cursor-not-allowed disabled:opacity-50' {% if os_status.is_blocked %}disabled{% endif %}>
-            Aplicar nos marcados
-          </button>
-        </div>
-      </form>
-
-      <form method='post' action='{% url "budgets:workorder_batch_create" work_order.pk %}' data-batch-create-form='1' class='mt-3 flex flex-wrap items-end gap-3 border-t border-slate-200 pt-3'>
-        {% csrf_token %}
-        <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-        <input type='hidden' name='task_ids' value='' data-batch-create-task-ids='1' />
-        <div class='min-w-[260px]'>
-          <div class='text-xs uppercase tracking-wide text-indigo-600 font-bold'>🍱 AÇÃO EM LOTE</div>
-          <div class='mt-1 text-xs text-slate-600'>Marque 2+ tarefas da MESMA etapa + MESMO colaborador e crie o lote (2 cliques para iniciar/finalizar tudo).</div>
-        </div>
-        <button type='submit' data-batch-create-btn='1' disabled class='rounded-md bg-gradient-to-r from-indigo-500 to-indigo-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40 hover:brightness-110' {% if os_status.is_blocked %}disabled{% endif %}>
-          🔗 Criar Lote das Selecionadas
-        </button>
-      </form>
-    </div>
-
-    {% if work_order.batches.all %}
-      <div class='mt-4 space-y-3'>
-        {% for batch in work_order.batches.all %}
-          {% with batch_tasks=batch.tasks.all|dictsort:'order' batch_count=batch.tasks_count batch_done=batch.tasks_done_count batch_total_h=batch.total_planned_hours batch_actual_h=batch.total_actual_hours batch_collab=batch.collaborator %}
-            <div class='rounded-lg border border-indigo-200 bg-gradient-to-r from-indigo-50 to-indigo-50/30 p-4 shadow-sm'>
-              <div class='flex flex-wrap items-center justify-between gap-3'>
-                <div>
-                  <div class='flex flex-wrap items-center gap-2'>
-                    <span class='inline-flex items-center gap-1 rounded-md border border-indigo-500 bg-indigo-100 px-2 py-1 text-xs font-bold text-indigo-900'>📦 LOTE #{{ batch.id }}</span>
-                    <span class='text-sm font-semibold text-indigo-900'>
-                      {{ batch.get_activity_display }} · {% if batch_collab %}{{ batch_collab.name }}{% else %}Sem colaborador{% endif %}
-                    </span>
-                    <span class='rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700'>{{ batch_done }}/{{ batch_count }} peças</span>
-                    <span class='rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700'>Prev: {{ batch_total_h|floatformat:2 }}h</span>
-                    {% if batch_actual_h > 0 %}
-                      <span class='rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800'>Real: {{ batch_actual_h|floatformat:2 }}h</span>
-                    {% endif %}
-                    <span class='rounded-md px-2 py-1 text-xs font-semibold {% if batch.status == "DONE" %}bg-blue-100 text-blue-900 border border-blue-500{% elif batch.status == "RUNNING" %}bg-emerald-100 text-emerald-900 border border-emerald-500{% elif batch.status == "PAUSED" %}bg-amber-100 text-amber-900 border border-amber-500{% else %}bg-slate-100 text-slate-700 border border-slate-300{% endif %}'>
-                      {% if batch.status == "DONE" %}✅ Concluído{% elif batch.status == "RUNNING" %}🟩 Em andamento{% elif batch.status == "PAUSED" %}🟨 Pausado{% else %}⚪ Agendado{% endif %}
-                    </span>
-                  </div>
-                  {% if batch_count > 0 %}
-                    <div class='mt-3'>
-                      <div class='h-2 w-full overflow-hidden rounded-full bg-indigo-100'>
-                        <div
-                          class='h-full rounded-full bg-gradient-to-r from-indigo-500 to-indigo-700 transition-all'
-                          style='width: {% widthratio batch_done batch_count 100 %}%'
-                        ></div>
-                      </div>
-                      <div class='mt-1 text-[11px] text-indigo-700 font-semibold'>
-                        Progresso do lote: {% widthratio batch_done batch_count 100 %}%
-                      </div>
-                    </div>
-                  {% endif %}
-                </div>
-              </div>
-              <div class='mt-3 max-h-52 overflow-y-auto rounded-md border border-indigo-100 bg-white/60 p-2'>
-                <div class='grid grid-cols-1 gap-1.5 md:grid-cols-2'>
-                  {% for bt in batch_tasks %}
-                    <div class='flex items-center justify-between gap-2 rounded px-2 py-1.5 text-[11px]
-                                {% if bt.status == "DONE" %}bg-emerald-50 border border-emerald-100 text-emerald-900
-                                {% elif bt.status == "RUNNING" %}bg-emerald-50 border border-emerald-300 text-emerald-900
-                                {% elif bt.status == "PAUSED" %}bg-amber-50 border border-amber-200 text-amber-900
-                                {% else %}bg-slate-50 border border-slate-200 text-slate-700{% endif %}'>
-                      <div class='min-w-0 flex-1 truncate'>
-                        <span class='mr-1.5 text-[12px]'>
-                          {% if bt.status == "DONE" %}✅
-                          {% elif bt.status == "RUNNING" %}🟩
-                          {% elif bt.status == "PAUSED" %}🟨
-                          {% else %}⚪{% endif %}
-                        </span>
-                        <span class='truncate'>{{ bt.description|default:"-" }}</span>
-                      </div>
-                      <div class='shrink-0 text-right'>
-                        <span class='rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide
-                                     {% if bt.status == "DONE" %}border-emerald-600 bg-emerald-600 text-white
-                                     {% elif bt.status == "RUNNING" %}border-emerald-500 bg-emerald-500 text-white
-                                     {% elif bt.status == "PAUSED" %}border-amber-500 bg-amber-500 text-[#1a1a1a]
-                                     {% else %}border-slate-400 bg-slate-400 text-white{% endif %}'>
-                          {% if bt.status == "DONE" %}OK{% elif bt.status == "RUNNING" %}AND{% elif bt.status == "PAUSED" %}PAU{% else %}AG{% endif %}
-                        </span>
-                        <div class='mt-0.5 font-mono text-[9px] text-slate-600'>
-                          {% if bt.planned_hours and bt.planned_hours > 0 %}{{ bt.planned_hours|floatformat:2 }}h{% endif %}
-                        </div>
-                      </div>
-                    </div>
-                  {% endfor %}
-                </div>
-              </div>
-            </div>
-          {% endwith %}
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
+    <div class='mt-4 overflow-hidden rounded-lg border border-[#262626]'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-slate-50 text-amber-700'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
           <tr>
-            <th class='px-4 py-3 font-semibold bulk-select-col no-print'>
-              <input type='checkbox' data-bulk-check-all='1' class='h-4 w-4 rounded border border-slate-300 bg-white' {% if os_status.is_blocked %}disabled{% endif %} />
-            </th>
             <th class='px-4 py-3 font-semibold'>Atividade</th>
             <th class='px-4 py-3 font-semibold'>Descrição</th>
             <th class='px-4 py-3 font-semibold'>Colaborador</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-40'>Data</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-28'>Horas (prev.)</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Valor (R$)</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-36'>Horas (real)</th>
+            <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Horas (real)</th>
             <th class='px-4 py-3 font-semibold whitespace-nowrap w-44'>Status</th>
             <th class='px-4 py-3 font-semibold'></th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-slate-200'>
-          {% for t, t_elapsed, t_elapsed_hms, t_status_label in task_open_summaries %}
-            <tr class='hover:bg-slate-50' data-task-row='1'>
-              <td class='px-4 py-3 bulk-select-col no-print'>
-                <input
-                  type='checkbox'
-                  value='{{ t.id }}'
-                  data-bulk-task-checkbox='1'
-                  class='h-4 w-4 rounded border border-slate-300 bg-white disabled:cursor-not-allowed disabled:opacity-40'
-                  {% if os_status.is_blocked %}disabled{% endif %}
-                />
-              </td>
-              <td class='px-4 py-3 text-slate-900' data-task-activity='{{ t.activity }}'>{{ t.get_activity_display }}</td>
-              <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
-              <td class='px-4 py-3' data-task-collaborator='1'>
-                <select form='task-{{ t.id }}' name='collaborator_id' data-task-collaborator-select='{{ t.id }}' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked %}disabled{% endif %}>
+        <tbody class='divide-y divide-[#262626]'>
+          {% for t in tasks_open %}
+            <tr class='hover:bg-[#121212]' data-task-row='1'>
+              <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3'>
+                <select form='task-{{ t.id }}' name='collaborator_id' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
                   <option value=''>-</option>
                   {% for c in collaborators_operational %}
                     <option value='{{ c.id }}' {% if t.collaborator_id == c.id %}selected{% endif %}>{{ c.name }}</option>
@@ -454,12 +116,11 @@
                   form='task-{{ t.id }}'
                   name='scheduled_date'
                   type='date'
-                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
+                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
                   value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}'
-                  {% if os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
-              <td class='px-4 py-3 text-slate-600'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
               <td class='px-4 py-3'>
                 <input
                   form='task-{{ t.id }}'
@@ -467,9 +128,8 @@
                   type='number'
                   step='0.01'
                   min='0'
-                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
+                  class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'
                   value='{{ t.planned_amount|unlocalize }}'
-                  {% if os_status.is_blocked %}disabled{% endif %}
                 />
               </td>
               <td class='px-4 py-3'>
@@ -481,28 +141,24 @@
                     step='0.01'
                     min='0'
                     data-planned-hours='{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|unlocalize }}{% else %}0{% endif %}'
-                    class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 actual-hours-input'
+                    class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5] actual-hours-input'
                     value='{{ t.actual_hours|unlocalize }}'
                     {% if t.status == 'RUNNING' %}disabled{% endif %}
                   />
-                  {% if t_elapsed > 0 %}
-                    <div class='text-xs text-slate-600'>⏱️ {{ t_elapsed_hms }} (contábil)</div>
-                  {% endif %}
-                  <div class='text-xs text-red-700 hidden' data-overrun-text='1'></div>
+                  <div class='text-xs text-[#FECACA] hidden' data-overrun-text='1'></div>
                 </div>
               </td>
               <td class='px-4 py-3'>
-                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' {% if os_status.is_blocked and t.status != 'RUNNING' and t.status != 'PAUSED' %}disabled{% endif %} title='{% if os_status.is_blocked and t.status == "SCHEDULED" %}Bloqueado: só inicia após liberação das peças.{% endif %}'>
+                <select form='task-{{ t.id }}' name='status' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
                   {% for value, label in task_status_choices %}
-                    <option value='{{ value }}' {% if t.status == value %}selected{% endif %}>{% if value == 'SCHEDULED' %}S · Não iniciado{% elif value == 'RUNNING' %}R · Em andamento{% elif value == 'PAUSED' %}P · Pausado{% elif value == 'DONE' %}C · Concluído{% else %}{{ label }}{% endif %}</option>
+                    <option value='{{ value }}' {% if t.status == value %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
                 </select>
-                <div class='mt-1 text-xs text-slate-500'>{{ t_status_label }}</div>
               </td>
               <td class='px-4 py-3 text-right'>
                 <form id='task-{{ t.id }}' method='post' action='{% url "budgets:workorder_task_schedule" t.id %}'>
                   {% csrf_token %}
-                  <button type='submit' data-save-task='1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D] {% if os_status.is_blocked %}disabled:opacity-50 disabled:cursor-not-allowed{% endif %}' {% if os_status.is_blocked %}disabled{% endif %} title='{% if os_status.is_blocked %}Bloqueado: OS sem liberação das peças.{% endif %}'>
+                  <button type='submit' data-save-task='1' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
                     Salvar
                   </button>
                 </form>
@@ -510,30 +166,29 @@
             </tr>
           {% empty %}
             <tr>
-              <td class='px-4 py-6 text-slate-500' colspan='10'>Nenhuma tarefa cadastrada.</td>
+              <td class='px-4 py-6 text-[#A3A3A3]' colspan='9'>Nenhuma tarefa cadastrada.</td>
             </tr>
           {% endfor %}
 
           {% if tasks_done_count and tasks_done_count > 0 %}
-            <tr class='bg-slate-50'>
-              <td class='px-4 py-3 text-sm font-semibold text-amber-700' colspan='10'>Concluídas ({{ tasks_done_count }})</td>
+            <tr class='bg-[#141414]'>
+              <td class='px-4 py-3 text-sm font-semibold text-[#D4AF37]' colspan='9'>Concluídas ({{ tasks_done_count }})</td>
             </tr>
             {% for t in tasks_done %}
-              <tr class='hover:bg-slate-50 opacity-80'>
-                <td class='px-4 py-3 bulk-select-col no-print'></td>
-                <td class='px-4 py-3 text-slate-900'>{{ t.get_activity_display }}</td>
-                <td class='px-4 py-3 text-slate-600'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
+              <tr class='hover:bg-[#121212] opacity-70'>
+                <td class='px-4 py-3'>{{ t.get_activity_display }}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.description %}{{ t.description }}{% else %}-{% endif %}</td>
                 <td class='px-4 py-3'>
-                  <select disabled class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
+                  <select disabled class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
                     <option>{% if t.collaborator %}{{ t.collaborator.name }}{% else %}-{% endif %}</option>
                   </select>
                 </td>
                 <td class='px-4 py-3'>
-                  <input disabled type='date' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}' />
+                  <input disabled type='date' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' value='{% if t.scheduled_date %}{{ t.scheduled_date|date:"Y-m-d" }}{% endif %}' />
                 </td>
-                <td class='px-4 py-3 text-slate-600'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
+                <td class='px-4 py-3 text-[#A3A3A3]'>{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|floatformat:2 }}{% else %}-{% endif %}</td>
                 <td class='px-4 py-3'>
-                  <input disabled type='number' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' value='{{ t.planned_amount|unlocalize }}' />
+                  <input disabled type='number' class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]' value='{{ t.planned_amount|unlocalize }}' />
                 </td>
                 <td class='px-4 py-3'>
                   <div class='space-y-1'>
@@ -544,183 +199,19 @@
                       step='0.01'
                       min='0'
                       data-planned-hours='{% if t.planned_hours and t.planned_hours > 0 %}{{ t.planned_hours|unlocalize }}{% else %}0{% endif %}'
-                      class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 actual-hours-input'
+                      class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5] actual-hours-input'
                       value='{{ t.actual_hours|unlocalize }}'
                     />
-                    <div class='text-xs text-red-700 hidden' data-overrun-text='1'></div>
+                    <div class='text-xs text-[#FECACA] hidden' data-overrun-text='1'></div>
                   </div>
                 </td>
                 <td class='px-4 py-3'>
-                  <select disabled class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
+                  <select disabled class='w-full rounded-md border border-[#404040] bg-[#0D0D0D] px-3 py-2 text-sm text-[#F5F5F5]'>
                     <option>Concluído</option>
                   </select>
                 </td>
                 <td class='px-4 py-3 text-right'>
-                  <span class='inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-600'>Concluída</span>
-                </td>
-              </tr>
-            {% endfor %}
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class='mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm'>
-    <div class='flex items-center justify-between'>
-      <h2 class='text-lg font-semibold text-amber-700'>Serviços de Terceiros</h2>
-      <div class='text-sm text-slate-500'>
-        {{ third_party_open_count }} abertos · {{ third_party_done_count }} concluídos
-      </div>
-    </div>
-
-    <form class='mt-4 grid grid-cols-1 gap-3 md:grid-cols-12' method='post' action='{% url "budgets:third_party_create" work_order.budget.pk %}'>
-      {% csrf_token %}
-      <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-      <div class='md:col-span-4'>
-        <label class='block text-sm text-slate-500' for='id_os_third_party_description'>Descrição</label>
-        <input id='id_os_third_party_description' name='description' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' placeholder='Ex.: alinhamento externo' required />
-      </div>
-      <div class='md:col-span-3'>
-        <label class='block text-sm text-slate-500' for='id_os_third_party_supplier'>Fornecedor</label>
-        <select id='id_os_third_party_supplier' name='supplier_id' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
-          <option value=''>-</option>
-          {% for supplier in suppliers_active %}
-            <option value='{{ supplier.id }}'>{{ supplier.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class='md:col-span-2'>
-        <label class='block text-sm text-slate-500' for='id_os_third_party_date'>Data</label>
-        <input id='id_os_third_party_date' name='scheduled_date' type='date' value='{{ today|date:"Y-m-d" }}' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' />
-      </div>
-      <div class='md:col-span-2'>
-        <label class='block text-sm text-slate-500' for='id_os_third_party_amount'>Valor (R$)</label>
-        <input id='id_os_third_party_amount' name='amount' type='text' class='mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900' placeholder='0,00' required />
-      </div>
-      <div class='md:col-span-1 flex items-end'>
-        <label class='flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800'>
-          <input type='checkbox' name='is_shop_service' class='h-4 w-4 rounded border border-slate-300 bg-white' />
-          Oficina
-        </label>
-      </div>
-      <div class='md:col-span-12 md:flex md:justify-end'>
-        <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 text-sm font-semibold text-[#0D0D0D]'>
-          Adicionar
-        </button>
-      </div>
-    </form>
-
-    <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
-      <table class='w-full text-left text-sm'>
-        <thead class='bg-slate-50 text-amber-700'>
-          <tr>
-            <th class='px-4 py-3 font-semibold'>Descrição</th>
-            <th class='px-4 py-3 font-semibold'>Fornecedor</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-40'>Data</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-32'>Valor (R$)</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-28'>Oficina</th>
-            <th class='px-4 py-3 font-semibold whitespace-nowrap w-44'>Status</th>
-            <th class='px-4 py-3 font-semibold text-right'>Ações</th>
-          </tr>
-        </thead>
-        <tbody class='divide-y divide-slate-200'>
-          {% for s in third_party_open %}
-            <tr class='hover:bg-slate-50'>
-              <td class='px-4 py-3'>
-                <input
-                  form='third-party-{{ s.id }}'
-                  name='description'
-                  type='text'
-                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
-                  value='{{ s.description }}'
-                />
-              </td>
-              <td class='px-4 py-3'>
-                <select form='third-party-{{ s.id }}' name='supplier_id' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
-                  <option value=''>-</option>
-                  {% for supplier in suppliers_active %}
-                    <option value='{{ supplier.id }}' {% if s.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td class='px-4 py-3'>
-                <input
-                  form='third-party-{{ s.id }}'
-                  name='scheduled_date'
-                  type='date'
-                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
-                  value='{% if s.scheduled_date %}{{ s.scheduled_date|date:"Y-m-d" }}{% endif %}'
-                />
-              </td>
-              <td class='px-4 py-3'>
-                <input
-                  form='third-party-{{ s.id }}'
-                  name='amount'
-                  type='text'
-                  class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'
-                  value='{{ s.amount|unlocalize }}'
-                />
-              </td>
-              <td class='px-4 py-3 text-center'>
-                <input
-                  form='third-party-{{ s.id }}'
-                  name='is_shop_service'
-                  type='checkbox'
-                  class='h-4 w-4 rounded border border-slate-300 bg-white'
-                  {% if s.effective_is_shop_service %}checked{% endif %}
-                />
-              </td>
-              <td class='px-4 py-3'>
-                <select form='third-party-{{ s.id }}' name='status' class='w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900'>
-                  {% for value, label in third_party_status_choices %}
-                    <option value='{{ value }}' {% if s.status == value %}selected{% endif %}>{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </td>
-              <td class='px-4 py-3'>
-                <div class='flex flex-wrap justify-end gap-2'>
-                  <form id='third-party-{{ s.id }}' method='post' action='{% url "budgets:third_party_update" s.id %}'>
-                    {% csrf_token %}
-                    <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-                    <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-3 py-2 text-sm font-semibold text-[#0D0D0D]'>
-                      Salvar
-                    </button>
-                  </form>
-                  <form method='post' action='{% url "budgets:third_party_finish" s.id %}'>
-                    {% csrf_token %}
-                    <input type='hidden' name='next' value='{{ request.get_full_path }}' />
-                    <button type='submit' class='rounded-md border border-green-300 bg-green-100 px-3 py-2 text-sm text-green-800 hover:brightness-95'>
-                      Finalizar
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-          {% empty %}
-            <tr>
-              <td class='px-4 py-6 text-slate-500' colspan='7'>Nenhum serviço de terceiro em aberto.</td>
-            </tr>
-          {% endfor %}
-
-          {% if third_party_done_count and third_party_done_count > 0 %}
-            <tr class='bg-slate-50'>
-              <td class='px-4 py-3 text-sm font-semibold text-amber-700' colspan='7'>Concluídos ({{ third_party_done_count }})</td>
-            </tr>
-            {% for s in third_party_done %}
-              <tr class='hover:bg-slate-50 opacity-80'>
-                <td class='px-4 py-3 text-slate-900'>{{ s.description }}</td>
-                <td class='px-4 py-3 text-slate-600'>{% if s.supplier %}{{ s.supplier.name }}{% else %}-{% endif %}</td>
-                <td class='px-4 py-3 text-slate-600'>
-                  {% if s.scheduled_date %}{{ s.scheduled_date|date:'d/m/Y' }}{% else %}-{% endif %}
-                </td>
-                <td class='px-4 py-3 text-slate-600'>R$ {{ s.amount|floatformat:2 }}</td>
-                <td class='px-4 py-3 text-center text-slate-600'>{% if s.effective_is_shop_service %}Sim{% else %}Não{% endif %}</td>
-                <td class='px-4 py-3'>
-                  <span class='rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs text-green-800'>Concluído</span>
-                </td>
-                <td class='px-4 py-3 text-right text-slate-500'>
-                  {% if s.completed_at %}{{ s.completed_at|date:'d/m/Y H:i' }}{% else %}-{% endif %}
+                  <span class='inline-flex items-center rounded-full border border-[#404040] bg-[#262626] px-3 py-2 text-sm text-[#A3A3A3]'>Concluída</span>
                 </td>
               </tr>
             {% endfor %}
@@ -816,212 +307,6 @@
           });
         });
 
-        var bulkPanel = document.querySelector("[data-bulk-panel='1']");
-        var bulkColumns = document.querySelectorAll('.bulk-select-col');
-        var bulkCheckboxes = document.querySelectorAll("[data-bulk-task-checkbox='1']");
-        var bulkCheckAll = document.querySelector("[data-bulk-check-all='1']");
-        var bulkSelectedCount = document.querySelector("[data-bulk-selected-count='1']");
-        var bulkTaskIdsInput = document.querySelector("[data-bulk-task-ids='1']");
-        var bulkSubmit = document.querySelector("[data-bulk-submit='1']");
-        var bulkSelectAll = document.querySelector("[data-bulk-select-all='1']");
-        var bulkClear = document.querySelector("[data-bulk-clear='1']");
-        var batchCreateBtn = document.querySelector("[data-batch-create-btn='1']");
-        var batchCreateTaskIdsInput = document.querySelector("[data-batch-create-task-ids='1']");
-        var osIsBlocked = !!bulkSubmit && bulkSubmit.hasAttribute('disabled') && (window.location.pathname || '').includes('/os/') ? (document.querySelector('form[data-bulk-panel="1"] p[class*="text-red-700"]') !== null) : false;
-
-        function getTaskRowMeta(checkbox) {
-          var tr = checkbox.closest('tr[data-task-row="1"]');
-          if (!tr) return { activity: '', collaborator_id: '' };
-          var activityTd = tr.querySelector('td[data-task-activity]');
-          var collabSelect = tr.querySelector('select[data-task-collaborator-select]');
-          var collabId = collabSelect ? String(collabSelect.value || '').trim() : '';
-          var activity = activityTd ? String(activityTd.getAttribute('data-task-activity') || '').trim() : '';
-          return { activity: activity, collaborator_id: collabId };
-        }
-
-        function validateBatchSelection(selectedIds) {
-          if (selectedIds.length < 2) return { ok: false, reason: 'Selecione pelo menos 2 tarefas.' };
-          var first = null;
-          for (var i = 0; i < bulkCheckboxes.length; i++) {
-            var cb = bulkCheckboxes[i];
-            if (!cb.checked) continue;
-            var meta = getTaskRowMeta(cb);
-            if (!meta.collaborator_id) return { ok: false, reason: 'Todas as tarefas selecionadas precisam ter colaborador atribuído.' };
-            if (!first) {
-              first = meta;
-              continue;
-            }
-            if (meta.activity !== first.activity) return { ok: false, reason: 'Todas as tarefas precisam ser da MESMA etapa.' };
-            if (meta.collaborator_id !== first.collaborator_id) return { ok: false, reason: 'Todas as tarefas precisam ter o MESMO colaborador.' };
-          }
-          return { ok: true, reason: '' };
-        }
-
-        function updateBulkState() {
-          var selected = [];
-          var enabledCheckboxes = [];
-          var anySelectedHasCollab = false;
-          bulkCheckboxes.forEach(function (checkbox) {
-            if (!checkbox.disabled) enabledCheckboxes.push(checkbox);
-            if (checkbox.checked) {
-              selected.push(checkbox.value);
-              var meta = getTaskRowMeta(checkbox);
-              if (meta.collaborator_id) anySelectedHasCollab = true;
-            }
-          });
-          if (bulkSelectedCount) bulkSelectedCount.textContent = String(selected.length);
-          if (bulkTaskIdsInput) bulkTaskIdsInput.value = selected.join(',');
-          if (bulkSubmit) bulkSubmit.disabled = selected.length === 0 || anySelectedHasCollab;
-          if (bulkCheckAll) {
-            bulkCheckAll.checked = enabledCheckboxes.length > 0 && selected.length === enabledCheckboxes.length;
-            bulkCheckAll.disabled = enabledCheckboxes.length === 0;
-          }
-          if (batchCreateTaskIdsInput) batchCreateTaskIdsInput.value = selected.join(',');
-          if (batchCreateBtn) {
-            var originalBaseText = '🔗 Criar Lote das Selecionadas';
-            var valid = validateBatchSelection(selected);
-            batchCreateBtn.disabled = !valid.ok;
-            var counterHtml = '';
-            if (selected.length > 0) {
-              counterHtml = ' <span class="ml-2 inline-flex items-center gap-1 rounded-full ' +
-                (valid.ok ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white') +
-                ' px-2 py-0.5 text-xs font-bold">(' + String(selected.length) + ')</span>';
-            }
-            batchCreateBtn.innerHTML = originalBaseText + counterHtml;
-
-            if (valid.ok) {
-              batchCreateBtn.removeAttribute('title');
-              batchCreateBtn.classList.remove('from-indigo-500', 'to-indigo-700', 'opacity-40');
-              batchCreateBtn.classList.add('from-emerald-500', 'to-emerald-700', 'brightness-110');
-            } else {
-              if (selected.length === 0) {
-                batchCreateBtn.setAttribute('title', 'Marque 2+ tarefas da MESMA etapa + MESMO colaborador');
-              } else {
-                batchCreateBtn.setAttribute('title', valid.reason);
-              }
-              batchCreateBtn.classList.add('from-indigo-500', 'to-indigo-700');
-              batchCreateBtn.classList.remove('from-emerald-500', 'to-emerald-700', 'brightness-110');
-            }
-          }
-        }
-
-        var bulkTaskForm = document.querySelector("[data-bulk-panel='1'] form[action*='workorder_task_bulk_assign']");
-        if (bulkTaskForm) {
-          var bulkCollabSelect = bulkTaskForm.querySelector('select[name="bulk_collaborator_id"]');
-          if (bulkCollabSelect) {
-            bulkCollabSelect.addEventListener('change', function () {
-              updateBulkState();
-            });
-          }
-        }
-
-        bulkCheckboxes.forEach(function (checkbox) {
-          checkbox.addEventListener('change', function () {
-            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
-            updateBulkState();
-          });
-        });
-
-        var collabSelects = document.querySelectorAll('select[data-task-collaborator-select]');
-        collabSelects.forEach(function (sel) {
-          sel.addEventListener('change', function () {
-            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
-            updateBulkState();
-          });
-        });
-
-        if (bulkCheckAll) {
-          bulkCheckAll.addEventListener('change', function () {
-            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
-            bulkCheckboxes.forEach(function (checkbox) {
-              if (checkbox.disabled) return;
-              checkbox.checked = bulkCheckAll.checked;
-            });
-            updateBulkState();
-          });
-        }
-
-        if (bulkSelectAll) {
-          bulkSelectAll.addEventListener('click', function () {
-            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
-            bulkCheckboxes.forEach(function (checkbox) {
-              if (checkbox.disabled) return;
-              checkbox.checked = true;
-            });
-            updateBulkState();
-          });
-        }
-
-        if (bulkClear) {
-          bulkClear.addEventListener('click', function () {
-            if (typeof window.__pauseOSRefresh === 'function') window.__pauseOSRefresh();
-            bulkCheckboxes.forEach(function (checkbox) {
-              if (checkbox.disabled) return;
-              checkbox.checked = false;
-            });
-            if (bulkCheckAll) bulkCheckAll.checked = false;
-            updateBulkState();
-          });
-        }
-
-        if (batchCreateBtn) {
-          var batchForm = batchCreateBtn.closest('form');
-          if (batchForm) {
-            batchForm.addEventListener('submit', function (ev) {
-              // 🔧 Garante que os selects de colaborador e datas alteradas NA TELA
-              // sao enviados no POST do lote, MESMO SEM TER CLICADO em Salvar individual
-              // para cada tarefa selecionada (sincronizacao JS -> hidden inputs).
-              if (typeof window.__unpauseOSRefresh === 'function') window.__unpauseOSRefresh();
-
-              // Remove inputs hidden de colaborador/date adicionados em submit anterior para evitar duplicatas
-              batchForm.querySelectorAll('input[data-batch-sync-collab], input[data-batch-sync-date]').forEach(function (x) { x.remove(); });
-
-              bulkCheckboxes.forEach(function (cb) {
-                if (!cb.checked) return;
-                var tr = cb.closest('tr[data-task-row="1"]');
-                if (!tr) return;
-                var taskId = String(cb.value || '').trim();
-                if (!taskId) return;
-                var sel = tr.querySelector('select[data-task-collaborator-select="' + taskId + '"]');
-                var collabValue = sel ? String(sel.value || '').trim() : '';
-                var dateInput = tr.querySelector('input[type="date"][name="scheduled_date"]');
-                var dateValue = dateInput ? String(dateInput.value || '').trim() : '';
-                if (collabValue) {
-                  var hid1 = document.createElement('input');
-                  hid1.type = 'hidden';
-                  hid1.name = 'task_collab_' + taskId;
-                  hid1.value = collabValue;
-                  hid1.setAttribute('data-batch-sync-collab', '1');
-                  batchForm.appendChild(hid1);
-                }
-                if (dateValue) {
-                  var hid2 = document.createElement('input');
-                  hid2.type = 'hidden';
-                  hid2.name = 'task_date_' + taskId;
-                  hid2.value = dateValue;
-                  hid2.setAttribute('data-batch-sync-date', '1');
-                  batchForm.appendChild(hid2);
-                }
-              });
-              // Nao previne submit - envia normalmente apos adicionar os sync inputs
-            });
-          }
-        }
-        if (bulkSubmit) {
-          var bulkFormSubmit = bulkSubmit.closest('form');
-          if (bulkFormSubmit) {
-            bulkFormSubmit.addEventListener('submit', function () {
-              if (typeof window.__unpauseOSRefresh === 'function') window.__unpauseOSRefresh();
-            });
-          }
-        }
-
-        bulkColumns.forEach(function (element) {
-          element.classList.remove('hidden');
-        });
-        if (bulkPanel) bulkPanel.classList.remove('hidden');
-        updateBulkState();
-
         var raw = sessionStorage.getItem('os_focus_next_row');
         if (!raw) return;
         sessionStorage.removeItem('os_focus_next_row');
@@ -1039,96 +324,16 @@
         bind();
       }
     })();
-
-    (function () {
-      var banner = document.querySelector("[data-auto-refresh-banner='1']");
-      if (!banner) {
-        window.__pauseOSRefresh = function () {};
-        window.__unpauseOSRefresh = function () {};
-        return;
-      }
-      var countdownEl = banner.querySelector("[data-countdown='1']");
-      var toggleBtn = banner.querySelector("[data-toggle-refresh='1']");
-      var pausedKey = 'os_detail_refresh_paused_' + String(window.location.pathname || '').replace(/[^0-9]/g, '');
-      var secondsLeft = 6;
-      var paused = sessionStorage.getItem(pausedKey) === '1';
-      var pausedByEditingKey = 'os_detail_refresh_pausedbyedit_' + String(window.location.pathname || '').replace(/[^0-9]/g, '');
-      var pausedByEditing = sessionStorage.getItem(pausedByEditingKey) === '1';
-
-      function savePaused() {
-        sessionStorage.setItem(pausedKey, (paused || pausedByEditing) ? '1' : '0');
-      }
-
-      function applyPausedUI() {
-        if (!countdownEl) return;
-        var totalPaused = paused || pausedByEditing;
-        if (totalPaused) {
-          countdownEl.textContent = '-';
-          if (toggleBtn) {
-            toggleBtn.innerHTML = (pausedByEditing ? '🔒 Modo edição (clique aqui para retomar)' : '▶ Retomar auto-refresh');
-            toggleBtn.classList.remove('border-sky-400', 'text-sky-800', 'hover:bg-sky-100');
-            if (pausedByEditing) {
-              toggleBtn.classList.add('border-amber-500', 'bg-amber-50', 'text-amber-800', 'hover:bg-amber-100');
-            } else {
-              toggleBtn.classList.add('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100');
-            }
-          }
-        } else {
-          if (toggleBtn) {
-            toggleBtn.innerHTML = '⏸ Pausar auto-refresh';
-            toggleBtn.classList.add('border-sky-400', 'text-sky-800', 'hover:bg-sky-100');
-            toggleBtn.classList.remove('border-emerald-500', 'bg-emerald-50', 'text-emerald-800', 'hover:bg-emerald-100', 'border-amber-500', 'bg-amber-50', 'text-amber-800', 'hover:bg-amber-100');
-          }
-        }
-      }
-
-      window.__pauseOSRefresh = function () {
-        pausedByEditing = true;
-        sessionStorage.setItem(pausedByEditingKey, '1');
-        savePaused();
-        applyPausedUI();
-      };
-      window.__unpauseOSRefresh = function () {
-        pausedByEditing = false;
-        sessionStorage.setItem(pausedByEditingKey, '0');
-        secondsLeft = 6;
-        savePaused();
-        applyPausedUI();
-      };
-
-      applyPausedUI();
-
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', function () {
-          paused = !paused;
-          if (!paused) secondsLeft = 6;
-          savePaused();
-          applyPausedUI();
-        });
-      }
-
-      setInterval(function () {
-        var totalPaused = paused || pausedByEditing;
-        if (totalPaused) return;
-        secondsLeft -= 1;
-        if (countdownEl) countdownEl.textContent = String(Math.max(0, secondsLeft));
-        if (secondsLeft <= 0) {
-          location.reload();
-        }
-      }, 1000);
-    })();
   </script>
 
   <style>
     .actual-ok {
-      background-color: #ECFDF5 !important;
-      border-color: #10B981 !important;
-      color: #065F46 !important;
+      background-color: #063018 !important;
+      border-color: #2F855A !important;
     }
     .actual-over {
-      background-color: #FEF2F2 !important;
-      border-color: #EF4444 !important;
-      color: #991B1B !important;
+      background-color: #3B0A0A !important;
+      border-color: #7F1D1D !important;
     }
     @media print {
       header {

@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('budgets', '0030_xmlimportjob'),
+        ('budgets', '0028_thirdpartyservice_expense_movement_and_more'),
     ]
 
     operations = [

@@ -4,15 +4,6 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-def set_shop_services(apps, schema_editor):
-    ThirdPartyService = apps.get_model('budgets', 'ThirdPartyService')
-    for service in ThirdPartyService.objects.all().only('id', 'description'):
-        description = (service.description or '').strip().lower()
-        if any(keyword in description for keyword in ('lavagem', 'lavacao', 'lavação', 'polimento')):
-            service.is_shop_service = True
-            service.save(update_fields=['is_shop_service'])
-
-
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -30,5 +21,4 @@ class Migration(migrations.Migration):
             name='is_shop_service',
             field=models.BooleanField(default=False),
         ),
-        migrations.RunPython(set_shop_services, migrations.RunPython.noop),
     ]

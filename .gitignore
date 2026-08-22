@@ -12,15 +12,10 @@ env/
 
 .env
 .env.*
-!.env.example
-!pythonanywhere_env.example.sh
 
 media/
 
 staticfiles/
-
-storage/
-storage/llm_cache/
 
 .pytest_cache/
 .coverage
@@ -29,8 +24,11 @@ htmlcov/
 .idea/
 .vscode/
 
+storage/
+
 Thumbs.db
 Desktop.ini
 prd.md
 
 gitinit
+bash.teste

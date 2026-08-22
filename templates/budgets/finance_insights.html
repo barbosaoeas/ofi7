@@ -7,118 +7,101 @@
 {% block content %}
   <script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
 
-  <div class='rounded-3xl border border-slate-200 bg-white p-6 shadow-sm'>
+  <div class='rounded-3xl border border-[#262626] bg-gradient-to-br from-[#1A1A1A] via-[#151515] to-[#101010] p-6 shadow-2xl'>
     <div class='flex flex-wrap items-center justify-between gap-4'>
       <div>
-        <div class='text-xs uppercase tracking-[0.35em] text-slate-500'>Dashboard Financeiro</div>
-        <h1 class='mt-2 text-3xl font-semibold text-slate-900'>Visão executiva do caixa</h1>
-        <p class='mt-2 text-sm text-slate-500'>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Dashboard Financeiro</div>
+        <h1 class='mt-2 text-3xl font-semibold text-[#F5F5F5]'>Visão executiva do caixa</h1>
+        <p class='mt-2 text-sm text-[#A3A3A3]'>
           Período: {{ range_start|date:'d/m/Y' }} até {{ range_end|date:'d/m/Y' }}.
         </p>
       </div>
       <div class='flex flex-wrap gap-3'>
         <div class='flex flex-wrap gap-2'>
-          <a href='{% url "budgets:finance_insights" %}?range=month{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "month" %}rounded-xl border border-[#D4AF37] bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800{% else %}rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=month{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "month" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             Mês atual
           </a>
-          <a href='{% url "budgets:finance_insights" %}?range=3m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "3m" %}rounded-xl border border-[#D4AF37] bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800{% else %}rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=3m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "3m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             3 meses
           </a>
-          <a href='{% url "budgets:finance_insights" %}?range=12m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "12m" %}rounded-xl border border-[#D4AF37] bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800{% else %}rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]{% endif %}'>
+          <a href='{% url "budgets:finance_insights" %}?range=12m{% if filters.direction %}&direction={{ filters.direction }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}' class='{% if range_key == "12m" %}rounded-xl border border-[#D4AF37] bg-[#2A1E06] px-4 py-3 text-sm font-semibold text-[#FDE68A]{% else %}rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]{% endif %}'>
             12 meses
           </a>
         </div>
-        <a href='{% url "budgets:finance_import_xml" %}' class='rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-100'>
-          Importar XML financeiro
-        </a>
-        <a href='{% url "budgets:finance_export_xml_template" %}' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
-          Exportar modelo XML
-        </a>
-        <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
           Voltar para lançamentos
         </a>
       </div>
     </div>
   </div>
 
-  <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4'>
+  <form method='get' class='mt-6 grid grid-cols-1 gap-3 rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4 md:grid-cols-4'>
     <input type='hidden' name='range' value='{{ range_key }}' />
     <div>
-      <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_dash_direction'>Direção</label>
-      <select id='id_dash_direction' name='direction' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
+      <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_dash_direction'>Direção</label>
+      <select id='id_dash_direction' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
         <option value='' {% if not filters.direction %}selected{% endif %}>Todas</option>
         <option value='IN' {% if filters.direction == 'IN' %}selected{% endif %}>Entradas</option>
         <option value='OUT' {% if filters.direction == 'OUT' %}selected{% endif %}>Saídas</option>
       </select>
     </div>
     <div>
-      <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_dash_source'>Origem</label>
-      <select id='id_dash_source' name='source' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
+      <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_dash_source'>Origem</label>
+      <select id='id_dash_source' name='source' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
         <option value='' {% if not filters.source %}selected{% endif %}>Todas</option>
         {% for source in source_options %}
           <option value='{{ source.value }}' data-direction='{{ source.directions }}' {% if filters.source == source.value %}selected{% endif %}>{{ source.label }}</option>
         {% endfor %}
       </select>
     </div>
-    <div>
-      <label class='mb-1 block text-xs uppercase tracking-wide text-slate-500' for='id_dash_customer_type'>Tipo cliente</label>
-      <select id='id_dash_customer_type' name='customer_type' class='w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm focus:border-[#D4AF37] focus:outline-none'>
-        <option value='' {% if not filters.customer_type %}selected{% endif %}>Todos</option>
-        {% for value, label in customer_type_options %}
-          {% if value %}
-            <option value='{{ value }}' {% if filters.customer_type == value %}selected{% endif %}>{{ label }}</option>
-          {% endif %}
-        {% endfor %}
-      </select>
-    </div>
-    <div class='flex items-end justify-end gap-3'>
+    <div class='md:col-span-2 flex items-end justify-end gap-3'>
       <button type='submit' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2.5 text-sm font-semibold text-[#0D0D0D]'>
         Filtrar
       </button>
-      <a href='{% url "budgets:finance_insights" %}?range={{ range_key }}' class='rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:finance_insights" %}?range={{ range_key }}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-2.5 text-sm hover:border-[#D4AF37]'>
         Limpar
       </a>
     </div>
   </form>
 
   <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
-    <div class='rounded-2xl border border-emerald-200 bg-emerald-50 p-5'>
-      <div class='text-xs uppercase tracking-wide text-emerald-800'>A Receber em aberto</div>
-      <div class='mt-3 text-2xl font-semibold text-emerald-900'>R$ {{ receivable_open|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-emerald-700'>Entradas ainda não realizadas</div>
+    <div class='rounded-2xl border border-[#1f3b2d] bg-gradient-to-br from-[#0d1f16] to-[#0a140f] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#86efac]'>A Receber em aberto</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ receivable_open|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Entradas ainda não realizadas</div>
     </div>
-    <div class='rounded-2xl border border-red-200 bg-red-50 p-5'>
-      <div class='text-xs uppercase tracking-wide text-red-800'>A Pagar em aberto</div>
-      <div class='mt-3 text-2xl font-semibold text-red-900'>R$ {{ payable_open|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-red-700'>Saídas ainda não realizadas</div>
+    <div class='rounded-2xl border border-[#5f1f1f] bg-gradient-to-br from-[#3b0a0a] to-[#220808] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#fca5a5]'>A Pagar em aberto</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ payable_open|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Saídas ainda não realizadas</div>
     </div>
-    <div class='rounded-2xl border border-amber-200 bg-amber-50 p-5'>
-      <div class='text-xs uppercase tracking-wide text-amber-800'>Em atraso</div>
-      <div class='mt-3 text-2xl font-semibold text-amber-900'>R$ {{ overdue_total|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-amber-700'>Valores vencidos e ainda abertos</div>
+    <div class='rounded-2xl border border-[#5b3b13] bg-gradient-to-br from-[#2a1e06] to-[#1d1403] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#fcd34d]'>Em atraso</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ overdue_total|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Valores vencidos e ainda abertos</div>
     </div>
-    <div class='rounded-2xl border border-blue-200 bg-blue-50 p-5'>
-      <div class='text-xs uppercase tracking-wide text-blue-800'>Saldo projetado</div>
-      <div class='mt-3 text-2xl font-semibold text-blue-900'>R$ {{ projected_balance|floatformat:2 }}</div>
-      <div class='mt-2 text-sm text-blue-700'>Receber aberto menos pagar aberto</div>
+    <div class='rounded-2xl border border-[#233a57] bg-gradient-to-br from-[#0b1f3b] to-[#091728] p-5'>
+      <div class='text-xs uppercase tracking-wide text-[#93c5fd]'>Saldo projetado</div>
+      <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ projected_balance|floatformat:2 }}</div>
+      <div class='mt-2 text-sm text-[#A3A3A3]'>Receber aberto menos pagar aberto</div>
     </div>
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Entradas e saídas por mês</h2>
-        <p class='text-sm text-slate-500'>Comparativo previsto x realizado.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Entradas e saídas por mês</h2>
+        <p class='text-sm text-[#A3A3A3]'>Comparativo previsto x realizado.</p>
       </div>
       <div class='h-[360px]'>
         <canvas id='finance-month-chart'></canvas>
       </div>
     </div>
 
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Situação dos lançamentos</h2>
-        <p class='text-sm text-slate-500'>Distribuição de valores abertos e realizados.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Situação dos lançamentos</h2>
+        <p class='text-sm text-[#A3A3A3]'>Distribuição de valores abertos e realizados.</p>
       </div>
       <div class='h-[360px]'>
         <canvas id='finance-status-chart'></canvas>
@@ -127,25 +110,25 @@
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5'>
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-3'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-3'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Despesas por categoria</h2>
-        <p class='text-sm text-slate-500'>Top categorias no intervalo analisado.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Despesas por categoria</h2>
+        <p class='text-sm text-[#A3A3A3]'>Top categorias no intervalo analisado.</p>
       </div>
       <div class='h-[360px]'>
         <canvas id='finance-category-chart'></canvas>
       </div>
     </div>
 
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Resumo rápido</h2>
-        <p class='text-sm text-slate-500'>Principais pontos para decisão.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Resumo rápido</h2>
+        <p class='text-sm text-[#A3A3A3]'>Principais pontos para decisão.</p>
       </div>
       <div class='space-y-3'>
-        <div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'>
-          <div class='text-xs uppercase tracking-wide text-slate-500'>Caixa pressiona?</div>
-          <div class='mt-2 text-sm text-slate-900'>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Caixa pressiona?</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>
             {% if projected_balance < 0 %}
               Atenção: o saldo projetado está negativo.
             {% else %}
@@ -153,33 +136,33 @@
             {% endif %}
           </div>
         </div>
-        <div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'>
-          <div class='text-xs uppercase tracking-wide text-slate-500'>Prioridade</div>
-          <div class='mt-2 text-sm text-slate-900'>Cobrar os recebimentos em aberto e atacar os itens vencidos primeiro.</div>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Prioridade</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>Cobrar os recebimentos em aberto e atacar os itens vencidos primeiro.</div>
         </div>
-        <div class='rounded-2xl border border-slate-200 bg-slate-50 p-4'>
-          <div class='text-xs uppercase tracking-wide text-slate-500'>Uso sugerido</div>
-          <div class='mt-2 text-sm text-slate-900'>Cadastre despesas fixas usando recorrência mensal para deixar o dash mais fiel.</div>
+        <div class='rounded-2xl border border-[#262626] bg-[#111111] p-4'>
+          <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Uso sugerido</div>
+          <div class='mt-2 text-sm text-[#F5F5F5]'>Cadastre despesas fixas usando recorrência mensal para deixar o dash mais fiel.</div>
         </div>
       </div>
     </div>
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-5'>
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Melhores perfis de cliente</h2>
-        <p class='text-sm text-slate-500'>Compara o faturamento entre particular, seguradoras, empresa e outras origens.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Melhores perfis de cliente</h2>
+        <p class='text-sm text-[#A3A3A3]'>Compara o faturamento entre particular, seguradoras, empresa e outras origens.</p>
       </div>
       <div class='h-[320px]'>
         <canvas id='finance-profile-chart'></canvas>
       </div>
     </div>
 
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-3'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-3'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Seguradoras com mais serviços</h2>
-        <p class='text-sm text-slate-500'>Mostra quem mais aprovou orçamento e trouxe valor para a oficina.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Seguradoras com mais serviços</h2>
+        <p class='text-sm text-[#A3A3A3]'>Mostra quem mais aprovou orçamento e trouxe valor para a oficina.</p>
       </div>
       <div class='h-[320px]'>
         <canvas id='finance-insurer-chart'></canvas>
@@ -188,20 +171,20 @@
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5 xl:col-span-2'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Previsto x realizado por semana (mês atual)</h2>
-        <p class='text-sm text-slate-500'>Ótimo para ver se o caixa está acontecendo no ritmo certo.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Previsto x realizado por semana (mês atual)</h2>
+        <p class='text-sm text-[#A3A3A3]'>Ótimo para ver se o caixa está acontecendo no ritmo certo.</p>
       </div>
       <div class='h-[360px]'>
         <canvas id='finance-week-chart'></canvas>
       </div>
     </div>
 
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
+    <div class='rounded-3xl border border-[#262626] bg-[#161616] p-5'>
       <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Atrasados por categoria</h2>
-        <p class='text-sm text-slate-500'>Somente lançamentos vencidos e ainda em aberto.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Atrasados por categoria</h2>
+        <p class='text-sm text-[#A3A3A3]'>Somente lançamentos vencidos e ainda em aberto.</p>
       </div>
       <div class='h-[360px]'>
         <canvas id='finance-overdue-category-chart'></canvas>
@@ -209,20 +192,20 @@
     </div>
   </div>
 
-  <div class='mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
+  <div class='mt-6 rounded-3xl border border-[#262626] bg-[#161616] p-5'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
       <div>
-        <h2 class='text-lg font-semibold text-amber-700'>Top 10 atrasados</h2>
-        <p class='text-sm text-slate-500'>Clique para abrir o lançamento e ajustar/confirmar.</p>
+        <h2 class='text-lg font-semibold text-[#D4AF37]'>Top 10 atrasados</h2>
+        <p class='text-sm text-[#A3A3A3]'>Clique para abrir o lançamento e ajustar/confirmar.</p>
       </div>
-      <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 shadow-sm hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:finance_dashboard" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
         Ir para lançamentos
       </a>
     </div>
 
-    <div class='mt-4 overflow-hidden rounded-2xl border border-slate-200'>
+    <div class='mt-4 overflow-hidden rounded-2xl border border-[#262626]'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-slate-50 text-amber-700'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Venc.</th>
             <th class='px-4 py-3 font-semibold'>Tipo</th>
@@ -231,22 +214,22 @@
             <th class='px-4 py-3 font-semibold text-right'></th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-slate-200 bg-white'>
+        <tbody class='divide-y divide-[#262626] bg-[#111111]'>
           {% for m in overdue_items %}
-            <tr class='hover:bg-slate-50'>
-              <td class='px-4 py-3 text-slate-500'>{{ m.due_date|date:'d/m/Y' }}</td>
-              <td class='px-4 py-3 text-slate-500'>{% if m.category %}{{ m.category.name }}{% else %}-{% endif %}</td>
-              <td class='px-4 py-3 text-slate-900'>{{ m.description|default:'-' }}</td>
-              <td class='px-4 py-3 text-right font-semibold text-slate-900'>R$ {{ m.amount|floatformat:2 }}</td>
+            <tr class='hover:bg-[#171717]'>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{{ m.due_date|date:'d/m/Y' }}</td>
+              <td class='px-4 py-3 text-[#A3A3A3]'>{% if m.category %}{{ m.category.name }}{% else %}-{% endif %}</td>
+              <td class='px-4 py-3'>{{ m.description|default:'-' }}</td>
+              <td class='px-4 py-3 text-right font-semibold'>R$ {{ m.amount|floatformat:2 }}</td>
               <td class='px-4 py-3 text-right'>
-                <a href='{% url "budgets:finance_dashboard" %}?edit={{ m.id }}' class='rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 shadow-sm hover:border-[#D4AF37]'>
+                <a href='{% url "budgets:finance_dashboard" %}?edit={{ m.id }}' class='rounded-xl border border-[#404040] bg-[#262626] px-3 py-2 text-xs hover:border-[#D4AF37]'>
                   Abrir
                 </a>
               </td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan='5' class='px-4 py-10 text-center text-sm text-slate-500'>Nenhum lançamento atrasado em aberto.</td>
+              <td colspan='5' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Nenhum lançamento atrasado em aberto.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -254,87 +237,30 @@
     </div>
   </div>
 
-  <div class='mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
+  <div class='mt-6 rounded-3xl border border-[#262626] bg-[#161616] p-5'>
     <div class='mb-4'>
-      <h2 class='text-lg font-semibold text-amber-700'>Ranking detalhado das seguradoras</h2>
-      <p class='text-sm text-slate-500'>Quantidade de orçamentos autorizados e valor aprovado por seguradora.</p>
+      <h2 class='text-lg font-semibold text-[#D4AF37]'>Ranking detalhado das seguradoras</h2>
+      <p class='text-sm text-[#A3A3A3]'>Quantidade de orçamentos autorizados e valor aprovado por seguradora.</p>
     </div>
-    <div class='overflow-hidden rounded-2xl border border-slate-200'>
+    <div class='overflow-hidden rounded-2xl border border-[#262626]'>
       <table class='w-full text-left text-sm'>
-        <thead class='bg-slate-50 text-amber-700'>
+        <thead class='bg-[#141414] text-[#D4AF37]'>
           <tr>
             <th class='px-4 py-3 font-semibold'>Seguradora</th>
             <th class='px-4 py-3 font-semibold text-right'>Orçamentos</th>
             <th class='px-4 py-3 font-semibold text-right'>Valor aprovado</th>
           </tr>
         </thead>
-        <tbody class='divide-y divide-slate-200 bg-white'>
+        <tbody class='divide-y divide-[#262626] bg-[#111111]'>
           {% for insurer in insurer_ranking %}
-            <tr class='hover:bg-slate-50'>
-              <td class='px-4 py-3 text-slate-900'>{{ insurer.name }}</td>
-              <td class='px-4 py-3 text-right text-slate-500'>{{ insurer.budget_count }}</td>
-              <td class='px-4 py-3 text-right font-semibold text-slate-900'>R$ {{ insurer.approved_total|floatformat:2 }}</td>
+            <tr class='hover:bg-[#171717]'>
+              <td class='px-4 py-3'>{{ insurer.name }}</td>
+              <td class='px-4 py-3 text-right text-[#A3A3A3]'>{{ insurer.budget_count }}</td>
+              <td class='px-4 py-3 text-right font-semibold'>R$ {{ insurer.approved_total|floatformat:2 }}</td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan='3' class='px-4 py-10 text-center text-sm text-slate-500'>Nenhuma seguradora identificada no período selecionado.</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class='mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3'>
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-2'>
-      <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Resultado por tipo de cliente (mês atual)</h2>
-        <p class='text-sm text-slate-500'>Compara valor aprovado x recebido entre particular, seguradora e empresa.</p>
-      </div>
-      <div class='h-[340px]'>
-        <canvas id='finance-customer-type-chart'></canvas>
-      </div>
-    </div>
-
-    <div class='rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
-      <div class='mb-4'>
-        <h2 class='text-lg font-semibold text-amber-700'>Quantidade por tipo</h2>
-        <p class='text-sm text-slate-500'>Número de orçamentos autorizados por tipo de cliente no mês.</p>
-      </div>
-      <div class='h-[340px]'>
-        <canvas id='finance-customer-type-count-chart'></canvas>
-      </div>
-    </div>
-  </div>
-
-  <div class='mt-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm'>
-    <div class='mb-4'>
-      <h2 class='text-lg font-semibold text-amber-700'>Resultado detalhado por tipo de cliente</h2>
-      <p class='text-sm text-slate-500'>Valores consolidados (mês atual) para ver qual tipo trouxe mais resultado.</p>
-    </div>
-    <div class='overflow-hidden rounded-2xl border border-slate-200'>
-      <table class='w-full text-left text-sm'>
-        <thead class='bg-slate-50 text-amber-700'>
-          <tr>
-            <th class='px-4 py-3 font-semibold'>Tipo</th>
-            <th class='px-4 py-3 font-semibold text-right'>Orçamentos</th>
-            <th class='px-4 py-3 font-semibold text-right'>Valor aprovado</th>
-            <th class='px-4 py-3 font-semibold text-right'>Recebido</th>
-            <th class='px-4 py-3 font-semibold text-right'>Em aberto</th>
-          </tr>
-        </thead>
-        <tbody class='divide-y divide-slate-200 bg-white'>
-          {% for row in customer_type_ranking %}
-            <tr class='hover:bg-slate-50'>
-              <td class='px-4 py-3 font-semibold text-slate-900'>{{ row.label }}</td>
-              <td class='px-4 py-3 text-right text-slate-500'>{{ row.budget_count }}</td>
-              <td class='px-4 py-3 text-right font-semibold text-slate-900'>R$ {{ row.approved_total|floatformat:2 }}</td>
-              <td class='px-4 py-3 text-right text-emerald-700 font-semibold'>R$ {{ row.received_total|floatformat:2 }}</td>
-              <td class='px-4 py-3 text-right text-amber-700 font-semibold'>R$ {{ row.open_total|floatformat:2 }}</td>
-            </tr>
-          {% empty %}
-            <tr>
-              <td colspan='5' class='px-4 py-10 text-center text-sm text-slate-500'>Nenhum orçamento autorizado no mês com tipo de cliente classificado.</td>
+              <td colspan='3' class='px-4 py-10 text-center text-sm text-[#A3A3A3]'>Nenhuma seguradora identificada no período selecionado.</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -363,10 +289,6 @@
   {{ insurer_labels|json_script:"insurer-labels-data" }}
   {{ insurer_budget_counts|json_script:"insurer-budget-counts-data" }}
   {{ insurer_amount_values|json_script:"insurer-amount-values-data" }}
-  {{ customer_type_labels_list|json_script:"customer-type-labels-data" }}
-  {{ customer_type_approved_values|json_script:"customer-type-approved-values-data" }}
-  {{ customer_type_received_values|json_script:"customer-type-received-values-data" }}
-  {{ customer_type_budget_counts|json_script:"customer-type-budget-counts-data" }}
 
   <script>
     (function () {
@@ -427,13 +349,9 @@
       var insurerLabels = readJSON('insurer-labels-data');
       var insurerBudgetCounts = readJSON('insurer-budget-counts-data');
       var insurerAmountValues = readJSON('insurer-amount-values-data');
-      var customerTypeLabels = readJSON('customer-type-labels-data');
-      var customerTypeApproved = readJSON('customer-type-approved-values-data');
-      var customerTypeReceived = readJSON('customer-type-received-values-data');
-      var customerTypeBudgetCounts = readJSON('customer-type-budget-counts-data');
 
-      Chart.defaults.color = '#334155';
-      Chart.defaults.borderColor = '#E2E8F0';
+      Chart.defaults.color = '#d4d4d4';
+      Chart.defaults.borderColor = '#262626';
 
       new Chart(document.getElementById('finance-month-chart'), {
         type: 'bar',
@@ -563,44 +481,6 @@
           scales: { y: { beginAtZero: true } }
         }
       });
-
-      var ctChartCanvas = document.getElementById('finance-customer-type-chart');
-      if (ctChartCanvas) {
-        new Chart(ctChartCanvas, {
-          type: 'bar',
-          data: {
-            labels: customerTypeLabels,
-            datasets: [
-              { label: 'Aprovado (R$)', data: customerTypeApproved, backgroundColor: '#3b82f6' },
-              { label: 'Recebido (R$)', data: customerTypeReceived, backgroundColor: '#22c55e' }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom' } },
-            scales: { y: { beginAtZero: true } }
-          }
-        });
-      }
-
-      var ctCountCanvas = document.getElementById('finance-customer-type-count-chart');
-      if (ctCountCanvas) {
-        new Chart(ctCountCanvas, {
-          type: 'doughnut',
-          data: {
-            labels: customerTypeLabels,
-            datasets: [
-              { label: 'Orçamentos', data: customerTypeBudgetCounts, backgroundColor: ['#D4AF37', '#3b82f6', '#22c55e', '#a855f7'] }
-            ]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { position: 'bottom' } }
-          }
-        });
-      }
     })();
   </script>
 {% endblock %}

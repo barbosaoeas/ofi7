@@ -32,49 +32,18 @@ Precisão Financeira : Automatizar o cálculo de comissões por tarefa concluíd
 
 3. Requisitos Funcionais (RF)
 
-Status de Implementação (15/08/2026)
+Status de Implementação (07/06/2026)
 
-- [x] RF01 - Autenticação Customizada e Nível de Acesso (login por e-mail ativo; cards de acessos recentes com seleção rápida e foco direto na senha; role EXTRA VISUAL para Smart TV com exceção de senha fraca permitida)
-- [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; aprovação com modal financeiro; controle de entrega, finalização administrativa e filtro entre aprovados e entregues; ajustes finos ainda podem surgir)
+- [x] RF01 - Autenticação Customizada e Nível de Acesso
+- [~] RF02 - Agenda e Gestão de Orçamentos (status/validações OK; bloqueio por peças da oficina + opção “seguir sem peças” OK; ajustes finos podem surgir)
 - [x] RF03 - Importação de XML Cilia
-- [x] RF04 - Gestão de Peças (CRUD + compra/prev. chegada/chegada/atraso + relatório/impressão)
-- [~] RF05 - Cadastro de Atividades e Comissões (cadastro de serviços + comissão por serviço e relatório; correlação automática por nome + seleção manual na OS)
-- [~] RF06 - Ordem de Serviço (O.S.) e Escalonamento Operacional (OS com agendamento por tarefa/colaborador/data/status; seção de terceiros integrada à OS; checkbox Oficina e sincronização com tarefas internas; fechamento administrativo para implantação já disponível; falta agendamento sequencial por hora e algumas regras avançadas)
-- [~] RF07 - Kanban Produtivo Dinâmico (2 telas OFICIAIS separadas: (1) Kanban do DIA por data `/kanban/` → running + scheduled para HOJE = usado dia-a-dia dos operadores; (2) Kanban VISUAL Pipeline `/kanban/tv/` → running + scheduled_até_hoje + não-agendados = mostra TODO pipeline da oficina e fica na Smart TV; botão 📺 "Abrir Tela TV" no header do Kanban Normal abre a tela 2 em nova aba; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh; bloqueio por predecessora da mesma peça/item; perfil VISUAL exclusivo para Smart TV com fullscreen auto, botões de trocar senha/sair e sem interação dos operadores)
-- [~] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais) (modal de aprovação financeira implementado; entrega com validação financeira implementada; falta o modal final de quitação/previsão no ato da entrega)
-- [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard financeiro com filtros e links de pendência; demais relatórios e consolidações ainda pendentes)
-
-Incrementos recentes já entregues
-
-- Login com cards de acessos recentes no navegador, seleção automática do último usuário, avatar por iniciais e fluxo focado apenas na senha.
-- Mensagens globais padronizadas de sucesso, erro, aviso e informação centralizadas no template base.
-- Serviços de terceiros integrados à OS com fornecedor, status, checkbox Oficina e geração automática de despesa apenas para terceiros reais.
-- Serviços internos como lavagem e polimento sincronizados com as tarefas da OS, preservando programação e status.
-- Bloqueio operacional por predecessora no Kanban e na OS, respeitando a sequência Desmontagem > Funilaria > Preparação > Pintura > Montagem > Polimento > Prep Entrega.
-- Regras de predecessora refinadas por peça/item da própria OS, evitando bloquear toda a etapa por causa de outro item ainda pendente.
-- Botão Entregar veículo habilitado com validação operacional e financeira.
-- Entrega permitida com valores em aberto apenas para seguradoras com vencimento futuro; particular continua exigindo quitação.
-- Orçamentos entregues ocultos da listagem principal, com filtro dedicado entre Aprovados e Entregues.
-- Aviso de pendência financeira na entrega com link direto para o lançamento correspondente no financeiro.
-- Finalização administrativa disponível no detalhe do orçamento para gerente, apenas em orçamentos autorizados, com OS criada e ainda não iniciada no operacional, sem geração de comissão.
-- A finalização administrativa registra data/usuário da entrega, motivo da ação (500 chars), auditoria permanente do fechamento e encerra a OS (WorkOrder.status=CLOSED) para apoiar a implantação de veículos já entregues.
-- Regra financeira da FINALIZAÇÃO ADMINISTRATIVA: NÃO BLOQUEIA por financeiro. Mostra pendências/atrasos como aviso (âmbar), mas permite concluir, pois esta rotina só trata das tarefas/OS da implantação. A exigência de financeiro 100% ok continua valendo apenas na ENTREGA NORMAL do veículo.
-- Bloqueio operacional estrito: NÃO permite uso da finalização administrativa se a OS já tiver QUALQUER tarefa RUNNING, PAUSED ou DONE. (Protege uso indevido no dia-a-dia após implantação.)
-- Modal de finalização administrativa com confirmação dupla (onsubmit confirm()) e checkbox obrigatório "Confirmo que este fechamento não deve gerar comissão." antes de submit.
-- Blindagem transacional extra: dentro do transaction.atomic() da finalização administrativa, qualquer tarefa PENDING remanescente é automaticamente marcada DONE (sem horas) com completed_at/completed_by, evitando inconsistência de OS CLOSED com tarefas abertas no histórico.
-- Role VISUAL (Smart TV): Perfil exclusivo para exibir o Kanban do dia na TV do pátio sem ações de edição/iniciar/pausar. Permite exceção de senha fraca (ex: `123456` / `tv1234`) para facilitar login rápido na TV. SENHA FRACA NUNCA permitida para SUPERUSUÁRIOS (mesmo com role=VISUAL), por segurança.
-- Header Perfil VISUAL (no `/kanban/`): Botões de "Trocar senha", "Tela cheia" e "Sair (Logout)" + Relógio em tempo real (HH:MM:SS). Ao abrir a página, automaticamente tenta entrar em fullscreen (ou no 1º clique/toque se a política do navegador exigir interação).
-- Regra estrita do KANBAN DO DIA (tela principal `/kanban/` — DIA-A-DIA dos operadores):
-  - (a) Sempre mostra tarefas com status=RUNNING (independente de data, estão em andamento mesmo se começaram ontem);
-  - (b) Mostra tarefas SCHEDULED / PAUSED SOMENTE SE scheduled_date = dia selecionado (HOJE por padrão). Não mostra atrasados agendados para datas passadas, não mostra tarefas SEM scheduled_date (essas ficam na tela da TV);
-  - (c) Sábado (weekday=5) é considerado dia útil para exibição do Kanban (Domingo fica só RUNNING).
-- TELA 2 DO KANBAN — OFICIALMENTE IMPLEMENTADA: `/kanban/tv/` → Nome: "Kanban Visual (Pipeline completo)". Esta é a tela para colocar NA SMART TV do pátio, e mostra:
-  - (a) TUDO RUNNING (igual Kanban normal);
-  - (b) Tarefas SCHEDULED / PAUSED agendadas para qualquer data ≤ hoje (incluindo atrasados);
-  - (c) Tarefas SCHEDULED / PAUSED COM scheduled_date NULO (nunca agendadas, todas as 114 O.S. pipeline, gargalos etc);
-  - Usa o mesmo template do Kanban normal, mas força `is_visual_mode=True` (botões de Trocar Senha/Sair/Tela Cheia + Fullscreen automático + relógio + botão "← Kanban Normal" para voltar).
-  - Qualquer usuário logado (MANAGER/OPERATIONAL/VISUAL) pode acessar. Um botão 📺 "Abrir Tela TV" no header do Kanban Normal linka para `/kanban/tv/` em aba nova (target=_blank).
-- TELA FUTURA (backlog, não implementada ainda): `/kanban/geral/` → visão de diagnóstico adicional se necessário.
+- [x] RF04 - Gestão de Peças (CRUD + compra/prev. chegada/chegada/atraso + relatório/ impressão)
+- [~] RF05 - Cadastro de Atividades e Comissões (Cadastro de Serviços + comissão por serviço e relatório; correlação automática por nome + seleção manual na OS)
+- [~] RF06 - Ordem de Serviço (O.S.) e Escalonamento Operacional (OS com agendamento por tarefa/colaborador/data/status; falta agendamento sequencial por hora e regras avançadas)
+- [~] RF07 - Kanban Produtivo Dinâmico (por data; iniciar/pausar/finalizar; 1 tarefa em andamento por colaborador; timer; atraso; auto-pausa 17:48; pátio; auto-refresh)
+- [ ] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais)
+- [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard e demais relatórios pendentes)
+- [ ] RF10 - Integração WhatsApp ↔️ Financeiro (UAIZAPI / Evolution API) — LANÇAMENTO POR COMANDO DE VOZ/TEXTO NO ZAP
 
 RF01 - Autenticação Customizada e Nível de Acesso
 
@@ -82,11 +51,7 @@ O sistema deve usar o motor nativo do Django, utilizando o E-mail como identific
 
 Cadastro público inicial de usuários com direcionamento para a tela de login.
 
-Níveis de acesso baseados em grupos/funções nativas do Django: Gerente, Financeiro, Orçamentista, Operacional, VISUAL (Smart TV).
-
-A tela de login deve exibir cards de acessos recentes salvos no navegador, permitindo selecionar rapidamente o usuário e informar apenas a senha.
-
-Perfil exclusivo VISUAL (Smart TV): Permite exceção de senha fraca para facilitar login rápido em TV. O validador de senha deve aplicar todas as regras de senha forte (mínimo 8 caracteres, não numérica, similaridade de atributos, senhas comuns) para TODOS os perfis, EXCETO quando user.role=VISUAL (e user.is_superuser=False). Superusuários NUNCA podem ter senha fraca, mesmo com role=VISUAL.
+Níveis de acesso baseados em grupos/funções nativas do Django: Gerente, Financeiro, Orçamentista, Operacional.
 
 RF02 - Agenda e Gestão de Orçamentos
 
@@ -96,15 +61,7 @@ Caso Não Aprovada , exigir obrigatoriamente a justificativa (Ex: Valor Alto, Pr
 
 Caso Autorizada , exigir: Data de Entrada do Veículo e Data de Início do Reparo.
 
-Ao aprovar um orçamento sem lançamento financeiro existente, o sistema deve abrir um modal para configurar entrada, saldo, franquia e previsão de recebimento antes de concluir a autorização.
-
-O orçamento deve permitir marcação de entrega do veículo, registrando usuário e data de entrega e retirando o item da listagem padrão de aprovados.
-
-A listagem principal de orçamentos deve priorizar os aprovados ainda não entregues e oferecer filtro separado para consultar os já entregues.
-
-Para apoiar implantação de veículos já entregues, o detalhe do orçamento deve permitir finalização administrativa exclusiva para gerente, disponível apenas quando o orçamento estiver autorizado, com OS existente e ainda não iniciada no operacional (nenhuma tarefa RUNNING / PAUSED / DONE).
-
-A finalização administrativa deve registrar data de entrega customizável, motivo obrigatório (máx 500 caracteres), usuário responsável e marcar o orçamento como entregue sem passar pelo Kanban e sem gerar comissão. O formulário exige confirmação dupla (confirm() no submit + checkbox obrigatório ciente de não geração de comissão) e, de forma transacional, fecha a OS e marca quaisquer tarefas PENDING remanescentes como DONE, garantindo consistência histórica. Pendências financeiras NÃO bloqueiam esta etapa — aparecem como aviso âmbar no modal, mas a entrega normal do veículo continua exigindo financeiro 100% consistente antes de liberar a chave.
+Se houver peças mapeadas que dependem de fornecedor externo, o início do reparo fica condicionado/bloqueado no sistema até a marcação de chegada das peças.
 
 RF03 - Importação de XML Cilia
 
@@ -142,29 +99,7 @@ Agendamento sequencial de execução (Data/Hora de início prevista para cada et
 
 Geração automática de cards no Kanban assim que a data programada for atingida ou a etapa anterior for finalizada.
 
-A tela da OS deve conter uma seção de serviços de terceiros com fornecedor, data programada, status e ação de finalização.
-
-Serviços marcados com o checkbox Oficina devem ser tratados como atividades internas, subindo para as tarefas da OS e não gerando despesa automática de terceiros.
-
-Serviços efetivamente terceirizados devem gerar despesa no financeiro ao serem concluídos.
-
-Deve existir um fluxo excepcional de finalização administrativa para implantação, capaz de encerrar a OS sem execução operacional quando o veículo já tiver sido entregue anteriormente. Este fluxo:
-(a) exige perfil GERENTE (ou superusuário);
-(b) bloqueia se qualquer tarefa da OS já estiver RUNNING, PAUSED ou DONE (garante uso só para implantação);
-(c) pede data de entrega, motivo (500 chars obrigatórios) e confirmação explícita do gerente ciente que NÃO gera comissão;
-(d) fecha WorkOrder.status=CLOSED e marca tarefas PENDING como DONE transacionalmente, mantendo histórico consistente.
-
 RF07 - Kanban Produtivo Dinâmico
-
-O Kanban operacional possui **DUAS telas distintas** (atualmente 1 implementada, 1 no backlog):
-
-**1) Kanban DO DIA (implementado, URL `/kanban/`)** → Tela diária usada por operadores e Smart TV (perfil VISUAL). Regra estrita de exibição:
-- (a) Sempre mostra tarefas status=RUNNING (independente de data, estão em execução);
-- (b) Mostra tarefas SCHEDULED / PAUSED **SOMENTE SE scheduled_date = dia selecionado** (HOJE por padrão). Não mostra atrasados agendados para datas passadas.
-- (c) Sábado é dia útil (weekday<6), Domingo (weekday=6) só mostra RUNNING.
-- Perfil VISUAL (Smart TV): Header com relógio HH:MM:SS atualizado a cada 1s, botões "Trocar senha / Tela cheia / Sair (Logout)", Auto-fullscreen automático após load (ou no 1º clique/toque), sem iniciar/pausar/finalizar ações.
-
-**2) Kanban GERAL (FUTURO / backlog, URL `/kanban/geral/`)** → Tela gerencial de diagnóstico. Mostra TODAS as tarefas contratadas, pendentes, pausadas e em andamento, INDEPENDENTEMENTE da data de agendamento. Objetivo: identificação de gargalos, fila de espera global e backlog de produção.
 
 Colunas fixas da esquerda para a direita: Patio , Desmontagem , Funilaria , Preparação , Pintura , Montagem , Polimento , Prep Entrega .
 
@@ -176,10 +111,6 @@ Regra de Bloqueio : O sistema deve impedir que o funcionário clique em "Iniciar
 
 Ao clicar em finalizar a tarefa, o sistema calcula e provisiona a comissão do respectivo colaborador automaticamente.
 
-O bloqueio de início deve respeitar a predecessora da mesma peça/item da OS, sem travar toda a etapa por pendências de outro item.
-
-O Pátio deve exibir apenas OS ainda ativas, removendo ordens já entregues ou integralmente concluídas.
-
 RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais)
 
 Ato de Aprovação do Orçamento : Disparar Modal de Entrada Financeira.
@@ -190,10 +121,6 @@ Se Seguradora : Perguntar se há Franquia a receber do cliente. Em caso positivo
 
 Controle de Fluxo de Caixa Básico : Lançamento manual de Entradas e Saídas categorizadas por Tipo de Despesa ( Operacional , Custo Fixo , Custo Variável ).
 
-Na entrega do veículo, o sistema deve bloquear pendências financeiras de particular e permitir recebíveis futuros de seguradora apenas quando houver vencimento posterior à entrega.
-
-Na finalização administrativa, o sistema deve reaproveitar essa mesma regra financeira antes de concluir a entrega e o encerramento da OS.
-
 RF09 - Dashboard e Relatórios
 
 Indicadores visuais rápidos de faturamento mensal, veículos na oficina por status e contas a pagar/receber da semana.
@@ -201,6 +128,45 @@ Indicadores visuais rápidos de faturamento mensal, veículos na oficina por sta
 Relatório de Comissões: Filtro por período de datas e por Funcionário, detalhando tarefas concluídas e valores a pagar.
 
 Relatório de Motivos de Recusa de Orçamentos para análise de conversão comercial.
+
+RF10 - Integração WhatsApp ↔️ Financeiro (UAIZAPI / Evolution API)
+
+Objetivo: Permitir que o usuário FINANCEIRA registre LANÇAMENTOS DE ENTRADA E SAÍDA no módulo Financeiro (CashMovement) DIRETAMENTE POR MENSAGEM DE TEXTO/ÁUDIO DO WHATSAPP (sem precisar abrir o sistema no navegador).
+Funciona como um "assistente financeiro" no WhatsApp, com comandos de texto simples (slashed (/pix, /cartao, /dinheiro, /despesa, /boleto) ou transcrição de áudio.
+
+Provedores suportados (2 opções futuras):
+1.  UAIZAPI / Z-API (assinatura paga mensal ~R$25 a 50/mês por número — custo baixo, sem bloqueios baixo, suporte.
+2.  Evolution API (open-source self-hosted gratuita — hospedada no próprio PythonAnywhere ou VPS; sem mensalidade; configuração inicial de instalação de containers.
+3.  (Alternativa oficial sem bloqueios: Meta WhatsApp Cloud API (R$0,008/mensagem — pagamento por uso, 100% segura, sem risco de bloqueio do WhatsApp oficial).
+
+Fluxo de Funcionamento:
+1.  Número de WhatsApp dedicado para o Financeiro (ex: (11) 9XXXX-XXXX) conectado via UAIZAPI/Evolution API.
+2.  Usuário (Financeiro / Gerente autorizado envia mensagem no formato de comando (ex: "/pix 500 os 435 cliente Fulano") ou áudio curto "Pix de R$500 da OS 435 do cliente Fulano").
+3.  UAIZAPI envia Webhook POST JSON (com texto/transcrição para endpoint Django em SUA_OFICINA.pythonanywhere.com/webhooks/zap/.
+4.  Django valida Token de autenticação do webhook (proteger de requisições não autorizadas).
+5.  Parser inteligente de texto/transcrição interpreta os campos: direção (IN/OUT), valor, método pagamento (PIX/CARTÃO/DINHEIRO/BOLETO), OS número, cliente/seguradora/fornecedor, categoria, vencimento.
+6.  Cria automaticamente um registro CashMovement compatível 100% com o módulo financeiro já existente (CashMovement já existente (CashCategory, BankAccount, Customer, Budget, Source (particular/seguradora).
+7.  Responde imediatamente no WhatsApp: confirmação ✅ "Lançamento #XXX confirmado" ou erro "⚠️ Formato correto: /pix VALOR os NNN cliente" se não reconhecer.
+8.  Logs de requisição webhook recebida em tabela WhatsAppWebhookLog para auditoria futura.
+
+Comandos padrão (atalhos para o usuário FINANCEIRO (texto direto no WhatsApp, barra-inicial "/" (facilidade):
+-   /pix 500 os 435 cliente
+-   /cartao 1200 os 440 seguradora Porto
+-   /dinheiro 300 os 450 particular
+-   /despesa 230 fornecedor "Oficina Jose" categoria material
+-   /boleto 800 categoria aluguel vencimento 30/10
+-   /salario 3000 colaborador Leo categoria pessoal
+-   /ajuda → lista todos comandos no chat do Zap
+
+Regras de Negócio e Segurança:
+-   Whitelist WHITELIST DE NÚMEROS: Somente números de usuários autorizados cadastrados (users.phone registrados no CustomUser vinculados com role MANAGER/FINANCE liberados acessam o assistente. Números bloqueados retornam erro de bloqueado e não faz nada no DB.
+-   Auditoria 100% Log: Toda chamada webhook recebida no banco WhatsAppWebhookLog (com body, remetente, data, status, erro se houve.
+-   Idempotência: Não lança duas vezes o mesmo lançamento mesmo se o webhook enviar duas vezes (chave idempotência = hash do texto + remetente + minuto).
+-   Validação de campos obrigatórios: valor > 0, categoria existe? OS # tem permissão?
+
+Modelos Novos (criar na app budgets / ou app dedicada integrations:
+-   WhatsAppWebhookLog: id, received_at, sender_phone, message_text, audio_transcript, parsed_ok, error_message, cash_movement_id FK (FK para CashMovement), raw_body JSON.
+-   WhatsAppIntegrationConfig: provedor (UAIZAPI/EVOLUTION/META_CLOUD), api_token, webhook_secret, numero_dedicado, active, default_bank_account_id FK (padrão para Pix
 
 4. Flowchart Mermaid com os Fluxos de UX
 
@@ -572,6 +538,19 @@ Caso possua, o botão é bloqueado na tela e exibe um alerta toast na cor vermel
 
 Ao clicar em finalizar, o status muda para 'Concluido' e limpa o flag de ocupação do funcionário.
 
+Épico 3: Assistente Financeiro por WhatsApp (Integração UAIZAPI / Evolution API)
+
+Como Usuário do Financeiro / Gerente,
+Quero lançar ENTRADAS e SAÍDAS no Fluxo de Caixa escrevendo uma mensagem rápida no WhatsApp (ex: "/pix 500 os 435 cliente"), sem precisar abrir o computador / navegador e fazer login no sistema,
+Para que eu consiga registrar pagamentos e recebimentos NA HORA, inclusive fora da oficina (ex: recebendo um Pix no fim de semana).
+
+Critérios de Aceite:
+Ao enviar uma mensagem no formato /pix 500 os 435 cliente Fulano, o sistema cria automaticamente um CashMovement (Entrada IN, fonte PARTICULAR, banco=PIX, OS=435 vinculada).
+O sistema responde NO PRÓPRIO WHATSAPP ✅ "Lançamento #77 criado: Entrada R$500,00 OS#435 — Particular Fulano" confirmando o registro.
+Apenas números de WHITELIST cadastrados (Financeiro / Gerente) têm permissão — números desconhecidos recebem mensagem de bloqueio e não alteram o banco de dados.
+Tudo já aparece normalmente no Dashboard Financeiro sem necessidade de importação (tudo integra 100% ao modelo CashMovement já existente).
+Se o usuário errar o comando (ex: valor faltando), o sistema responde automático: ⚠️ "Formato correto: /pix VALOR os NNN cliente NOME"
+
 10. Métricas de Sucesso & KPIs
 
 KPI de Produto : Tempo médio de conversão entre a importação do XML Cilia e a abertura real da Ordem de Serviço (Alvo: < 15 minutos).
@@ -579,6 +558,8 @@ KPI de Produto : Tempo médio de conversão entre a importação do XML Cilia e 
 KPI Operacional : Eficiência de Pátio (Diferença entre o tempo programado na O.S. e o tempo real consolidado pelo contador de play/pause do Kanban).
 
 KPI de Negócio/Financeiro : Índice de Recusa de Orçamentos (Mapeamento percentual volumétrico dos motivos informados no cancelamento).
+
+KPI do Assistente WhatsApp Financeiro: Taxa de Acerto do Parser — % de mensagens recebidas no WhatsApp que são automaticamente parseadas e salvas com sucesso como CashMovement, sem intervenção manual (Alvo: ≥ 90%).
 
 11. Riscos e Mitigações
 
@@ -590,13 +571,11 @@ Risco : O colaborador esquecer uma tarefa rodando eternamente no "Play" ao ir em
 
 Mitigação : Implementar uma rotina simples na view do dashboard do gestor para forçar o "Pause" ou encerramento manual de tarefas ativas por parte da gerência.
 
+Risco : Bloqueio temporário do número de WhatsApp (risco inerente a APIs NÃO OFICIAIS tipo UAIZAPI) por suspeita de automação não autorizada.
+
+Mitigação: (1) Para uso crítico em produção, priorizar META WHATSAPP CLOUD API (oficial, 0 risco de bloqueio). Se optar por UAIZAPI: (2) Usar um número de WhatsApp DEDICADO SOMENTE para o financeiro (não enviar spams, não enviar mensagens em massa — só responder o financeiro com mensagens curtas de confirmação, 1:1). (3) Rotina manual fallback: tela de lançamento manual no sistema continua disponível normalmente (não depende do Zap para a rotina diária ser executada).
+
 12. Lista de Tarefas (Backlog Separado em Sprints)
-
-Atualização do backlog em 25/07/2026
-
-- Entregue: mensagens globais no base, fluxo de terceiros/oficina na OS, sincronização de lavagem/polimento, bloqueios por predecessora, botão de entrega, filtro de entregues, melhoria da tela de login com cards de acesso recente e finalização administrativa com auditoria.
-- Em andamento: acabamento do fluxo de entrega com modal financeiro final e consolidação ponta a ponta das regras novas.
-- Observação: o backlog detalhado abaixo foi mantido como histórico do planejamento original do produto.
 
 Sprint 1: Fundação, Autenticação Customizada e Design System Base
 
@@ -680,4 +659,57 @@ Sprint 3: Módulo Cilia - Orçamentos, Peças e Engine de Parse XML (App budgets
 
 Tarefa 8: Configuração das Models de Orçamentos e Peças
 
-Subtarefa 8.1: Executar criação da app loc
+Subtarefa 8.1: Executar criação da app budgets (app de orçamentos) e cadastrar INSTALLED_APPS, models Budget, Piece, etc.
+
+[...]
+
+Sprint 4: Operacional (Ordem de Serviço OS + Kanban, implementado parcial)
+Sprint 5: Financeiro Básico (CashMovement, Dashboard Financeiro, implementado parcial)
+Sprint 6: Lotes de Tarefas Fase 1 e 2 (lotes, rateio cutoff 17:48, implementado)
+Sprint 7: Dashboard Insights Financeiros, Relatórios, Agendamento por Hora
+
+Sprint 8: 🟡 Implementação FUTURA — Assistente Financeiro WhatsApp (RF10 - UAIZAPI / Evolution API)
+
+Objetivo da Sprint: Entregar a integração completa WhatsApp ↔️ CashMovement, permitindo que o financeiro lance entrada/saída por mensagem de texto/áudio no Zap.
+
+Tarefa 1: Definir Provedor WhatsApp (UAIZAPI pago vs Evolution open-source vs Meta Cloud API oficial)
+Subtarefa 1.1: Escolher provedor com base em custo x risco de bloqueio.
+Subtarefa 1.2: Criar conta no provedor e adquirir/ conectar o número WhatsApp DEDICADO do Financeiro.
+Subtarefa 1.3: Obter API TOKEN, SECRET WEBHOOK e URL BASE do provedor escolhido.
+
+Tarefa 2: Criar Modelos novos no banco (models.py budgets ou integrations app dedicada)
+Subtarefa 2.1: Model WhatsAppIntegrationConfig: provedor, api_token, webhook_secret, numero_dedicado, active, default_bank_account_id FK, created_at, updated_at.
+Subtarefa 2.2: Model WhatsAppWebhookLog: received_at, sender_phone, message_text, audio_transcript, parsed_ok, error_message, cash_movement_id FK (para CashMovement), raw_body JSON, idempotency_key unique_together.
+Subtarefa 2.3: Criar migration: makemigrations budgets + migrate.
+Subtarefa 2.4: Criar tela de Admin Django / Configuração no painel para o Gerente poder configurar/ligar/desligar a integração, editar tokens, WHITELIST numeros autorizados (salvar em campo JSON em WhatsAppIntegrationConfig.authorized_phones).
+
+Tarefa 3: Criar Webhook Endpoint no Django (budgets/urls.py e budgets/views.py)
+Subtarefa 3.1: Rota POST /webhooks/zap/ (ou /api/integrations/whatsapp/webhook) com autenticação token/secret no header ou query string.
+Subtarefa 3.2: View WhatsAppWebhookView(View): POST recebe body JSON, valida secret, salva raw_body + remetente + texto em WhatsAppWebhookLog.
+Subtarefa 3.3: Validação WHITELIST: sender_phone não está em authorized_phones → salva log com erro bloqueado → envia mensagem resposta de bloqueio e não cria CashMovement → return HTTP 200.
+Subtarefa 3.4: Chave idempotência (minute_key + hash texto + remetente) — se já existe WhatsAppWebhookLog com idempotency_key igual → retorna HTTP 200 sem duplicar lançamento.
+
+Tarefa 4: Implementar Parser Inteligente de Texto / Comandos do WhatsApp
+Subtarefa 4.1: Helper service parse_whatsapp_command(text: str, sender_phone: str) -> dict: detecta o comando ("/pix", "/cartao", "/dinheiro", "/despesa", "/boleto", "/salario", "/ajuda").
+Subtarefa 4.2: Extrai campos do comando: valor Decimal, direcao IN/OUT, bank_account (PIX/CARTÃO/DINHEIRO/BOLETO → busca BankAccount correspondente no banco), budget_id (OS #NNN, busca WorkOrder.budget → budget FK), source (particular/seguradora/empresa), category (busca CashCategory por nome), supplier/fornecedor, due_date (vencimento DD/MM/YYYY).
+Subtarefa 4.3: Caso comando = /ajuda → retorna mensagem texto lista de todos comandos.
+Subtarefa 4.4: Validação: valor > 0, categoria encontrada, OS # existente (se informado). Campos ausentes → retorna mensagem erro de formato correto.
+
+Tarefa 5: Criar CashMovement e Enviar Resposta Automática WhatsApp
+Subtarefa 5.1: Após parse com sucesso: Criar CashMovement.objects.create() com todos campos preenchidos (direction, amount, bank_account, budget, source, category, supplier, description, due_date, launch_date=hoje, is_realized=True padrão recebidos PIX/CARTÃO).
+Subtarefa 5.2: Salva cash_movement_id no WhatsAppWebhookLog.
+Subtarefa 5.3: Função send_whatsapp_message(phone, text): HTTP POST para endpoint do provedor (UAIZAPI / Evolution / Meta Cloud) envia a resposta de confirmação ✅ "Lançamento #XX criado: Entrada R$500,00 OS#435 — Particular Fulano" ou mensagem de erro ⚠️.
+Subtarefa 5.4: Trata resposta de erro do provedor de envio → salva log.
+
+Tarefa 6: Testes Unitários + Django check 0 + Documentação
+Subtarefa 6.1: TestCase para parse_whatsapp_command (parser 100% coberto de casos sucesso/erro).
+Subtarefa 6.2: TestCase view webhook com token válido / inválido / número fora whitelist / OS inexistente.
+Subtarefa 6.3: TestCase CashMovement criado corretamente, idempotência (mesma mensagem 2x não duplica).
+Subtarefa 6.4: python manage.py check → 0 issues.
+Subtarefa 6.5: Criar documento / ou seção PRD atualizada com passo a passo de como conectar o número, exemplos comandos para enviar no WhatsApp impresso na recepção.
+
+Tarefa 7: Deploy em Produção (PythonAnywhere)
+Subtarefa 7.1: Adicionar /webhooks/zap/ em ALLOWED_HOSTS se necessário; CSRF exempt (por ser webhook POST externo sem csrf cookie).
+Subtarefa 7.2: Configurar Webhook URL no provedor UAIZAPI apontando para https://SEU_USUARIO.pythonanywhere.com/webhooks/zap/.
+Subtarefa 7.3: Testar conexão: enviar /ajuda no WhatsApp pelo número financeiro → receber resposta de lista comandos.
+Subtarefa 7.4: Testar lançamento real /pix 1 os 1 particular → CashMovement criado, resposta automática ✅.
