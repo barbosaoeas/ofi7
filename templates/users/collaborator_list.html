@@ -1,58 +1,84 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Colaboradores | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Colaboradores</h1>
+    <h1 class='text-2xl font-semibold text-slate-900'>Colaboradores</h1>
     <a href='{% url "users:collaborator_create" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
       Novo colaborador
     </a>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-slate-100 text-amber-700'>
+      <thead class='bg-slate-100 text-slate-900'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Nome</th>
-          <th class='px-4 py-3 font-semibold'>E-mail login</th>
           <th class='px-4 py-3 font-semibold'>Função</th>
+          <th class='px-4 py-3 font-semibold'>E-mail login</th>
           <th class='px-4 py-3 font-semibold'>Telefone</th>
           <th class='px-4 py-3 font-semibold'>Comissão</th>
+          <th class='px-4 py-3 font-semibold'>Status</th>
           <th class='px-4 py-3 font-semibold'></th>
         </tr>
       </thead>
-      <tbody class='divide-y divide-[#262626]'>
+      <tbody class='divide-y divide-slate-200'>
         {% for c in collaborators %}
-          <tr class='hover:bg-slate-50'>
+          <tr class='hover:bg-slate-50 {% if not c.is_active %}opacity-60 bg-slate-50/60{% endif %}'>
             <td class='px-4 py-3'>
               <div class='flex items-center gap-3'>
                 {% if c.photo_url %}
                   <img src='{{ c.photo_url }}' alt='{{ c.name }}' class='h-10 w-10 rounded-full border border-slate-200 bg-white object-cover' />
                 {% else %}
-                  <div class='flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-amber-700'>
+                  <div class='flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-semibold text-slate-700'>
                     {{ c.name|slice:':2'|upper }}
                   </div>
                 {% endif %}
-                <div>{{ c.name }}</div>
+                <div class='font-medium text-slate-900'>{{ c.name }}</div>
               </div>
             </td>
-            <td class='px-4 py-3 text-slate-500'>{{ c.email|default:'-' }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ c.get_function_display }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ c.phone|default:'-' }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ c.commission_percent|floatformat:2 }}%</td>
+            <td class='px-4 py-3 text-slate-700'>{{ c.get_function_display }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ c.email|default:'-' }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ c.phone|default:'-' }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ c.commission_percent|floatformat:2 }}%</td>
+            <td class='px-4 py-3'>
+              {% if c.is_active %}
+                <span class='inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700 ring-1 ring-inset ring-green-600/20'>
+                  <span class='h-1.5 w-1.5 rounded-full bg-green-500'></span>
+                  Ativo
+                </span>
+              {% else %}
+                <span class='inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-500/20'>
+                  <span class='h-1.5 w-1.5 rounded-full bg-slate-400'></span>
+                  Inativo
+                </span>
+              {% endif %}
+            </td>
             <td class='px-4 py-3 text-right'>
               <div class='flex flex-wrap justify-end gap-2'>
-                <a href='{% url "users:collaborator_update" c.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>
+                <a href='{% url "users:collaborator_update" c.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-3 py-2 font-medium text-blue-700 hover:bg-blue-100'>
                   Editar
                 </a>
                 <form method='post' action='{% url "users:collaborator_reset_password" c.pk %}' class='inline' onsubmit='return confirm("Resetar senha para 123456?");'>
                   {% csrf_token %}
-                  <button type='submit' class='rounded-md border border-[#AA882C] bg-white px-3 py-2 hover:border-[#D4AF37]'>
+                  <button type='submit' class='rounded-md border border-slate-400 bg-slate-50 px-3 py-2 font-medium text-slate-800 hover:bg-slate-100'>
                     Resetar senha
                   </button>
                 </form>
-                <a href='{% url "users:collaborator_delete" c.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>
+                <form method='post' action='{% url "users:collaborator_toggle_active" c.pk %}' class='inline'>
+                  {% csrf_token %}
+                  {% if c.is_active %}
+                    <button type='submit' class='rounded-md border border-amber-500 bg-amber-50 px-3 py-2 font-medium text-amber-700 hover:bg-amber-100'>
+                      Inativar
+                    </button>
+                  {% else %}
+                    <button type='submit' class='rounded-md border border-green-500 bg-green-50 px-3 py-2 font-medium text-green-700 hover:bg-green-100'>
+                      Ativar
+                    </button>
+                  {% endif %}
+                </form>
+                <a href='{% url "users:collaborator_delete" c.pk %}' class='rounded-md border border-red-500 bg-red-50 px-3 py-2 font-medium text-red-700 hover:bg-red-100'>
                   Excluir
                 </a>
               </div>
@@ -60,7 +86,7 @@
           </tr>
         {% empty %}
           <tr>
-            <td class='px-4 py-6 text-slate-500' colspan='6'>Nenhum colaborador cadastrado.</td>
+            <td class='px-4 py-6 text-slate-500' colspan='7'>Nenhum colaborador cadastrado.</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -68,14 +94,14 @@
   </div>
 
   {% if is_paginated %}
-    <div class='mt-6 flex items-center justify-between text-sm text-slate-500'>
+    <div class='mt-6 flex items-center justify-between text-sm text-slate-600'>
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>

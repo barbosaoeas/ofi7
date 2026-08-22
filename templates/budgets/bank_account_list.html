@@ -1,12 +1,12 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Bancos | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Bancos e contas</h1>
+    <h1 class='text-2xl font-semibold text-slate-900'>Bancos e contas</h1>
     <div class='flex flex-wrap gap-3'>
-      <a href='{% url "core:dashboard" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "core:dashboard" %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>
         Voltar
       </a>
       <a href='{% url "budgets:bank_account_create" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
@@ -15,9 +15,9 @@
     </div>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-slate-100 text-amber-700'>
+      <thead class='bg-slate-100 text-slate-900'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Banco</th>
           <th class='px-4 py-3 font-semibold'>Conta</th>
@@ -27,17 +27,29 @@
           <th class='px-4 py-3 font-semibold'></th>
         </tr>
       </thead>
-      <tbody class='divide-y divide-[#262626]'>
+      <tbody class='divide-y divide-slate-200'>
         {% for bank in bank_accounts %}
-          <tr class='hover:bg-slate-50'>
-            <td class='px-4 py-3'>{{ bank.bank_name }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ bank.account_name }}{% if bank.account_number %} · {{ bank.account_number }}{% endif %}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ bank.get_account_type_display }}</td>
-            <td class='px-4 py-3 text-slate-500'>R$ {{ bank.initial_balance|floatformat:2 }}</td>
-            <td class='px-4 py-3 text-slate-500'>{% if bank.is_active %}Ativa{% else %}Inativa{% endif %}</td>
+          <tr class='hover:bg-slate-50 {% if not bank.is_active %}opacity-60 bg-slate-50/60{% endif %}'>
+            <td class='px-4 py-3 font-medium text-slate-900'>{{ bank.bank_name }}</td>
+            <td class='px-4 py-3 text-slate-700'>{{ bank.account_name }}{% if bank.account_number %} · {{ bank.account_number }}{% endif %}</td>
+            <td class='px-4 py-3 text-slate-700'>{{ bank.get_account_type_display }}</td>
+            <td class='px-4 py-3 text-slate-700'>R$ {{ bank.initial_balance|floatformat:2 }}</td>
+            <td class='px-4 py-3'>
+              {% if bank.is_active %}
+                <span class='inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700 ring-1 ring-inset ring-green-600/20'>
+                  <span class='h-1.5 w-1.5 rounded-full bg-green-500'></span>Ativa
+                </span>
+              {% else %}
+                <span class='inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-500/20'>
+                  <span class='h-1.5 w-1.5 rounded-full bg-slate-400'></span>Inativa
+                </span>
+              {% endif %}
+            </td>
             <td class='px-4 py-3 text-right'>
-              <a href='{% url "budgets:bank_account_update" bank.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>Editar</a>
-              <a href='{% url "budgets:bank_account_delete" bank.pk %}' class='ml-2 rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>Excluir</a>
+              <div class='flex flex-wrap justify-end gap-2'>
+                <a href='{% url "budgets:bank_account_update" bank.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-3 py-2 font-medium text-blue-700 hover:bg-blue-100'>Editar</a>
+                <a href='{% url "budgets:bank_account_delete" bank.pk %}' class='rounded-md border border-red-500 bg-red-50 px-3 py-2 font-medium text-red-700 hover:bg-red-100'>Excluir</a>
+              </div>
             </td>
           </tr>
         {% empty %}

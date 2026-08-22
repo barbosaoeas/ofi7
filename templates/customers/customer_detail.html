@@ -1,59 +1,70 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Cliente | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>{{ customer.name }}</h1>
-    <a href='{% url "customers:vehicle_create" customer.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
-      Adicionar veículo
-    </a>
+    <h1 class='text-2xl font-semibold text-slate-900'>{{ customer.name }}</h1>
+    <div class='flex flex-wrap gap-2'>
+      <a href='{% url "customers:customer_update" customer.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-4 py-2 font-medium text-blue-700 hover:bg-blue-100'>
+        Editar cliente
+      </a>
+      <a href='{% url "customers:vehicle_create" customer.pk %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+        Adicionar veículo
+      </a>
+    </div>
   </div>
 
   <div class='mt-6 grid grid-cols-1 gap-6 md:grid-cols-2'>
-    <div class='rounded-xl border border-slate-200 bg-white p-6'>
-      <h2 class='text-lg font-semibold text-amber-700'>Dados</h2>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 text-slate-900'>
+      <h2 class='text-lg font-semibold text-slate-900'>Dados</h2>
       <dl class='mt-4 grid grid-cols-1 gap-3 text-sm'>
         <div>
           <dt class='text-slate-500'>CPF/CNPJ</dt>
-          <dd class='mt-1'>{{ customer.document_cpf_cnpj }}</dd>
+          <dd class='mt-1 font-medium text-slate-900'>{{ customer.document_cpf_cnpj }}</dd>
         </div>
         <div>
           <dt class='text-slate-500'>Telefone</dt>
-          <dd class='mt-1'>{{ customer.phone|default:'-' }}</dd>
+          <dd class='mt-1 font-medium text-slate-700'>{{ customer.phone|default:'-' }}</dd>
         </div>
         <div>
           <dt class='text-slate-500'>E-mail</dt>
-          <dd class='mt-1'>{{ customer.email|default:'-' }}</dd>
+          <dd class='mt-1 font-medium text-slate-700'>{{ customer.email|default:'-' }}</dd>
         </div>
       </dl>
     </div>
 
-    <div class='rounded-xl border border-slate-200 bg-white p-6'>
+    <div class='rounded-xl border border-slate-200 bg-white p-6 text-slate-900'>
       <div class='flex items-center justify-between'>
-        <h2 class='text-lg font-semibold text-amber-700'>Veículos</h2>
-        <span class='text-sm text-slate-500'>{{ customer.vehicles.count }}</span>
+        <h2 class='text-lg font-semibold text-slate-900'>Veículos</h2>
+        <span class='text-sm font-medium text-slate-600'>{{ customer.vehicles.count }}</span>
       </div>
 
       <div class='mt-4 overflow-hidden rounded-lg border border-slate-200'>
         <table class='w-full text-left text-sm'>
-          <thead class='bg-slate-100 text-amber-700'>
+          <thead class='bg-slate-100 text-slate-900'>
             <tr>
               <th class='px-4 py-3 font-semibold'>Placa</th>
               <th class='px-4 py-3 font-semibold'>Veículo</th>
               <th class='px-4 py-3 font-semibold'>Ano</th>
+              <th class='px-4 py-3 font-semibold'></th>
             </tr>
           </thead>
-          <tbody class='divide-y divide-[#262626]'>
+          <tbody class='divide-y divide-slate-200'>
             {% for vehicle in customer.vehicles.all %}
               <tr class='hover:bg-slate-50'>
-                <td class='px-4 py-3'>{{ vehicle.plate }}</td>
-                <td class='px-4 py-3 text-slate-500'>{{ vehicle.brand }} {{ vehicle.model }}</td>
-                <td class='px-4 py-3 text-slate-500'>{{ vehicle.year|default:'-' }}</td>
+                <td class='px-4 py-3 font-semibold text-slate-900'>{{ vehicle.plate }}</td>
+                <td class='px-4 py-3 text-slate-700'>{{ vehicle.brand }} {{ vehicle.model }}</td>
+                <td class='px-4 py-3 text-slate-600'>{{ vehicle.year|default:'-' }}</td>
+                <td class='px-4 py-3 text-right'>
+                  <a href='{% url "customers:vehicle_update" customer.pk vehicle.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100'>
+                    Editar
+                  </a>
+                </td>
               </tr>
             {% empty %}
               <tr>
-                <td class='px-4 py-6 text-slate-500' colspan='3'>Nenhum veículo cadastrado.</td>
+                <td class='px-4 py-6 text-slate-500' colspan='4'>Nenhum veículo cadastrado.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -63,7 +74,7 @@
   </div>
 
   <div class='mt-6'>
-    <a href='{% url "customers:customer_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>
+    <a href='{% url "customers:customer_list" %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>
       Voltar para clientes
     </a>
   </div>

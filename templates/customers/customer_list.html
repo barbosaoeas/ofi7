@@ -1,18 +1,18 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Clientes | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Clientes</h1>
+    <h1 class='text-2xl font-semibold text-slate-900'>Clientes</h1>
     <a href='{% url "customers:customer_create" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
       Novo cliente
     </a>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-slate-100 text-amber-700'>
+      <thead class='bg-slate-100 text-slate-900'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Nome</th>
           <th class='px-4 py-3 font-semibold'>CPF/CNPJ</th>
@@ -21,15 +21,15 @@
           <th class='px-4 py-3 font-semibold'></th>
         </tr>
       </thead>
-      <tbody class='divide-y divide-[#262626]'>
+      <tbody class='divide-y divide-slate-200'>
         {% for customer in customers %}
           <tr class='hover:bg-slate-50'>
-            <td class='px-4 py-3'>{{ customer.name }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ customer.document_cpf_cnpj }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ customer.phone|default:'-' }}</td>
-            <td class='px-4 py-3 text-slate-500'>{{ customer.email|default:'-' }}</td>
+            <td class='px-4 py-3 font-medium text-slate-900'>{{ customer.name }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ customer.document_cpf_cnpj }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ customer.phone|default:'-' }}</td>
+            <td class='px-4 py-3 text-slate-600'>{{ customer.email|default:'-' }}</td>
             <td class='px-4 py-3 text-right'>
-              <a href='{% url "customers:customer_detail" customer.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>
+              <a href='{% url "customers:customer_detail" customer.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-3 py-2 font-medium text-blue-700 hover:bg-blue-100'>
                 Ver
               </a>
             </td>
@@ -44,14 +44,14 @@
   </div>
 
   {% if is_paginated %}
-    <div class='mt-6 flex items-center justify-between text-sm text-slate-500'>
+    <div class='mt-6 flex items-center justify-between text-sm text-slate-600'>
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>

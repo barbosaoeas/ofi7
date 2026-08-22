@@ -16,6 +16,23 @@ from .models import Collaborator, CustomUser
 DEFAULT_PASSWORD = '123456'
 
 
+class CollaboratorToggleActiveView(LoginRequiredMixin, RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def post(self, request, pk):
+        collaborator = Collaborator.objects.filter(pk=pk).first()
+        if collaborator is None:
+            messages.error(request, 'Colaborador não encontrado.')
+            return redirect('users:collaborator_list')
+        collaborator.is_active = not collaborator.is_active
+        collaborator.save(update_fields=['is_active', 'updated_at'])
+        if collaborator.is_active:
+            messages.success(request, f'{collaborator.name} ativado(a).')
+        else:
+            messages.success(request, f'{collaborator.name} inativado(a).')
+        return redirect('users:collaborator_list')
+
+
 def sync_collaborator_login(collaborator, previous_email=None):
     login_email = (getattr(collaborator, 'email', '') or '').strip().lower()
     old_email = (previous_email or '').strip().lower()

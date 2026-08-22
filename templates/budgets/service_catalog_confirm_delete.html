@@ -1,21 +1,20 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Excluir serviço | Controle Oficina{% endblock %}
 
 {% block content %}
-  <div class='mx-auto max-w-xl rounded-xl border border-slate-200 bg-white p-6'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Excluir serviço</h1>
-    <p class='mt-4 text-sm text-slate-500'>Tem certeza que deseja excluir <span class='text-slate-900'>{{ object.name }}</span>?</p>
+  <div class='mx-auto max-w-xl rounded-xl border border-red-200 bg-white p-6 text-slate-900'>
+    <h1 class='text-2xl font-semibold text-red-700'>Excluir serviço</h1>
+    <p class='mt-4 text-sm text-slate-600'>Tem certeza que deseja excluir <span class='font-semibold text-slate-900'>{{ object.name }}</span>?</p>
 
     <form method='post' class='mt-6 flex flex-wrap gap-3'>
       {% csrf_token %}
-      <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
+      <button type='submit' class='rounded-md bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700'>
         Excluir
       </button>
-      <a href='{% url "budgets:service_catalog_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>
+      <a href='{% url "budgets:service_catalog_list" %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>
         Cancelar
       </a>
     </form>
   </div>
 {% endblock %}
-

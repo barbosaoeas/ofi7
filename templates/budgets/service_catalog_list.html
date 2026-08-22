@@ -1,18 +1,18 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}Serviços | Controle Oficina{% endblock %}
 
 {% block content %}
   <div class='flex flex-wrap items-center justify-between gap-3'>
-    <h1 class='text-2xl font-semibold text-amber-700'>Serviços</h1>
+    <h1 class='text-2xl font-semibold text-slate-900'>Serviços</h1>
     <a href='{% url "budgets:service_catalog_create" %}' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
       Novo serviço
     </a>
   </div>
 
-  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white'>
+  <div class='mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900'>
     <table class='w-full text-left text-sm'>
-      <thead class='bg-slate-100 text-amber-700'>
+      <thead class='bg-slate-100 text-slate-900'>
         <tr>
           <th class='px-4 py-3 font-semibold'>Nome</th>
           <th class='px-4 py-3 font-semibold'>Valor padrão</th>
@@ -20,12 +20,12 @@
           <th class='px-4 py-3 font-semibold'></th>
         </tr>
       </thead>
-      <tbody class='divide-y divide-[#262626]'>
+      <tbody class='divide-y divide-slate-200'>
         {% for s in services %}
           <tr class='hover:bg-slate-50'>
-            <td class='px-4 py-3'>{{ s.name }}</td>
-            <td class='px-4 py-3 text-slate-500'>R$ {{ s.default_value|floatformat:2 }}</td>
-            <td class='px-4 py-3 text-slate-500'>
+            <td class='px-4 py-3 font-medium text-slate-900'>{{ s.name }}</td>
+            <td class='px-4 py-3 text-slate-700'>R$ {{ s.default_value|floatformat:2 }}</td>
+            <td class='px-4 py-3 text-slate-700'>
               {% if s.commission_mode == 'PERCENT' %}
                 {{ s.commission_value|floatformat:2 }}%
               {% elif s.commission_mode == 'FIXED' %}
@@ -35,12 +35,14 @@
               {% endif %}
             </td>
             <td class='px-4 py-3 text-right'>
-              <a href='{% url "budgets:service_catalog_update" s.pk %}' class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>
-                Editar
-              </a>
-              <a href='{% url "budgets:service_catalog_delete" s.pk %}' class='ml-2 rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]'>
-                Excluir
-              </a>
+              <div class='flex flex-wrap justify-end gap-2'>
+                <a href='{% url "budgets:service_catalog_update" s.pk %}' class='rounded-md border border-blue-500 bg-blue-50 px-3 py-2 font-medium text-blue-700 hover:bg-blue-100'>
+                  Editar
+                </a>
+                <a href='{% url "budgets:service_catalog_delete" s.pk %}' class='rounded-md border border-red-500 bg-red-50 px-3 py-2 font-medium text-red-700 hover:bg-red-100'>
+                  Excluir
+                </a>
+              </div>
             </td>
           </tr>
         {% empty %}
@@ -53,14 +55,14 @@
   </div>
 
   {% if is_paginated %}
-    <div class='mt-6 flex items-center justify-between text-sm text-slate-500'>
+    <div class='mt-6 flex items-center justify-between text-sm text-slate-600'>
       <div>Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</div>
       <div class='flex gap-2'>
         {% if page_obj.has_previous %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.previous_page_number }}'>Anterior</a>
         {% endif %}
         {% if page_obj.has_next %}
-          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 hover:border-[#D4AF37]' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
+          <a class='rounded-md border border-slate-300 bg-white px-3 py-2 font-medium text-slate-800 hover:bg-slate-50 hover:border-blue-500' href='?page={{ page_obj.next_page_number }}'>Próxima</a>
         {% endif %}
       </div>
     </div>

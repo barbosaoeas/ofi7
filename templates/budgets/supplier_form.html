@@ -1,57 +1,64 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 
 {% block title %}{% if object %}Editar fornecedor{% else %}Novo fornecedor{% endif %} | Controle Oficina{% endblock %}
 
 {% block content %}
-  <div class='mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-6'>
+  <div class='mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white p-6 text-slate-900'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
-      <h1 class='text-2xl font-semibold text-amber-700'>{% if object %}Editar fornecedor{% else %}Novo fornecedor{% endif %}</h1>
-      <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>Voltar</a>
+      <h1 class='text-2xl font-semibold text-slate-900'>{% if object %}Editar fornecedor{% else %}Novo fornecedor{% endif %}</h1>
+      <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>Voltar</a>
     </div>
 
     <form method='post' class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-2' data-disable-on-submit='true'>
       {% csrf_token %}
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.name.id_for_label }}'>Nome</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.name.id_for_label }}'>Nome</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+        {% if form.name.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.name.errors }}</div>{% endif %}
       </div>
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.kind.id_for_label }}'>Tipo</label>
-        <select class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' name='{{ form.kind.html_name }}' id='{{ form.kind.id_for_label }}'>
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.kind.id_for_label }}'>Tipo</label>
+        <select class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' name='{{ form.kind.html_name }}' id='{{ form.kind.id_for_label }}'>
           {% for v, label in form.kind.field.choices %}
             <option value='{{ v }}' {% if form.kind.value == v %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
+        {% if form.kind.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.kind.errors }}</div>{% endif %}
       </div>
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.document.id_for_label }}'>CPF/CNPJ</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' type='text' inputmode='numeric' data-mask='doc' name='{{ form.document.html_name }}' id='{{ form.document.id_for_label }}' value='{{ form.document.value|default_if_none:"" }}' />
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.document.id_for_label }}'>CPF/CNPJ</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='text' inputmode='numeric' data-mask='doc' name='{{ form.document.html_name }}' id='{{ form.document.id_for_label }}' value='{{ form.document.value|default_if_none:"" }}' />
+        {% if form.document.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.document.errors }}</div>{% endif %}
       </div>
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.phone.id_for_label }}'>Telefone</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' type='text' inputmode='tel' data-mask='phone' name='{{ form.phone.html_name }}' id='{{ form.phone.id_for_label }}' value='{{ form.phone.value|default_if_none:"" }}' />
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.phone.id_for_label }}'>Telefone</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='text' inputmode='tel' data-mask='phone' name='{{ form.phone.html_name }}' id='{{ form.phone.id_for_label }}' value='{{ form.phone.value|default_if_none:"" }}' />
+        {% if form.phone.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.phone.errors }}</div>{% endif %}
       </div>
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.email.id_for_label }}'>E-mail</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' type='email' name='{{ form.email.html_name }}' id='{{ form.email.id_for_label }}' value='{{ form.email.value|default_if_none:"" }}' />
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.email.id_for_label }}'>E-mail</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='email' name='{{ form.email.html_name }}' id='{{ form.email.id_for_label }}' value='{{ form.email.value|default_if_none:"" }}' />
+        {% if form.email.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.email.errors }}</div>{% endif %}
       </div>
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.contact_name.id_for_label }}'>Contato</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' type='text' name='{{ form.contact_name.html_name }}' id='{{ form.contact_name.id_for_label }}' value='{{ form.contact_name.value|default_if_none:"" }}' />
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.contact_name.id_for_label }}'>Contato</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='text' name='{{ form.contact_name.html_name }}' id='{{ form.contact_name.id_for_label }}' value='{{ form.contact_name.value|default_if_none:"" }}' />
+        {% if form.contact_name.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.contact_name.errors }}</div>{% endif %}
       </div>
       <div class='md:col-span-2'>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.notes.id_for_label }}'>Observações</label>
-        <textarea class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900' name='{{ form.notes.html_name }}' id='{{ form.notes.id_for_label }}' rows='3'>{{ form.notes.value|default_if_none:"" }}</textarea>
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.notes.id_for_label }}'>Observações</label>
+        <textarea class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' name='{{ form.notes.html_name }}' id='{{ form.notes.id_for_label }}' rows='3'>{{ form.notes.value|default_if_none:"" }}</textarea>
+        {% if form.notes.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.notes.errors }}</div>{% endif %}
       </div>
-      <div class='md:col-span-2'>
-        <label class='flex items-center gap-2 text-sm text-slate-500' for='{{ form.is_active.id_for_label }}'>
-          <input type='checkbox' class='h-4 w-4 rounded border border-slate-300 bg-white' name='{{ form.is_active.html_name }}' id='{{ form.is_active.id_for_label }}' {% if form.is_active.value %}checked{% endif %} />
+      <div class='md:col-span-2 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3'>
+        <input type='checkbox' id='{{ form.is_active.id_for_label }}' name='{{ form.is_active.html_name }}' {% if form.is_active.value or form.is_active.value is None %}checked{% endif %} class='h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500' />
+        <label for='{{ form.is_active.id_for_label }}' class='text-sm font-medium text-slate-800'>
           Fornecedor ativo
         </label>
       </div>
       <div class='md:col-span-2 flex flex-wrap gap-3'>
         <button type='submit' class='rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>Salvar</button>
-        <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>Cancelar</a>
+        <a href='{% url "budgets:supplier_list" %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>Cancelar</a>
       </div>
     </form>
   </div>

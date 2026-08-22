@@ -7,6 +7,7 @@ from .views import (
     CollaboratorDeleteView,
     CollaboratorListView,
     CollaboratorResetPasswordView,
+    CollaboratorToggleActiveView,
     CollaboratorUpdateView,
     CustomLoginView,
     RegisterView,
@@ -40,5 +41,6 @@ urlpatterns = [
     path('colaboradores/novo/', CollaboratorCreateView.as_view(), name='collaborator_create'),
     path('colaboradores/<int:pk>/editar/', CollaboratorUpdateView.as_view(), name='collaborator_update'),
     path('colaboradores/<int:pk>/resetar-senha/', CollaboratorResetPasswordView.as_view(), name='collaborator_reset_password'),
+    path('colaboradores/<int:pk>/alternar-ativo/', CollaboratorToggleActiveView.as_view(), name='collaborator_toggle_active'),
     path('colaboradores/<int:pk>/excluir/', CollaboratorDeleteView.as_view(), name='collaborator_delete'),
 ]

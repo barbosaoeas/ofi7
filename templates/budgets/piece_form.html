@@ -1,18 +1,18 @@
-﻿{% extends 'base.html' %}
+{% extends 'base.html' %}
 {% load l10n %}
 
 {% block title %}{% if is_edit %}Editar peça{% else %}Nova peça{% endif %} | Controle Oficina{% endblock %}
 
 {% block content %}
-  <div class='mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white p-6'>
+  <div class='mx-auto max-w-4xl rounded-xl border border-slate-200 bg-white p-6 text-slate-900'>
     <div class='flex flex-wrap items-center justify-between gap-3'>
-      <h1 class='text-2xl font-semibold text-amber-700'>{% if is_edit %}Editar peça{% else %}Nova peça{% endif %}</h1>
-      <a href='{% url "budgets:budget_detail" budget.pk %}' class='rounded-md border border-slate-300 bg-white px-4 py-2 hover:border-[#D4AF37]'>
+      <h1 class='text-2xl font-semibold text-slate-900'>{% if is_edit %}Editar peça{% else %}Nova peça{% endif %}</h1>
+      <a href='{% url "budgets:budget_detail" budget.pk %}' class='rounded-md border border-slate-400 bg-slate-50 px-4 py-2 font-medium text-slate-800 hover:bg-slate-100'>
         Voltar
       </a>
     </div>
 
-    <div class='mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500'>
+    <div class='mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700'>
       Orçamento: #{{ budget.display_number }} · Veículo: {{ budget.vehicle.plate }}
     </div>
 
@@ -20,64 +20,64 @@
       {% csrf_token %}
 
       <div class='md:col-span-2'>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.name.id_for_label }}'>Nome</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
-        {% if form.name.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.name.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.name.id_for_label }}'>Nome</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='text' name='{{ form.name.html_name }}' id='{{ form.name.id_for_label }}' value='{{ form.name.value|default_if_none:"" }}' required />
+        {% if form.name.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.name.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.provider_type.id_for_label }}'>Fornecedor</label>
-        <select class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none' name='{{ form.provider_type.html_name }}' id='{{ form.provider_type.id_for_label }}'>
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.provider_type.id_for_label }}'>Fornecedor</label>
+        <select class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' name='{{ form.provider_type.html_name }}' id='{{ form.provider_type.id_for_label }}'>
           {% for value, label in form.provider_type.field.choices %}
             <option value='{{ value }}' {% if form.provider_type.value == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        {% if form.provider_type.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.provider_type.errors }}</div>{% endif %}
+        {% if form.provider_type.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.provider_type.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.purchase_date.id_for_label }}'>Data compra</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.purchase_date.html_name }}' id='{{ form.purchase_date.id_for_label }}' value='{% if form.is_bound %}{{ form.purchase_date.value|default_if_none:"" }}{% elif form.instance and form.instance.purchase_date %}{{ form.instance.purchase_date|date:"Y-m-d" }}{% endif %}' />
-        {% if form.purchase_date.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.purchase_date.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.purchase_date.id_for_label }}'>Data compra</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='date' name='{{ form.purchase_date.html_name }}' id='{{ form.purchase_date.id_for_label }}' value='{% if form.is_bound %}{{ form.purchase_date.value|default_if_none:"" }}{% elif form.instance and form.instance.purchase_date %}{{ form.instance.purchase_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.purchase_date.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.purchase_date.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.expected_arrival_date.id_for_label }}'>Prev. chegada</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.expected_arrival_date.html_name }}' id='{{ form.expected_arrival_date.id_for_label }}' value='{% if form.is_bound %}{{ form.expected_arrival_date.value|default_if_none:"" }}{% elif form.instance and form.instance.expected_arrival_date %}{{ form.instance.expected_arrival_date|date:"Y-m-d" }}{% endif %}' />
-        {% if form.expected_arrival_date.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.expected_arrival_date.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.expected_arrival_date.id_for_label }}'>Prev. chegada</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='date' name='{{ form.expected_arrival_date.html_name }}' id='{{ form.expected_arrival_date.id_for_label }}' value='{% if form.is_bound %}{{ form.expected_arrival_date.value|default_if_none:"" }}{% elif form.instance and form.instance.expected_arrival_date %}{{ form.instance.expected_arrival_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.expected_arrival_date.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.expected_arrival_date.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.arrival_date.id_for_label }}'>Data chegada</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none' type='date' name='{{ form.arrival_date.html_name }}' id='{{ form.arrival_date.id_for_label }}' value='{% if form.is_bound %}{{ form.arrival_date.value|default_if_none:"" }}{% elif form.instance and form.instance.arrival_date %}{{ form.instance.arrival_date|date:"Y-m-d" }}{% endif %}' />
-        {% if form.arrival_date.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.arrival_date.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.arrival_date.id_for_label }}'>Data chegada</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none' type='date' name='{{ form.arrival_date.html_name }}' id='{{ form.arrival_date.id_for_label }}' value='{% if form.is_bound %}{{ form.arrival_date.value|default_if_none:"" }}{% elif form.instance and form.instance.arrival_date %}{{ form.instance.arrival_date|date:"Y-m-d" }}{% endif %}' />
+        {% if form.arrival_date.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.arrival_date.errors }}</div>{% endif %}
       </div>
 
       <div class='flex items-end'>
-        <label class='flex items-center gap-2 text-sm text-slate-500' for='{{ form.arrived.id_for_label }}'>
-          <input type='checkbox' class='h-4 w-4 rounded border border-slate-300 bg-white' name='{{ form.arrived.html_name }}' id='{{ form.arrived.id_for_label }}' {% if form.arrived.value %}checked{% endif %} />
+        <label class='flex items-center gap-2 text-sm font-medium text-slate-800' for='{{ form.arrived.id_for_label }}'>
+          <input type='checkbox' class='h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500' name='{{ form.arrived.html_name }}' id='{{ form.arrived.id_for_label }}' {% if form.arrived.value %}checked{% endif %} />
           Peça chegou
         </label>
-        {% if form.arrived.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.arrived.errors }}</div>{% endif %}
+        {% if form.arrived.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.arrived.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.cost_price.id_for_label }}'>Custo (R$)</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none shop-only' type='number' step='0.01' name='{{ form.cost_price.html_name }}' id='{{ form.cost_price.id_for_label }}' value='{% if form.cost_price.value %}{{ form.cost_price.value|unlocalize }}{% endif %}' />
-        {% if form.cost_price.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.cost_price.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.cost_price.id_for_label }}'>Custo (R$)</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none shop-only' type='number' step='0.01' name='{{ form.cost_price.html_name }}' id='{{ form.cost_price.id_for_label }}' value='{% if form.cost_price.value %}{{ form.cost_price.value|unlocalize }}{% endif %}' />
+        {% if form.cost_price.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.cost_price.errors }}</div>{% endif %}
       </div>
 
       <div>
-        <label class='mb-1 block text-sm text-amber-700' for='{{ form.profit_percent.id_for_label }}'>% Lucro</label>
-        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-[#D4AF37] focus:outline-none shop-only' type='number' step='0.01' name='{{ form.profit_percent.html_name }}' id='{{ form.profit_percent.id_for_label }}' value='{% if form.profit_percent.value %}{{ form.profit_percent.value|unlocalize }}{% endif %}' />
-        {% if form.profit_percent.errors %}<div class='mt-1 text-sm text-amber-700'>{{ form.profit_percent.errors }}</div>{% endif %}
+        <label class='mb-1 block text-sm font-medium text-slate-700' for='{{ form.profit_percent.id_for_label }}'>% Lucro</label>
+        <input class='w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none shop-only' type='number' step='0.01' name='{{ form.profit_percent.html_name }}' id='{{ form.profit_percent.id_for_label }}' value='{% if form.profit_percent.value %}{{ form.profit_percent.value|unlocalize }}{% endif %}' />
+        {% if form.profit_percent.errors %}<div class='mt-1 text-sm text-red-700'>{{ form.profit_percent.errors }}</div>{% endif %}
       </div>
 
       <div class='lg:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-2'>
         <button type='submit' class='w-full rounded-md bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-2 font-semibold text-[#0D0D0D]'>
           Salvar
         </button>
-        <a href='{% url "budgets:budget_detail" budget.pk %}' class='w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-center hover:border-[#D4AF37]'>
+        <a href='{% url "budgets:budget_detail" budget.pk %}' class='w-full rounded-md border border-slate-400 bg-slate-50 px-4 py-2 text-center font-medium text-slate-800 hover:bg-slate-100'>
           Cancelar
         </a>
       </div>

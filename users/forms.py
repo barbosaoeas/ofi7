@@ -85,4 +85,5 @@ class CollaboratorForm(forms.ModelForm):
             'commission_percent',
             'image_file',
             'image_url',
+            'is_active',
         )
