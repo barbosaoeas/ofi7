@@ -9,7 +9,7 @@ from users.models import CustomUser
 from .models import Customer, Vehicle
 
 
-class CustomerListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class CustomerListView(RoleRequiredMixin, ListView):
     model = Customer
     template_name = 'customers/customer_list.html'
     context_object_name = 'customers'
@@ -17,7 +17,7 @@ class CustomerListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class CustomerCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class CustomerCreateView(RoleRequiredMixin, CreateView):
     model = Customer
     template_name = 'customers/customer_form.html'
     fields = ('name', 'document_cpf_cnpj', 'phone', 'email')
@@ -27,14 +27,14 @@ class CustomerCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
         return reverse('customers:customer_detail', kwargs={'pk': self.object.pk})
 
 
-class CustomerDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
+class CustomerDetailView(RoleRequiredMixin, DetailView):
     model = Customer
     template_name = 'customers/customer_detail.html'
     context_object_name = 'customer'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class VehicleCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class VehicleCreateView(RoleRequiredMixin, CreateView):
     model = Vehicle
     template_name = 'customers/vehicle_form.html'
     fields = ('plate', 'brand', 'model', 'color', 'year', 'image_file', 'image_url')
@@ -52,7 +52,7 @@ class VehicleCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
         return reverse('customers:customer_detail', kwargs={'pk': self.customer.pk})
 
 
-class VehicleUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class VehicleUpdateView(RoleRequiredMixin, UpdateView):
     model = Vehicle
     template_name = 'customers/vehicle_form.html'
     fields = ('plate', 'brand', 'model', 'color', 'year', 'image_file', 'image_url')

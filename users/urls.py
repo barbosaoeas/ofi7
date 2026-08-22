@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path
 
-from .forms import CustomAuthenticationForm, SimplePasswordChangeForm
+from .forms import CustomAuthenticationForm
 from .views import (
     CollaboratorCreateView,
     CollaboratorDeleteView,
@@ -10,6 +10,8 @@ from .views import (
     CollaboratorToggleActiveView,
     CollaboratorUpdateView,
     CustomLoginView,
+    CustomPasswordChangeDoneView,
+    CustomPasswordChangeView,
     RegisterView,
 )
 
@@ -24,16 +26,12 @@ urlpatterns = [
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
     path(
         'trocar-senha/',
-        auth_views.PasswordChangeView.as_view(
-            form_class=SimplePasswordChangeForm,
-            template_name='users/password_change.html',
-            success_url='/usuarios/trocar-senha/concluido/',
-        ),
+        CustomPasswordChangeView.as_view(),
         name='password_change',
     ),
     path(
         'trocar-senha/concluido/',
-        auth_views.PasswordChangeDoneView.as_view(template_name='users/password_change_done.html'),
+        CustomPasswordChangeDoneView.as_view(),
         name='password_change_done',
     ),
     path('cadastro/', RegisterView.as_view(), name='register'),

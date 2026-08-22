@@ -233,7 +233,7 @@ def capped_work_delta_seconds(last_started_at, now, allow_overtime):
     return max(delta, 0), effective_end
 
 
-class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class BudgetListView(RoleRequiredMixin, ListView):
     model = Budget
     template_name = 'budgets/budget_list.html'
     context_object_name = 'budgets'
@@ -250,7 +250,7 @@ class BudgetListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         )
 
 
-class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class BudgetOpenListView(RoleRequiredMixin, ListView):
     model = Budget
     template_name = 'budgets/budget_open_list.html'
     context_object_name = 'budgets'
@@ -280,7 +280,7 @@ class BudgetOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return context
 
 
-class FinanceDashboardView(LoginRequiredMixin, RoleRequiredMixin, View):
+class FinanceDashboardView(RoleRequiredMixin, View):
     template_name = 'budgets/finance_dashboard.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
@@ -1065,7 +1065,7 @@ class FinanceInsightsView(FinanceDashboardView):
         return render(request, self.template_name, context)
 
 
-class VehicleEntryKanbanView(LoginRequiredMixin, RoleRequiredMixin, View):
+class VehicleEntryKanbanView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def get(self, request):
@@ -1147,7 +1147,7 @@ class VehicleEntryKanbanView(LoginRequiredMixin, RoleRequiredMixin, View):
         )
 
 
-class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class WorkOrderListView(RoleRequiredMixin, ListView):
     model = WorkOrder
     template_name = 'budgets/workorder_list.html'
     context_object_name = 'work_orders'
@@ -1162,7 +1162,7 @@ class WorkOrderListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         )
 
 
-class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class WorkOrderKanbanTodayView(RoleRequiredMixin, ListView):
     model = WorkOrderTask
     template_name = 'budgets/kanban_today.html'
     context_object_name = 'tasks'
@@ -1384,7 +1384,7 @@ class WorkOrderKanbanTodayView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return context
 
 
-class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
+class WorkOrderTaskStartView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
 
     def post(self, request, pk):
@@ -1467,7 +1467,7 @@ class WorkOrderTaskStartView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:kanban_today')
 
 
-class WorkOrderTaskPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
+class WorkOrderTaskPauseView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
 
     def post(self, request, pk):
@@ -1509,7 +1509,7 @@ class WorkOrderTaskPauseView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:kanban_today')
 
 
-class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
+class WorkOrderTaskFinishView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.OPERATIONAL)
 
     def post(self, request, pk):
@@ -1595,7 +1595,7 @@ class WorkOrderTaskFinishView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:kanban_today')
 
 
-class WorkOrderTaskToggleOvertimeView(LoginRequiredMixin, RoleRequiredMixin, View):
+class WorkOrderTaskToggleOvertimeView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def post(self, request, pk):
@@ -1614,7 +1614,7 @@ class WorkOrderTaskToggleOvertimeView(LoginRequiredMixin, RoleRequiredMixin, Vie
         return redirect('budgets:kanban_today')
 
 
-class CommissionOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class CommissionOpenListView(RoleRequiredMixin, ListView):
     model = CommissionLine
     template_name = 'budgets/commission_open_list.html'
     context_object_name = 'commissions'
@@ -1737,7 +1737,7 @@ class CommissionOpenListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
         return context
 
 
-class CommissionTogglePaidView(LoginRequiredMixin, RoleRequiredMixin, View):
+class CommissionTogglePaidView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def post(self, request, pk):
@@ -1757,7 +1757,7 @@ class CommissionTogglePaidView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:commission_open_list')
 
 
-class PiecesStatusReportView(LoginRequiredMixin, RoleRequiredMixin, View):
+class PiecesStatusReportView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def get(self, request):
@@ -1854,7 +1854,7 @@ class PiecesStatusReportView(LoginRequiredMixin, RoleRequiredMixin, View):
         return render(request, 'budgets/report_pieces.html', context)
 
 
-class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
+class WorkOrderDetailView(RoleRequiredMixin, DetailView):
     model = WorkOrder
     template_name = 'budgets/workorder_detail.html'
     context_object_name = 'work_order'
@@ -1899,7 +1899,7 @@ class WorkOrderDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
         return context
 
 
-class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
+class WorkOrderTaskScheduleView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def post(self, request, pk):
@@ -2008,7 +2008,7 @@ class WorkOrderTaskScheduleView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:workorder_detail', pk=task.work_order_id)
 
 
-class PieceCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class PieceCreateView(RoleRequiredMixin, CreateView):
     model = Piece
     form_class = PieceForm
     template_name = 'budgets/piece_form.html'
@@ -2045,7 +2045,7 @@ class PieceCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
         return reverse('budgets:budget_detail', kwargs={'pk': self.budget.pk})
 
 
-class PieceUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class PieceUpdateView(RoleRequiredMixin, UpdateView):
     model = Piece
     form_class = PieceForm
     template_name = 'budgets/piece_form.html'
@@ -2078,7 +2078,7 @@ class PieceUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         return reverse('budgets:budget_detail', kwargs={'pk': self.object.budget_id})
 
 
-class PieceDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class PieceDeleteView(RoleRequiredMixin, DeleteView):
     model = Piece
     template_name = 'budgets/piece_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
@@ -2096,7 +2096,7 @@ class PieceDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
         return reverse('budgets:budget_detail', kwargs={'pk': self.object.budget_id})
 
 
-class ServiceCatalogListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class ServiceCatalogListView(RoleRequiredMixin, ListView):
     model = ServiceCatalog
     template_name = 'budgets/service_catalog_list.html'
     context_object_name = 'services'
@@ -2104,7 +2104,7 @@ class ServiceCatalogListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class ServiceCatalogCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class ServiceCatalogCreateView(RoleRequiredMixin, CreateView):
     model = ServiceCatalog
     form_class = ServiceCatalogForm
     template_name = 'budgets/service_catalog_form.html'
@@ -2114,7 +2114,7 @@ class ServiceCatalogCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView
         return reverse('budgets:service_catalog_list')
 
 
-class ServiceCatalogUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class ServiceCatalogUpdateView(RoleRequiredMixin, UpdateView):
     model = ServiceCatalog
     form_class = ServiceCatalogForm
     template_name = 'budgets/service_catalog_form.html'
@@ -2124,7 +2124,7 @@ class ServiceCatalogUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView
         return reverse('budgets:service_catalog_list')
 
 
-class ServiceCatalogDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class ServiceCatalogDeleteView(RoleRequiredMixin, DeleteView):
     model = ServiceCatalog
     template_name = 'budgets/service_catalog_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
@@ -2133,7 +2133,7 @@ class ServiceCatalogDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView
         return reverse('budgets:service_catalog_list')
 
 
-class BankAccountListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class BankAccountListView(RoleRequiredMixin, ListView):
     model = BankAccount
     template_name = 'budgets/bank_account_list.html'
     context_object_name = 'bank_accounts'
@@ -2141,7 +2141,7 @@ class BankAccountListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class BankAccountCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class BankAccountCreateView(RoleRequiredMixin, CreateView):
     model = BankAccount
     form_class = BankAccountForm
     template_name = 'budgets/bank_account_form.html'
@@ -2151,7 +2151,7 @@ class BankAccountCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
         return reverse('budgets:bank_account_list')
 
 
-class BankAccountUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class BankAccountUpdateView(RoleRequiredMixin, UpdateView):
     model = BankAccount
     form_class = BankAccountForm
     template_name = 'budgets/bank_account_form.html'
@@ -2161,7 +2161,7 @@ class BankAccountUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         return reverse('budgets:bank_account_list')
 
 
-class BankAccountDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class BankAccountDeleteView(RoleRequiredMixin, DeleteView):
     model = BankAccount
     template_name = 'budgets/bank_account_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
@@ -2186,7 +2186,7 @@ class BankAccountDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
         return reverse('budgets:bank_account_list')
 
 
-class SupplierListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class SupplierListView(RoleRequiredMixin, ListView):
     model = Supplier
     template_name = 'budgets/supplier_list.html'
     context_object_name = 'suppliers'
@@ -2194,7 +2194,7 @@ class SupplierListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class SupplierCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class SupplierCreateView(RoleRequiredMixin, CreateView):
     model = Supplier
     form_class = SupplierForm
     template_name = 'budgets/supplier_form.html'
@@ -2204,7 +2204,7 @@ class SupplierCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
         return reverse('budgets:supplier_list')
 
 
-class SupplierUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class SupplierUpdateView(RoleRequiredMixin, UpdateView):
     model = Supplier
     form_class = SupplierForm
     template_name = 'budgets/supplier_form.html'
@@ -2214,7 +2214,7 @@ class SupplierUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         return reverse('budgets:supplier_list')
 
 
-class SupplierDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class SupplierDeleteView(RoleRequiredMixin, DeleteView):
     model = Supplier
     template_name = 'budgets/supplier_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
@@ -2223,7 +2223,7 @@ class SupplierDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
         return reverse('budgets:supplier_list')
 
 
-class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
+class BudgetDetailView(RoleRequiredMixin, DetailView):
     model = Budget
     template_name = 'budgets/budget_detail.html'
     context_object_name = 'budget'
@@ -2274,7 +2274,7 @@ class BudgetDetailView(LoginRequiredMixin, RoleRequiredMixin, DetailView):
         return context
 
 
-class BudgetPhotoCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
+class BudgetPhotoCreateView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def post(self, request, pk):
@@ -2297,7 +2297,7 @@ class BudgetPhotoCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:budget_detail', pk=budget.pk)
 
 
-class BudgetPhotoDeleteView(LoginRequiredMixin, RoleRequiredMixin, View):
+class BudgetPhotoDeleteView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def post(self, request, pk):
@@ -2311,7 +2311,7 @@ class BudgetPhotoDeleteView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:budget_detail', pk=budget_id)
 
 
-class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class BudgetUpdateView(RoleRequiredMixin, UpdateView):
     model = Budget
     template_name = 'budgets/budget_form.html'
     fields = (
@@ -2527,7 +2527,7 @@ class BudgetUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
         return reverse('budgets:budget_detail', kwargs={'pk': self.object.pk})
 
 
-class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
+class BudgetFinanceCreateView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def post(self, request, pk):
@@ -2680,7 +2680,7 @@ class BudgetFinanceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:budget_detail', pk=budget.pk)
 
 
-class BudgetDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class BudgetDeleteView(RoleRequiredMixin, DeleteView):
     model = Budget
     template_name = 'budgets/budget_confirm_delete.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
@@ -2689,7 +2689,7 @@ class BudgetDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
         return reverse('budgets:budget_list')
 
 
-class BudgetXMLDownloadView(LoginRequiredMixin, RoleRequiredMixin, View):
+class BudgetXMLDownloadView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def get(self, request, cilia_number):
@@ -2705,7 +2705,7 @@ class BudgetXMLDownloadView(LoginRequiredMixin, RoleRequiredMixin, View):
         return response
 
 
-class ThirdPartyServiceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
+class ThirdPartyServiceCreateView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)
 
     def post(self, request, pk):
@@ -2745,7 +2745,7 @@ class ThirdPartyServiceCreateView(LoginRequiredMixin, RoleRequiredMixin, View):
         return redirect('budgets:budget_detail', pk=budget.pk)
 
 
-class CiliaXMLImportView(LoginRequiredMixin, RoleRequiredMixin, FormView):
+class CiliaXMLImportView(RoleRequiredMixin, FormView):
     template_name = 'budgets/import_xml.html'
     form_class = CiliaXMLUploadForm
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE, CustomUser.Role.ESTIMATOR)

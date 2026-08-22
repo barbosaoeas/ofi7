@@ -1,6 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.contrib.auth.views import LoginView
+from django.contrib.auth.views import LoginView, PasswordChangeDoneView, PasswordChangeView
 from django.db import transaction
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -9,14 +9,24 @@ from django.views import View
 from django.views.generic import CreateView, DeleteView, ListView, UpdateView
 
 from core.views import RoleRequiredMixin
-from .forms import CollaboratorForm, CustomUserCreationForm
+from .forms import CollaboratorForm, CustomUserCreationForm, SimplePasswordChangeForm
 from .models import Collaborator, CustomUser
 
 
 DEFAULT_PASSWORD = '123456'
 
 
-class CollaboratorToggleActiveView(LoginRequiredMixin, RoleRequiredMixin, View):
+class CustomPasswordChangeView(LoginRequiredMixin, PasswordChangeView):
+    form_class = SimplePasswordChangeForm
+    template_name = 'users/password_change.html'
+    success_url = reverse_lazy('users:password_change_done')
+
+
+class CustomPasswordChangeDoneView(LoginRequiredMixin, PasswordChangeDoneView):
+    template_name = 'users/password_change_done.html'
+
+
+class CollaboratorToggleActiveView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def post(self, request, pk):
@@ -92,7 +102,7 @@ class CustomLoginView(LoginView):
         return response
 
 
-class RegisterView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class RegisterView(RoleRequiredMixin, CreateView):
     template_name = 'users/register.html'
     form_class = CustomUserCreationForm
     success_url = reverse_lazy('users:collaborator_list')
@@ -115,7 +125,7 @@ class RegisterView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
             return response
 
 
-class CollaboratorListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
+class CollaboratorListView(RoleRequiredMixin, ListView):
     model = Collaborator
     template_name = 'users/collaborator_list.html'
     context_object_name = 'collaborators'
@@ -123,7 +133,7 @@ class CollaboratorListView(LoginRequiredMixin, RoleRequiredMixin, ListView):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class CollaboratorCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
+class CollaboratorCreateView(RoleRequiredMixin, CreateView):
     model = Collaborator
     form_class = CollaboratorForm
     template_name = 'users/collaborator_form.html'
@@ -141,7 +151,7 @@ class CollaboratorCreateView(LoginRequiredMixin, RoleRequiredMixin, CreateView):
             return self.form_invalid(form)
 
 
-class CollaboratorUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
+class CollaboratorUpdateView(RoleRequiredMixin, UpdateView):
     model = Collaborator
     form_class = CollaboratorForm
     template_name = 'users/collaborator_form.html'
@@ -162,14 +172,14 @@ class CollaboratorUpdateView(LoginRequiredMixin, RoleRequiredMixin, UpdateView):
             return self.form_invalid(form)
 
 
-class CollaboratorDeleteView(LoginRequiredMixin, RoleRequiredMixin, DeleteView):
+class CollaboratorDeleteView(RoleRequiredMixin, DeleteView):
     model = Collaborator
     template_name = 'users/collaborator_confirm_delete.html'
     success_url = reverse_lazy('users:collaborator_list')
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
 
-class CollaboratorResetPasswordView(LoginRequiredMixin, RoleRequiredMixin, View):
+class CollaboratorResetPasswordView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def post(self, request, pk):

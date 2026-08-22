@@ -9,20 +9,33 @@ from users.models import CustomUser
 from .models import SystemSettings
 
 
-class RoleRequiredMixin:
+class RoleRequiredMixin(LoginRequiredMixin):
+    """Mixin que SEMPRE exige login e, se allowed_roles for definido, exige a role.
+
+    Herda de LoginRequiredMixin para garantir autenticação SEMPRE (mesmo que
+    allowed_roles seja None ou alguém inverta a ordem na classe filha).
+    Se allowed_roles for None: permite QUALQUER usuário autenticado.
+    Se allowed_roles for setado: exige superuser OU uma das roles listadas.
+    Usuários VISUAL logados mas sem permissão caem no kanban de hoje.
+    Usuários não logados são redirecionados para a tela de login (via LoginRequiredMixin).
+    """
     allowed_roles = None
 
     def dispatch(self, request, *args, **kwargs):
+        response = super().dispatch(request, *args, **kwargs)
+        if getattr(response, 'status_code', None) == 302:
+            return response
+
         roles = self.allowed_roles
         if roles is None:
-            return super().dispatch(request, *args, **kwargs)
+            return response
 
         user = getattr(request, 'user', None)
         if user and getattr(user, 'is_authenticated', False):
             if getattr(user, 'is_superuser', False):
-                return super().dispatch(request, *args, **kwargs)
+                return response
             if getattr(user, 'role', None) in roles:
-                return super().dispatch(request, *args, **kwargs)
+                return response
 
         messages.error(request, 'Sem permissão para acessar esta página.')
         if (
@@ -38,8 +51,14 @@ class RoleRequiredMixin:
 class PublicIndexView(TemplateView):
     template_name = 'core/public_index.html'
 
+    def dispatch(self, request, *args, **kwargs):
+        user = getattr(request, 'user', None)
+        if user and getattr(user, 'is_authenticated', False):
+            return redirect('core:dashboard')
+        return super().dispatch(request, *args, **kwargs)
 
-class DashboardView(LoginRequiredMixin, TemplateView):
+
+class DashboardView(RoleRequiredMixin, TemplateView):
     template_name = 'core/dashboard.html'
 
     def dispatch(self, request, *args, **kwargs):
@@ -54,7 +73,7 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         return super().dispatch(request, *args, **kwargs)
 
 
-class SystemSettingsView(LoginRequiredMixin, RoleRequiredMixin, View):
+class SystemSettingsView(RoleRequiredMixin, View):
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
     def get(self, request):
