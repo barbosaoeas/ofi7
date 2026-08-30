@@ -123,11 +123,179 @@ Controle de Fluxo de Caixa Básico : Lançamento manual de Entradas e Saídas ca
 
 RF09 - Dashboard e Relatórios
 
-Indicadores visuais rápidos de faturamento mensal, veículos na oficina por status e contas a pagar/receber da semana.
+Objetivo: Transformar o sistema em uma ferramenta de tomada de decisão. Hoje o Dashboard Principal (core/dashboard) está vazio (1ª tela que o usuário vê após o login) e 3 relatórios já estão implementados parcialmente — esta RF fecha a documentação do que já existe e define o que falta para entregar visibilidade 360°: Financeiro, Produtivo, Comercial e de Pessoal.
 
-Relatório de Comissões: Filtro por período de datas e por Funcionário, detalhando tarefas concluídas e valores a pagar.
+Acesso por role:
+- Dashboard Principal (após login): TODOS os papéis (com KPIs diferentes por role).
+- Dashboard Financeiro Insights (Chart.js): MANAGER / FINANCE.
+- Relatórios Operacionais (Peças, Comissões, Produtividade): MANAGER / FINANCE / ORCAMENTISTA.
+- Relatórios Comerciais (Conversão de Orçamentos, Motivos de Recusa): MANAGER / ORCAMENTISTA.
+- Operacional (VISUAL): Apenas o relatório pessoal de comissões do colaborador logado (restrito aos seus próprios lançamentos).
 
-Relatório de Motivos de Recusa de Orçamentos para análise de conversão comercial.
+---
+
+### Módulo 9.1 — Dashboard Principal (core/dashboard) — TELA VAZIA HOJE (PRIORIDADE 1)
+
+Hoje o usuário faz login e cai em uma tela com apenas 1 título "Dashboard" + e-mail. Substituir por 5 seções, com conteúdo diferente por role:
+
+KPIs de topo (cinturão de 4 a 6 cards, 1 linha):
+1.  📊 **Faturamento do Mês** (verde) — Total de entradas REALIZADAS no mês; comparação percentual vs mês anterior (↑ 12% ou ↓ 8%).
+2.  🚗 **Veículos em Produção hoje** (azul) — Total de WorkOrderTasks com status Em Execução / Pendentes / Pausados (contagem simples).
+3.  💸 **A Receber em aberto** (amarelo) — CashMovement direction=IN + is_realized=False (até 30 dias).
+4.  ⚠️ **Atrasados hoje** (vermelho) — Tarefas atrasadas + Lançamentos vencidos (atrasados = contador total com badge).
+5.  🎯 **Orçamentos aguardando resposta** (dourado) — Budget.status = Aguardando Resposta (mostra total + link direto).
+6.  👤 **Comissão do mês (colaborador logado)** — Somente para papéis OPERACIONAL/VISUAL: R$ de comissão provisionado no mês para o próprio user.
+
+Blocos do meio:
+- **Bloco ESQUERDA (66%)** — "Pátio Hoje": mini Kanban horizontal em tempo real, top 5 tarefas em andamento com nome do colaborador + timer (igual preview do kanban_today, porém resumido).
+- **Bloco DIREITA (33%)** — "Próximos 5 lançamentos a vencer nos próximos 7 dias": lista bulleted de CashMovement (valor + vencimento + cliente/fornecedor).
+
+Rodapé do Dashboard:
+- **Atalhos rápidos** (cards com ícone): Novo Orçamento · Importar XML · Nova OS · Novo Lançamento · Kanban Hoje · Relatório Comissões.
+
+---
+
+### Módulo 9.2 — Dashboard Financeiro + Insights (JÁ IMPLEMENTADO parcialmente em finance_dashboard + finance_insights)
+
+Documentando o que existe hoje e o que falta:
+
+**Tela 1 — Financeiro / Lançamentos (finance_dashboard.html, JÁ EXISTE):**
+- Filtros padrão (topo): Data De · Data Até · Direção (IN/OUT/Todas) · Status (Todos / Em aberto / Realizados) · Origem (Particular / Seguradora / Fornecedor / etc).
+- Cinturão de 4 cards (JÁ EXISTE):
+  1.  💹 **Previsto** — Entradas − Saídas no período.
+  2.  ✅ **Realizado** — Valor já efetivado no caixa.
+  3.  🟡 **Em aberto** — Valor a receber + a pagar.
+  4.  🔴 **Atrasado** — Lançamentos vencidos até hoje, ainda abertos (linha inteira fica `bg-[#160808]` na tabela).
+- Tabela de lançamentos (20+ colunas úteis, JÁ EXISTE): Data lançamento, Data vencimento, Direção, Origem, Banco, Cliente/Fornecedor, Descrição, Orçamento/OS #, Valor, Status, Ações (Editar, Excluir, Marcar realizado).
+- Badge **Atrasado** (vermelho sólido) aparece automaticamente quando due_date < today e is_realized=False.
+
+**Tela 2 — Insights Gráficos (finance_insights.html, JÁ EXISTE com Chart.js via CDN):**
+- Alternador de Período no topo (3 botões): **Mês atual · 3 meses · 12 meses** (com toggle visual da aba ativa).
+- Filtros adicionais: Direção (IN/OUT/Todas) · Origem (categoria).
+- Cinturão KPIs (4 cards, JÁ EXISTE): A Receber aberto · A Pagar aberto · Em atraso · Saldo projetado (receber − pagar).
+- Gráficos (Chart.js canvas, JÁ IMPLEMENTADOS parcialmente — falta garantir responsividade e legenda):
+  1.  📊 **Gráfico 1 (Bar, 66% width)** — "Entradas e Saídas por Mês": 2 barras por mês (Entrada verde, Saída vermelha) — comparativo previsto vs realizado (2 séries).
+  2.  🍩 **Gráfico 2 (Doughnut, 33% width)** — "Situação dos Lançamentos": 4 fatias (Realizado / Em aberto / Atrasado / Vence hoje).
+  3.  📊 **Gráfico 3 (Bar horizontal, 60% width)** — "Despesas por Categoria": Top 8 categorias CashCategory com valores de saída.
+  4.  🥧 **Gráfico 4 (Pie, 40% width)** — "Origem das Entradas": % Particular vs % Seguradora vs % Outros.
+
+**Falta documentar (o que já existe mas precisa ser garantido):**
+- Cada gráfico tem exportação PNG: botão 📤 "Baixar gráfico PNG" no topo do card (usa canvas.toDataURL()).
+- Painel inferior "Ranking de Clientes (R$ faturados no período)" — tabela com Top 10 clientes ordenados por total de entradas CashMovement vinculadas.
+
+---
+
+### Módulo 9.3 — Relatório de Comissões (JÁ IMPLEMENTADO em commission_open_list.html)
+
+Documentando o que já existe hoje em produção:
+- Filtros: **Data De** · **Data Até** · **Colaborador** (select dropdown com todos ou o próprio user logado quando role=VISUAL/OPERACIONAL) · **Checkbox "Mostrar pagos"** (padrão desmarcado → só mostra abertas).
+- Cinturão superior: Total (filtrado) R$ — quando Mostrar pagos=False = "Total em aberto", quando True = "Total (filtrado)".
+- **Regra de segurança OPERACIONAL/VISUAL:** colabs veem SOMENTE as próprias comissões — coluna Colaborador some, filtro de colaborador fica `disabled` e hidden input força `collaborator_id = request.user.collaborator.id`.
+- Botão **🖨️ Imprimir** (canto superior direito): layout A4 portrait 10mm margem, fundo branco, tabela preta e branca, total no rodapé, @media print completa (JÁ IMPLEMENTADO via `#commission-print-host` + classe `body.print-commission`).
+- Colunas da tabela: Data conclusão, OS #, Tarefa, Valor atividade, % comissão, Valor comissão, Status (Paga / Em aberto), Pagamento (data prevista / data efetiva).
+- Ação por linha: Marcar como paga (MANAGER/FINANCE) — clica e fecha a comissão (atualiza CashMovement ou WorkOrderCommission.paid=True).
+
+---
+
+### Módulo 9.4 — Relatório de Peças (JÁ IMPLEMENTADO em report_pieces.html)
+
+O que já existe hoje (validado no template):
+- Filtro único: **Data referência** (datepicker). Hoje mostra o status de chegada das peças até aquela data.
+- Layout IMPRESSÃO A4 LANDSCAPE completo: @page size A4 landscape margem 8mm; fundo branco, bordas cinza claro, thead cinza, 0 sombra, cores neutras.
+- Colunas da tabela de peças: Peça, Fornecedor (Cliente / Seguradora / Oficina), Valor custo, Valor venda, Data prevista chegada, Status (Pendente / Em rota / Chegou — badge colorido), OS # associada, Cliente, Veículo.
+- Agrupamento: 1 seção por OS (WorkOrder), 1 bloco com dados do veículo no topo, depois a tabela de peças desta OS.
+- Totalizadores por fornecedor no rodapé: Total peças Seguradora R$, Total peças Oficina R$, Total Geral R$.
+
+---
+
+### Módulo 9.5 — Relatório de Motivos de Recusa de Orçamentos (A IMPLEMENTAR)
+
+Objetivo: Melhorar taxa de conversão comercial identificando os gargalos.
+- Filtros: **Data De** · **Data Até** · **Orçamentista** (todos / 1 específico).
+- 2 partes na tela:
+  1.  **Cinturão KPIs:** Total orçamentos no período · Autorizadas % · Não aprovadas % · Aguardando %.
+  2.  **Gráfico de Barras (Chart.js):** Top motivos de recusa ordenados por volume (Valor Alto · Preço concorrente menor · Cliente sem recurso · Reparos não autorizados pela seguradora · Prazo de entrega · Outros).
+  3.  **Tabela detalhada:** Orçamento #, Cliente, Veículo, Valor total, Data visita, Motivo principal, Observações recusa (justificativa livre informada no Budget.refusal_reason), Orçamentista responsável.
+- Botão "Baixar CSV" para planilha do Google Sheets / Excel.
+
+---
+
+### Módulo 9.6 — Relatório de Produtividade por Colaborador (A IMPLEMENTAR)
+
+Objetivo: Calcular eficiência do pátio (KPI Operacional definido na seção 10 — KPI de Eficiência de Pátio = Tempo programado vs tempo real).
+- Filtros: **Data De** · **Data Até** · **Colaborador** (todos / 1) · **Atividade (Kanban column)** (Funilaria / Pintura / Montagem etc).
+- Cinturão superior:
+  1.  Total tarefas concluídas no período.
+  2.  Horas programadas totais.
+  3.  Horas reais totais (play/pause somados).
+  4.  Índice de Eficiência global % = (programado / real) × 100 (acima de 100% = verde, abaixo de 85% = vermelho).
+- Gráfico de linhas: Eficiência por dia do período (linha azul, linha de referência 100% cinza tracejada).
+- Tabela por colaborador: Nome, # tarefas concluídas, HH programado, HH real, HH HH (diferença), Eficiência %, Ranking (1º com medalha 🥇 no ranking).
+- Regra de Filtro automático: Colaboradores **inativos (is_active=False)** NÃO aparecem neste relatório (a não ser que seja marcado checkbox "Incluir inativos"). Garante o requisito do usuário "prestador inativo não entra no rateio HH".
+
+---
+
+### Módulo 9.7 — Relatório Funil de Conversão Orçamento → OS → Entrega (A IMPLEMENTAR)
+
+Objetivo: Medir % de orçamentos que efetivamente viram OS e % de OS que entregamos no prazo.
+- Etapas do funil:
+  1.  Total Orçamentos criados no período (100%)
+  2.  Orçamentos Autorizadas (% vs etapa 1)
+  3.  Geraram OS (% vs etapa 2)
+  4.  OS Iniciadas (% vs etapa 3)
+  5.  OS Concluídas (% vs etapa 4)
+  6.  OS Entregues no prazo (% vs etapa 5 — sem atraso na data de entrega contratada)
+- Gráfico de Funil (Chart.js Funnel plugin ou barras horizontais progressivas).
+- Tabela: por mês do ano, mostrando as % em cada etapa com cores semáforo (verde > 80%, amarelo 60-80%, vermelho < 60%).
+
+---
+
+### Filtros Padrão — REGRAS de UX para TODOS os relatórios (todos os módulos 9.1 a 9.7)
+
+Esses padrões já existem em alguns relatórios e agora são documentados como OBRIGATÓRIOS em todos:
+1.  **Filtro de Período:** Sempre apresentar "Data De" + "Data Até" em formatos nativos `<input type="date">`. Atalhos rápidos em botão: Hoje · Semana atual · Mês atual · Últimos 30 dias · Últimos 90 dias · Ano atual.
+2.  **Botão Filtrar** sempre dourado (primário). Botão Limpar sempre cinza com borda (secundário), ao lado, direita do Filtrar.
+3.  **Filtros são sempre GET (na URL)** — permite compartilhar o link do relatório com outro gerente (ex: `?start=2026-08-01&end=2026-08-31&collaborator_id=7`).
+4.  **Responsividade:** Grid de filtros `grid-cols-1 md:grid-cols-4 gap-3` (1 coluna mobile, 4 colunas desktop).
+5.  **Totalizadores SEMPRE aparecem acima da tabela:** R$ filtrado, itens encontrados.
+6.  **Impressão:** Em todos os relatórios existe botão 🖨️ "Imprimir" no cabeçalho (topo direita). Usa `@media print` com fundo branco, preto e branco, tamanho A4 (landscape quando tem muitas colunas, portrait quando tem poucas), margens 8–10mm, total no rodapé, cabeçalho com logo da oficina + data de emissão do relatório.
+7.  **CSV / Excel (exportação):** Botão 📥 "Exportar CSV" quando a tabela tiver + de 100 registros. Gera CSV separado por `;` com encoding UTF-8 BOM (compatível com Excel Brasil).
+
+---
+
+### Regras de Negócio e Segurança nos Relatórios
+
+1.  **Isolamento de Comissão:** Colaboradores (role OPERACIONAL ou VISUAL) conseguem abrir o relatório de comissões mas o filtro de colaborador trava SEU ID — não conseguem ver comissão de colegas.
+2.  **Colaboradores Inativos:** No Relatório de Produtividade e em qualquer dropdown de seleção de colaborador em relatórios de RH, `is_active=False` vem oculto por padrão. Checkbox "Incluir inativos" permite visualizar histórico (só MANAGER/FINANCE).
+3.  **Logs de auditoria:** Todo acesso a relatórios de Financeiro (9.2 / 9.3) registra horário + usuário em `ReportAccessLog` (opcional, futuro — pelo menos hoje nenhum dado sensível é exportado sem estar logado, garante RF01 e a correção de segurança anterior).
+4.  **Proteção de Rotas:** TODAS as views de Dashboard/Relatórios são protegidas com `RoleRequiredMixin` (LoginRequiredMixin obrigatório), como corrigido no commit de segurança anterior — NENHUM relatório fica acessível sem login.
+
+---
+
+### Modelos Envolvidos (utilizados hoje para gerar os relatórios)
+
+(Não são modelos NOVOS — são os que já existem no banco e são consumidos pelas consultas):
+- **Budget** (Orçamento) — usado em RF09.5 (Recusas), RF09.7 (Funil).
+- **Budget.refusal_reason + refusal_category** (Motivo recusa + categoria agrupada).
+- **WorkOrder** + **WorkOrderTask** — usados em RF09.6 (Produtividade), RF09.7 (Funil).
+- **WorkOrderTaskBatch + Lotes** — usados para produtividade e taxa de ocupação do pátio.
+- **CashMovement** — usado em RF09.2 (Insights), parte financeira de tudo.
+- **CashCategory** — categorias usadas no gráfico "Despesas por Categoria".
+- **BankAccount** — usado em filtros de banco/origem.
+- **Collaborator (is_active=True filtrado padrão)** — Relatórios de Produtividade, Comissões.
+- **WorkOrderCommission (ou coluna `commission_amount` em WorkOrderTask + `paid_at/paid_by`)** — usada no relatório de comissões.
+- **Piece** — usada no Relatório de Peças (9.4), Status chegada.
+- **Supplier + Piece.provider_type** (Cliente / Seguradora / Oficina).
+
+---
+
+### KPIs Alvo (seção 10 alinhada com estes relatórios)
+
+- **KPI Produtividade Pátio (Eficiência):** Meta ≥ 90% (HH programado / HH real × 100).
+- **KPI Conversão Orçamento → Autorizada:** Meta ≥ 70%.
+- **KPI Recusa Orçamentos:** Nenhum motivo de recusa deve representar mais de 30% do total de não aprovadas (indica gargalo específico que pode ser atacado).
+- **KPI % Entrada atrasada:** Meta ≤ 5% do valor de entradas totais do mês deve estar com status "Atrasado".
+- **KPI Pontualidade de Entrega OS no Prazo:** Meta ≥ 85% (concluídas em ≤ data contratada de entrega).
 
 RF10 - Integração WhatsApp ↔️ Financeiro (UAIZAPI / Evolution API)
 
@@ -713,3 +881,69 @@ Subtarefa 7.1: Adicionar /webhooks/zap/ em ALLOWED_HOSTS se necessário; CSRF ex
 Subtarefa 7.2: Configurar Webhook URL no provedor UAIZAPI apontando para https://SEU_USUARIO.pythonanywhere.com/webhooks/zap/.
 Subtarefa 7.3: Testar conexão: enviar /ajuda no WhatsApp pelo número financeiro → receber resposta de lista comandos.
 Subtarefa 7.4: Testar lançamento real /pix 1 os 1 particular → CashMovement criado, resposta automática ✅.
+
+Sprint 9: 🟡 Implementação FUTURA — Dashboard Principal + Relatórios (RF09)
+
+Objetivo da Sprint: Retirar o core/dashboard da situação de TELA VAZIA (hoje só tem um h1 após login), concluir os 3 relatórios que faltam implementar (Motivos de Recusa, Produtividade, Funil de Conversão) e garantir que os 4 já implementados (Financeiro, Insights, Peças, Comissões) tenham filtros padrão, impressão A4 correta e exportação CSV.
+
+Prioridades internas da Sprint: Sprint 9.1 é BLOQUEANTE (não tem como usuário logar e ver tela vazia), depois 9.4, 9.5, 9.6 por ordem de impacto operacional e comercial.
+
+Tarefa 1: Dashboard Principal (core/dashboard.html) — Transformar tela vazia em centro de comando da oficina (Módulo RF09.1)
+Subtarefa 1.1: Implementar cinturão de 6 KPI cards responsivos (grid md:grid-cols-2 xl:grid-cols-3): Faturamento Mês (verde, % vs mês anterior), Veículos Produção hoje (azul), A Receber aberto 30 dias (amarelo), Atrasados hoje (vermelho badge), Orçamentos aguardando resposta (dourado com link), e Card Pessoal de Comissão do mês (só aparece se role != MANAGER/FINANCE).
+Subtarefa 1.2: Implementar bloco ESQUERDA "Pátio Hoje" — mini Kanban horizontal com top 5 tarefas EM ANDAMENTO de hoje: card com foto veículo, nome colaborador, timer em tempo real (JS atualiza a cada 30s), coluna kanban atual. Link no rodapé "Abrir Kanban completo".
+Subtarefa 1.3: Implementar bloco DIREITA "Lançamentos a vencer (7 dias)" — 5 linhas bulleted: CashMovement due_date entre hoje e hoje+7, ordenados por due_date. Badge Atrasado (vermelho) automático para quem já venceu.
+Subtarefa 1.4: Implementar rodapé com 6 cards de Atalhos Rápidos (ícone + texto + href): Novo Orçamento, Importar XML Cilia, Nova OS, Novo Lançamento, Kanban Hoje, Relatório Comissões.
+Subtarefa 1.5: Diferenciação por ROLE: Se role=VISUAL oculta Financeiro; se role=ORCAMENTISTA oculta KPIs de caixa detalhado e mostra orçamentos; se role=OPERACIONAL mostra SOMENTE cartão de comissão pessoal + mini kanban da suas tarefas + atalhos Kanban/Comissões.
+
+Tarefa 2: Concluir Dashboard Financeiro Insights (finance_insights.html) — Gráficos 3 e 4 que faltam + exportações
+Subtarefa 2.1: Garantir responsividade e legenda visível em todos 4 gráficos Chart.js (mobile / desktop / impressão).
+Subtarefa 2.2: Adicionar Gráfico 4 ("Origem das Entradas" Pie Chart, já documentado em RF09.2) com dados reais agrupados por CashCategory.source (Particular / Seguradora / Outros).
+Subtarefa 2.3: Implementar exportação PNG em cada card de gráfico: botão 📤 "Baixar PNG" com canvas.toDataURL() e download automático do nome do gráfico + data.
+Subtarefa 2.4: Adicionar painel inferior "Ranking de Clientes (R$ faturados no período)" — tabela Top 10 clientes ordenada desc por soma de CashMovement IN realizados no período, colunas Posição, Cliente, Qtd OS concluídas, Valor total, % do faturamento.
+Subtarefa 2.5: Implementar botão 📥 "Exportar CSV" no rodapé dos lançamentos financeiros (finance_dashboard.html já existente) — gera CSV com encoding UTF-8 BOM, separador ;, compatível Excel Brasil.
+
+Tarefa 3: Ajustar relatórios JÁ IMPLEMENTADOS para seguir o Padrão de Filtros RF09 (backward compat)
+Subtarefa 3.1: Relatório de Peças (report_pieces.html): adicionar também "Data De / Data Até" (hoje só tem 1 data referência). Adicionar filtro por Fornecedor (Cliente / Seguradora / Oficina / Todos). Manter compatibilidade com impressão A4 landscape.
+Subtarefa 3.2: Relatório de Comissões (commission_open_list.html): adicionar botão 📥 "Exportar CSV". Garantir no backend a regra de segurança OPERACIONAL/VISUAL só enxerga as próprias (testar com usuário de role VISUAL para confirmar que colaborador alheio NÃO aparece).
+Subtarefa 3.3: Nos 2 relatórios (Peças + Comissões), adicionar atalhos rápidos de período: Hoje · Semana · Mês · Últimos 30 dias · Últimos 90 dias (alinhado com RF09 padrões UX item 1).
+Subtarefa 3.4: Garantir em templates base de relatório: cores dos botões Filtrar (primário dourado) / Limpar (cinza borda) / Imprimir (secundário) / CSV (secundário azul) consistentes com Design System Premium Dark Pattern.
+
+Tarefa 4: Implementar Relatório de Motivos de Recusa de Orçamentos (RF09.5)
+Subtarefa 4.1: Criar URL `budgets:report_refusals` (GET) e view `BudgetRefusalReportView` (Role: MANAGER, ORCAMENTISTA).
+Subtarefa 4.2: Adicionar campo `Budget.refusal_category` (choices: HIGH_PRICE, COMPETITOR, NO_BUDGET, INSURER_DENIED, LONG_DEADLINE, OTHER) + `refusal_reason_obs` (campo texto livre já existe hoje, hoje em refusal_reason). Criar migration para mapear refusal_category automaticamente por palavras-chave na importação / reclassificação manual.
+Subtarefa 4.3: Implementar cinturão de 4 KPIs: Total orçamentos período, % Autorizadas, % Não aprovadas, % Aguardando.
+Subtarefa 4.4: Implementar Chart.js Bar "Top 5 Motivos de Recusa por Volume" (ordenado decrescente).
+Subtarefa 4.5: Implementar tabela detalhada colunas: Orçamento #, Cliente, Veículo, Valor total R$, Data visita, Motivo agrupado (categoria), Observação (justificativa), Orçamentista.
+Subtarefa 4.6: Filtros da tela (Data De / Data Até / Orçamentista (todos ou específico)).
+Subtarefa 4.7: Botão "Exportar CSV".
+
+Tarefa 5: Implementar Relatório de Produtividade por Colaborador (RF09.6) — MAIS CRÍTICO do pátio
+Subtarefa 5.1: Criar view `ProductivityReportView` e URL `budgets:report_productivity` (roles: MANAGER, FINANCE, ORCAMENTISTA).
+Subtarefa 5.2: Filtros: Data De · Data Até · Colaborador (todos / 1 específico) · Coluna Kanban (atividade específica: Desmontagem / Funilaria / Pintura / etc).
+Subtarefa 5.3: Implementar cinturão KPIs: Total tarefas concluídas, HH programado total, HH real total (soma play/pause WorkOrderTask.total_elapsed_seconds convertido em horas), Índice Eficiência % (HH programado / HH real × 100) com cores semáforo (verde ≥ 90, amarelo 75-90, vermelho < 75).
+Subtarefa 5.4: REGRA OBRIGATÓRIA: Filtrar `Collaborator.objects.filter(is_active=True)` por padrão no backend — colaboradores inativos (prestadores fora de serviço) NÃO aparecem. Adicionar checkbox "Incluir inativos" (só aparece para MANAGER / FINANCE) que tira o filtro. Garante o requisito do usuário: "prestador inativo não entra no rateio de HH disponível".
+Subtarefa 5.5: Gráfico de linhas (Chart.js Line): Eficiência por dia do período — 1 linha azul = eficiência diária; linha cinza tracejada = 100% de referência.
+Subtarefa 5.6: Tabela ranking (por colaborador, ordenado decrescente por Eficiência %): Posição (🥇🥈🥉 para top 3), Nome colaborador, # tarefas, HH programado, HH real, HH diferença (horas saldo positivo/negativo), Eficiência % (cor semáforo). Rows colaboradores inativos ficam opacity-60 quando "Incluir inativos" estiver marcado.
+Subtarefa 5.7: Botão Imprimir (A4 landscape) + Exportar CSV.
+
+Tarefa 6: Implementar Relatório Funil de Conversão Orçamento → OS → Entrega (RF09.7)
+Subtarefa 6.1: View `ConversionFunnelReportView` + URL `budgets:report_funnel` (roles: MANAGER, ORCAMENTISTA).
+Subtarefa 6.2: Filtros: Data De / Data Até / Orçamentista (todos / específico).
+Subtarefa 6.3: Implementar cálculo das 6 etapas (100% orçamentos criados → autorizadas → geraram OS → iniciadas → concluídas → entregues no prazo). Prazo contratada = Budget.delivered_at estimado vs WorkOrder.completed_at real; se concluídas ≤ data contratada = Conta como "Entregue no prazo".
+Subtarefa 6.4: Gráfico de Funil (Chart.js barras horizontais decrescentes, uma por etapa). Cada barra tem R$ e quantidade + % da etapa anterior.
+Subtarefa 6.5: Tabela de resumo por Mês do período (linhas = meses, colunas = 6 etapas em % com cores semáforo: >80% verde, 60-80% amarelo, <60% vermelho).
+Subtarefa 6.6: Exportar CSV.
+
+Tarefa 7: Testes Unitários + Validação + Documentação
+Subtarefa 7.1: TestCase Dashboard Principal (core/dashboard): superuser vê todos 6 cards; role VISUAL enxerga SOMENTE seu card de comissão + kanban resumido (não vê caixa).
+Subtarefa 7.2: TestCase Produtividade: colaborador is_active=False NÃO aparece por padrão no queryset inicial; marca "Incluir inativos" → sim aparece.
+Subtarefa 7.3: TestCase Comissões Isolamento: user com role OPERACIONAL (e colaborador.id=5) faz GET na página → tabela contém APENAS comissões com workordertask.assigned_collaborator_id=5 (não de colegas).
+Subtarefa 7.4: TestCase Relatório Recusas: filtrar por período com 0 orçamentos → cinturão zeros, tabela "sem registros" sem crashar.
+Subtarefa 7.5: `python manage.py check` → 0 issues. `makemigrations --check` → No changes detected.
+Subtarefa 7.6: Atualizar Menu Lateral (sidebar no base.html) para incluir links: Dashboard · Financeiro · Kanban Hoje · OS · Orçamentos · Clientes · Cadastros · Relatórios dropdown com os 4 relatórios: Comissões · Peças · Motivos Recusa · Produtividade · Funil Conversão.
+
+Tarefa 8: Deploy em Produção (PythonAnywhere)
+Subtarefa 8.1: Git pull + migrate + collectstatic + touch wsgi.
+Subtarefa 8.2: Testar Dashboard Principal (cinturão KPI) com usuário Gerente, Orçamentista, Operacional (3 papéis) para confirmar diferenciação de conteúdo por role.
+Subtarefa 8.3: Testar Impressão (Ctrl+P / botão Imprimir) em todos 4 relatórios (Comissões, Peças, Recusas, Produtividade) para confirmar layout A4, fundo branco, margens.
+Subtarefa 8.4: Validar CSV exportando 1 relatório grande (100+ linhas) — abrir no Excel Brasil, confirmar separador ; e acentos PT-BR corretos (UTF-8 BOM).
