@@ -1,7 +1,10 @@
+import hashlib
+import hmac
+import json
 from datetime import date, datetime, time as dt_time
 from decimal import Decimal
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
@@ -9,7 +12,20 @@ from django.utils import timezone
 from customers.models import Customer, Vehicle
 from users.models import Collaborator, CustomUser
 
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, Supplier, WorkOrder, WorkOrderTask
+from .models import (
+    BankAccount,
+    Budget,
+    BudgetPhoto,
+    CashCategory,
+    CashMovement,
+    CommissionLine,
+    Piece,
+    Supplier,
+    WhatsAppFinanceQueueItem,
+    WhatsAppWebhookLog,
+    WorkOrder,
+    WorkOrderTask,
+)
 from .cilia_parser import extract_service_lines
 from .views import capped_work_delta_seconds, parse_xml_created_at
 
@@ -39,6 +55,7 @@ class SmokePermissionsTests(TestCase):
             reverse('budgets:budget_list'),
             reverse('budgets:budget_open_list'),
             reverse('budgets:finance_dashboard'),
+            reverse('budgets:finance_whatsapp_queue'),
             reverse('budgets:finance_insights'),
             reverse('budgets:workorder_list'),
             reverse('budgets:kanban_today'),
@@ -68,6 +85,7 @@ class SmokePermissionsTests(TestCase):
         ]
         blocked = [
             'budgets:finance_dashboard',
+            'budgets:finance_whatsapp_queue',
             'budgets:finance_insights',
             'budgets:workorder_list',
             'customers:customer_list',
@@ -95,6 +113,7 @@ class SmokePermissionsTests(TestCase):
             'budgets:budget_list',
             'budgets:budget_open_list',
             'budgets:finance_dashboard',
+            'budgets:finance_whatsapp_queue',
             'budgets:finance_insights',
             'budgets:workorder_list',
             'budgets:vehicle_entry_kanban',
@@ -122,6 +141,7 @@ class SmokePermissionsTests(TestCase):
             'budgets:budget_list',
             'budgets:budget_open_list',
             'budgets:finance_dashboard',
+            'budgets:finance_whatsapp_queue',
             'budgets:finance_insights',
             'budgets:workorder_list',
             'budgets:vehicle_entry_kanban',
@@ -467,6 +487,152 @@ class FinanceInsightsTests(TestCase):
         r = self.client.get(reverse('budgets:finance_insights') + '?range=month')
         self.assertEqual(r.status_code, 200)
         self.assertIn('Porto Seguro', r.context['insurer_labels'])
+
+
+@override_settings(ZAP_WEBHOOK_SECRET='segredo-teste')
+class WhatsAppIntegrationTests(TestCase):
+    def setUp(self):
+        self.password = '111111'
+        self.manager = CustomUser.objects.create_user(
+            email='manager-zap@test.com',
+            password=self.password,
+            role=CustomUser.Role.MANAGER,
+        )
+        self.finance_collab = Collaborator.objects.create(
+            name='Financeiro Zap',
+            email='manager-zap@test.com',
+            phone='5511988887777',
+            function=Collaborator.Function.FINANCE,
+            is_active=True,
+        )
+        self.bank_account = BankAccount.objects.create(
+            bank_name='Banco Zap',
+            account_name='Conta Financeiro',
+        )
+        self.category_in = CashCategory.objects.create(
+            name='Recebimento WhatsApp',
+            direction=CashMovement.Direction.IN,
+        )
+        self.customer = Customer.objects.create(name='Cliente Zap', document_cpf_cnpj='777')
+        self.vehicle = Vehicle.objects.create(customer=self.customer, plate='ZAP1234', brand='Marca', model='Modelo')
+        self.budget = Budget.objects.create(
+            customer=self.customer,
+            vehicle=self.vehicle,
+            cilia_number=435,
+            status=Budget.Status.AUTHORIZED,
+            customer_type=Budget.CustomerType.PARTICULAR,
+        )
+
+    def _signed_post(self, payload):
+        raw = json.dumps(payload).encode('utf-8')
+        digest = hmac.new(b'segredo-teste', raw, hashlib.sha256).hexdigest()
+        return self.client.post(
+            reverse('zap_webhook'),
+            data=raw,
+            content_type='application/json',
+            HTTP_X_HMAC_SHA256=digest,
+        )
+
+    def test_webhook_creates_pending_queue_item_for_authorized_phone(self):
+        payload = {
+            'event': 'message',
+            'data': {
+                'messageId': 'abc-1',
+                'from': '5511988887777',
+                'senderName': 'Financeiro',
+                'chatId': '5511988887777@c.us',
+                'body': '/pix 500 orcamento 435 cliente fulano',
+            },
+        }
+        response = self._signed_post(payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
+        item = WhatsAppFinanceQueueItem.objects.first()
+        self.assertEqual(item.status, WhatsAppFinanceQueueItem.Status.PENDING)
+        self.assertEqual(item.budget, self.budget)
+        self.assertEqual(item.customer, self.customer)
+        self.assertEqual(item.amount, Decimal('500'))
+        self.assertTrue(item.parsed_ok)
+        self.assertEqual(WhatsAppWebhookLog.objects.count(), 1)
+        self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
+
+    def test_webhook_ignores_unauthorized_phone(self):
+        payload = {
+            'event': 'message',
+            'data': {
+                'messageId': 'abc-2',
+                'from': '5511977776666',
+                'senderName': 'Intruso',
+                'body': '/pix 500 orcamento 435',
+            },
+        }
+        response = self._signed_post(payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 0)
+        self.assertEqual(WhatsAppWebhookLog.objects.count(), 1)
+        self.assertIn('não autorizado', WhatsAppWebhookLog.objects.first().error_message.lower())
+
+    def test_webhook_blocks_duplicate_message(self):
+        payload = {
+            'event': 'message',
+            'data': {
+                'messageId': 'abc-3',
+                'from': '5511988887777',
+                'senderName': 'Financeiro',
+                'body': '/pix 500 orcamento 435 cliente fulano',
+            },
+        }
+        first = self._signed_post(payload)
+        second = self._signed_post(payload)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
+        self.assertEqual(WhatsAppWebhookLog.objects.count(), 2)
+
+    def test_finance_can_confirm_queue_item_into_cash_movement(self):
+        item = WhatsAppFinanceQueueItem.objects.create(
+            duplicate_key='dup-confirm',
+            sender_phone='5511988887777',
+            sender_name='Financeiro',
+            message_text='/pix 500 orcamento 435 cliente fulano',
+            normalized_text='/pix 500 orcamento 435 cliente fulano',
+            command_name='PIX',
+            parsed_ok=True,
+            direction=CashMovement.Direction.IN,
+            amount=Decimal('500'),
+            description='Recebimento do cliente',
+            launch_date=timezone.localdate(),
+            due_date=timezone.localdate(),
+            collaborator=self.finance_collab,
+            budget=self.budget,
+            customer=self.customer,
+            status=WhatsAppFinanceQueueItem.Status.PENDING,
+        )
+        self.client.login(email=self.manager.email, password=self.password)
+        response = self.client.post(
+            reverse('budgets:finance_whatsapp_queue'),
+            {
+                'action': 'confirm_item',
+                'item_id': str(item.id),
+                'description': 'Recebimento do cliente',
+                'direction': 'IN',
+                'amount': '500.00',
+                'launch_date': timezone.localdate().isoformat(),
+                'due_date': timezone.localdate().isoformat(),
+                'bank_account_id': str(self.bank_account.id),
+                'category_id': str(self.category_in.id),
+                'budget_id': str(self.budget.id),
+                'customer_id': str(self.customer.id),
+                'supplier_id': '',
+                'review_notes': 'Conferido pela gerência.',
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.status, WhatsAppFinanceQueueItem.Status.CONFIRMED)
+        self.assertIsNotNone(item.confirmed_movement_id)
+        self.assertEqual(CashMovement.objects.count(), 1)
 
 
 class BankAccountDeleteTests(TestCase):

@@ -422,3 +422,139 @@ class CashCategory(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class WhatsAppWebhookLog(models.Model):
+    provider = models.CharField(max_length=40, default='ZAP_API')
+    event_type = models.CharField(max_length=80, blank=True)
+    external_message_id = models.CharField(max_length=120, blank=True)
+    sender_phone = models.CharField(max_length=40, blank=True)
+    sender_name = models.CharField(max_length=120, blank=True)
+    chat_id = models.CharField(max_length=120, blank=True)
+    chat_name = models.CharField(max_length=255, blank=True)
+    signature_valid = models.BooleanField(default=False)
+    processed_ok = models.BooleanField(default=False)
+    duplicate_key = models.CharField(max_length=64, blank=True)
+    raw_headers = models.JSONField(default=dict, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    error_message = models.CharField(max_length=255, blank=True)
+    queue_item = models.ForeignKey(
+        'WhatsAppFinanceQueueItem',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='webhook_logs',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-created_at', '-id')
+        verbose_name = 'Log Webhook WhatsApp'
+        verbose_name_plural = 'Logs Webhook WhatsApp'
+
+    def __str__(self):
+        return f'Webhook WhatsApp {self.provider} #{self.pk}'
+
+
+class WhatsAppFinanceQueueItem(models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', 'Pendente'
+        CONFIRMED = 'CONFIRMED', 'Confirmado'
+        REJECTED = 'REJECTED', 'Recusado'
+        DUPLICATE = 'DUPLICATE', 'Duplicado'
+        IGNORED = 'IGNORED', 'Ignorado'
+
+    provider = models.CharField(max_length=40, default='ZAP_API')
+    external_message_id = models.CharField(max_length=120, blank=True)
+    duplicate_key = models.CharField(max_length=64, unique=True)
+    sender_phone = models.CharField(max_length=40, blank=True)
+    sender_name = models.CharField(max_length=120, blank=True)
+    chat_id = models.CharField(max_length=120, blank=True)
+    chat_name = models.CharField(max_length=255, blank=True)
+    is_group_message = models.BooleanField(default=False)
+    collaborator = models.ForeignKey(
+        'users.Collaborator',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    message_text = models.TextField(blank=True)
+    normalized_text = models.TextField(blank=True)
+    command_name = models.CharField(max_length=40, blank=True)
+    parsed_ok = models.BooleanField(default=False)
+    direction = models.CharField(max_length=10, choices=CashMovement.Direction.choices, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    description = models.CharField(max_length=255, blank=True)
+    launch_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    budget = models.ForeignKey(
+        Budget,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    bank_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    category = models.ForeignKey(
+        CashCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    review_notes = models.TextField(blank=True)
+    duplicate_of = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='duplicates',
+    )
+    confirmed_movement = models.ForeignKey(
+        CashMovement,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_queue_items',
+    )
+    reviewed_by = models.ForeignKey(
+        'users.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_whatsapp_queue_items',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('-created_at', '-id')
+        verbose_name = 'Fila financeira WhatsApp'
+        verbose_name_plural = 'Fila financeira WhatsApp'
+
+    def __str__(self):
+        return f'Fila WhatsApp #{self.pk} - {self.get_status_display()}'

@@ -65,6 +65,14 @@ class CollaboratorForm(forms.ModelForm):
         email = (self.cleaned_data.get('email') or '').strip().lower()
         return email or None
 
+    def clean_phone(self):
+        phone = ''.join(ch for ch in (self.cleaned_data.get('phone') or '') if ch.isdigit())
+        if not phone:
+            return ''
+        if len(phone) in (10, 11):
+            return f'55{phone}'
+        return phone
+
     def clean(self):
         cleaned = super().clean()
         function = cleaned.get('function')

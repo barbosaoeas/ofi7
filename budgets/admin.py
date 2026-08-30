@@ -8,6 +8,8 @@ from .models import (
     Piece,
     ServiceCatalog,
     ThirdPartyService,
+    WhatsAppFinanceQueueItem,
+    WhatsAppWebhookLog,
     WorkOrder,
     WorkOrderTask,
 )
@@ -93,3 +95,17 @@ class CashCategoryAdmin(admin.ModelAdmin):
     list_display = ('id', 'direction', 'group', 'name', 'is_active')
     list_filter = ('direction', 'is_active')
     search_fields = ('name',)
+
+
+@admin.register(WhatsAppFinanceQueueItem)
+class WhatsAppFinanceQueueItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'provider', 'sender_phone', 'command_name', 'amount', 'status', 'budget', 'created_at')
+    list_filter = ('provider', 'status', 'direction', 'parsed_ok', 'is_group_message')
+    search_fields = ('sender_phone', 'sender_name', 'message_text', 'external_message_id', 'budget__cilia_number')
+
+
+@admin.register(WhatsAppWebhookLog)
+class WhatsAppWebhookLogAdmin(admin.ModelAdmin):
+    list_display = ('id', 'provider', 'event_type', 'sender_phone', 'signature_valid', 'processed_ok', 'created_at')
+    list_filter = ('provider', 'signature_valid', 'processed_ok')
+    search_fields = ('sender_phone', 'sender_name', 'external_message_id', 'error_message')

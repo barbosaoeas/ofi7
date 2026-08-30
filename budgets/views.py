@@ -1,21 +1,27 @@
-from django.contrib import messages
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef
-from django.db.models.deletion import ProtectedError
-from django.http import Http404, HttpResponse
-from django.shortcuts import redirect, render
-from django.urls import reverse
-from django.utils import timezone
-from django.views import View
-from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, TemplateView, UpdateView
+import hashlib
+import hmac
+import json
+import time
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-import time
 from uuid import uuid4
 from xml.etree import ElementTree
-from django.db.models import Q
+
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import OperationalError, transaction
+from django.db.models import Exists, OuterRef, Q
+from django.db.models.deletion import ProtectedError
+from django.http import Http404, HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, TemplateView, UpdateView
+from django.views.decorators.csrf import csrf_exempt
 
 from customers.models import Customer, Vehicle
 from core.views import RoleRequiredMixin
@@ -23,10 +29,51 @@ from users.models import Collaborator, CustomUser
 
 from .cilia_parser import extract_service_lines, extract_tag_names, parse_cilia_xml
 from .forms import BankAccountForm, CiliaXMLUploadForm, PieceForm, ServiceCatalogForm, SupplierForm, ThirdPartyServiceForm
-from .models import BankAccount, Budget, BudgetPhoto, CashCategory, CashMovement, CommissionLine, Piece, ServiceCatalog, Supplier, ThirdPartyService, WorkOrder, WorkOrderTask
+from .models import (
+    BankAccount,
+    Budget,
+    BudgetPhoto,
+    CashCategory,
+    CashMovement,
+    CommissionLine,
+    Piece,
+    ServiceCatalog,
+    Supplier,
+    ThirdPartyService,
+    WhatsAppFinanceQueueItem,
+    WhatsAppWebhookLog,
+    WorkOrder,
+    WorkOrderTask,
+)
 
 
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
+
+
+def normalize_phone(value):
+    raw = (value or '').strip()
+    if '@' in raw:
+        raw = raw.split('@', 1)[0]
+    digits = ''.join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return ''
+    if len(digits) in (10, 11):
+        return f'55{digits}'
+    if len(digits) > 13 and digits.startswith('55'):
+        return digits[:13]
+    return digits
+
+
+def phones_match(left, right):
+    a = normalize_phone(left)
+    b = normalize_phone(right)
+    if not a or not b:
+        return False
+    return a == b or a.endswith(b) or b.endswith(a)
+
+
+def normalize_whatsapp_text(value):
+    return ' '.join((value or '').strip().split())
 
 
 def budget_has_pending_shop_parts(budget):
@@ -231,6 +278,209 @@ def capped_work_delta_seconds(last_started_at, now, allow_overtime):
 
     delta = int((effective_end - last_local).total_seconds())
     return max(delta, 0), effective_end
+
+
+def _extract_json_headers(request):
+    data = {}
+    for key, value in request.headers.items():
+        lower = (key or '').lower()
+        if lower.startswith('x-') or lower in ('content-type', 'user-agent'):
+            data[key] = value
+    return data
+
+
+def _extract_signature(request):
+    for key in (
+        'X-HMAC-SHA256',
+        'X-Webhook-Signature',
+        'X-Signature',
+        'X-Hub-Signature-256',
+        'x-hmac-sha256',
+        'x-webhook-signature',
+        'x-signature',
+        'x-hub-signature-256',
+    ):
+        value = request.headers.get(key)
+        if value:
+            return value.strip()
+    return ''
+
+
+def _signature_is_valid(raw_body, signature):
+    secret = getattr(settings, 'ZAP_WEBHOOK_SECRET', '') or ''
+    if not secret:
+        return False
+    incoming = (signature or '').strip()
+    if incoming.startswith('sha256='):
+        incoming = incoming.split('=', 1)[1]
+    digest = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(digest, incoming)
+
+
+def _get_nested(data, *paths):
+    for path in paths:
+        current = data
+        found = True
+        for key in path:
+            if not isinstance(current, dict) or key not in current:
+                found = False
+                break
+            current = current.get(key)
+        if found and current not in (None, ''):
+            return current
+    return ''
+
+
+def _safe_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _extract_message_payload(payload):
+    root = _safe_dict(payload)
+    data = _safe_dict(root.get('data'))
+    message = _safe_dict(data.get('message'))
+    sender = _safe_dict(data.get('sender') or message.get('sender'))
+    chat = _safe_dict(data.get('chat') or message.get('chat'))
+
+    text = (
+        _get_nested(message, ('text',))
+        or _get_nested(message, ('body',))
+        or _get_nested(message, ('content',))
+        or _get_nested(message, ('conversation',))
+        or _get_nested(data, ('text',))
+        or _get_nested(data, ('body',))
+        or _get_nested(root, ('text',))
+        or _get_nested(root, ('body',))
+    )
+    if isinstance(text, dict):
+        text = text.get('body') or text.get('text') or ''
+
+    sender_phone = (
+        sender.get('phone')
+        or sender.get('number')
+        or sender.get('id')
+        or data.get('senderPhone')
+        or data.get('from')
+        or message.get('author')
+        or message.get('participant')
+        or message.get('from')
+        or root.get('from')
+    )
+    sender_name = sender.get('name') or sender.get('pushName') or data.get('senderName') or root.get('senderName') or ''
+    chat_id = chat.get('id') or data.get('chatId') or root.get('chatId') or ''
+    chat_name = chat.get('name') or data.get('chatName') or root.get('chatName') or ''
+    external_message_id = (
+        message.get('id')
+        or data.get('messageId')
+        or data.get('id')
+        or root.get('messageId')
+        or root.get('id')
+        or ''
+    )
+    event_type = root.get('event') or root.get('type') or data.get('event') or 'message'
+    is_group_message = bool(
+        chat.get('isGroup')
+        or data.get('isGroup')
+        or root.get('isGroup')
+        or ('@g.us' in str(chat_id or ''))
+    )
+    return {
+        'provider': 'ZAP_API',
+        'event_type': str(event_type or 'message'),
+        'external_message_id': str(external_message_id or ''),
+        'sender_phone': normalize_phone(sender_phone),
+        'sender_name': str(sender_name or ''),
+        'chat_id': str(chat_id or ''),
+        'chat_name': str(chat_name or ''),
+        'is_group_message': is_group_message,
+        'message_text': normalize_whatsapp_text(str(text or '')),
+    }
+
+
+def _make_duplicate_key(message_data):
+    base = '|'.join(
+        [
+            message_data.get('provider', ''),
+            message_data.get('external_message_id', ''),
+            message_data.get('sender_phone', ''),
+            message_data.get('message_text', '').lower(),
+        ]
+    )
+    return hashlib.sha256(base.encode('utf-8')).hexdigest()
+
+
+def _find_authorized_collaborator_by_phone(phone):
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return None
+    allowed_functions = {
+        Collaborator.Function.MANAGER,
+        Collaborator.Function.FINANCE,
+    }
+    for collaborator in Collaborator.objects.filter(is_active=True, function__in=allowed_functions).order_by('name'):
+        if phones_match(collaborator.phone, normalized):
+            return collaborator
+    return None
+
+
+def _parse_whatsapp_command(message_text):
+    text = normalize_whatsapp_text(message_text)
+    lower = text.lower()
+    result = {
+        'parsed_ok': False,
+        'command_name': '',
+        'direction': '',
+        'amount': None,
+        'description': text[:255],
+        'budget_number': None,
+        'launch_date': timezone.localdate(),
+        'due_date': timezone.localdate(),
+        'review_notes': 'Mensagem aguardando revisão manual.',
+    }
+    if not lower:
+        result['review_notes'] = 'Mensagem vazia recebida do WhatsApp.'
+        return result
+
+    command_map = {
+        '/pix': ('PIX', CashMovement.Direction.IN),
+        '/cartao': ('CARTAO', CashMovement.Direction.IN),
+        '/dinheiro': ('DINHEIRO', CashMovement.Direction.IN),
+        '/despesa': ('DESPESA', CashMovement.Direction.OUT),
+        '/boleto': ('BOLETO', CashMovement.Direction.OUT),
+        '/salario': ('SALARIO', CashMovement.Direction.OUT),
+    }
+    tokens = lower.split()
+    command = tokens[0] if tokens else ''
+    if command in command_map:
+        result['command_name'], result['direction'] = command_map[command]
+        if len(tokens) > 1:
+            try:
+                amount = tokens[1].replace('.', '').replace(',', '.')
+                result['amount'] = Decimal(amount)
+            except Exception:
+                result['amount'] = None
+
+        import re
+
+        budget_match = re.search(r'(orcamento|orçamento|os)\s+(\d+)', lower)
+        if budget_match:
+            try:
+                result['budget_number'] = int(budget_match.group(2))
+            except Exception:
+                result['budget_number'] = None
+
+        raw_tokens = text.split()
+        description_tokens = raw_tokens[2:] if len(raw_tokens) > 2 else raw_tokens[1:]
+        result['description'] = ' '.join(description_tokens)[:255] or text[:255]
+        if result['amount'] and result['amount'] > 0:
+            result['parsed_ok'] = True
+            result['review_notes'] = 'Campos principais identificados automaticamente. Revise antes de confirmar.'
+        else:
+            result['review_notes'] = 'Comando reconhecido, mas o valor precisa ser revisado antes da confirmação.'
+        return result
+
+    result['review_notes'] = 'Mensagem fora do padrão automático. Revise e complete manualmente antes de confirmar.'
+    return result
 
 
 class BudgetListView(RoleRequiredMixin, ListView):
@@ -833,50 +1083,331 @@ class FinanceDashboardView(RoleRequiredMixin, View):
         return redirect(next_url or 'budgets:finance_dashboard')
 
 
-class FinanceWhatsappQueueView(RoleRequiredMixin, TemplateView):
+class FinanceWhatsappQueueView(FinanceDashboardView):
     template_name = 'budgets/finance_whatsapp_queue.html'
     allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['prototype_counts'] = {
-            'pending': 3,
-            'confirmed': 12,
-            'rejected': 2,
+    def _get_status_filter(self, request):
+        status = (request.GET.get('status') or '').strip().upper()
+        valid = {choice[0] for choice in WhatsAppFinanceQueueItem.Status.choices}
+        return status if status in valid else ''
+
+    def _default_source_for_item(self, item, direction):
+        if direction == CashMovement.Direction.IN and item.budget and item.budget.customer_type == Budget.CustomerType.INSURER:
+            return CashMovement.Source.INSURERS
+        if direction == CashMovement.Direction.IN:
+            return CashMovement.Source.PARTICULAR
+        return CashMovement.Source.COMPANY
+
+    def _base_queryset(self):
+        return WhatsAppFinanceQueueItem.objects.select_related(
+            'budget',
+            'customer',
+            'supplier',
+            'bank_account',
+            'category',
+            'collaborator',
+            'reviewed_by',
+            'confirmed_movement',
+        ).order_by('-created_at', '-id')
+
+    def _get_review_item(self, request, items):
+        raw_id = (request.GET.get('review') or '').strip()
+        review_id = None
+        try:
+            review_id = int(raw_id) if raw_id else None
+        except ValueError:
+            review_id = None
+        if review_id:
+            for item in items:
+                if item.id == review_id:
+                    return item
+        for item in items:
+            if item.status == WhatsAppFinanceQueueItem.Status.PENDING:
+                return item
+        return items[0] if items else None
+
+    def _build_queue_context(self, request):
+        status_filter = self._get_status_filter(request)
+        qs = self._base_queryset()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        items = list(qs[:50])
+        review_item = self._get_review_item(request, items)
+        counts = {
+            'pending': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.PENDING).count(),
+            'confirmed': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.CONFIRMED).count(),
+            'rejected': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.REJECTED).count(),
+            'duplicate': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.DUPLICATE).count(),
         }
-        context['prototype_items'] = [
-            {
-                'title': 'Pix recebido do orcamento #435',
-                'subtitle': 'Cliente: Fulano · Remetente autorizado · Hoje 09:12',
-                'amount': 'R$ 500,00',
-                'direction': 'Entrada',
-                'direction_class': 'border-[#14532d] bg-[#052e16] text-[#86efac]',
-                'status': 'Pendente revisao',
-                'status_class': 'border-[#5b3b13] bg-[#1d1403] text-[#fde68a]',
-                'tags': ['PIX', 'Orcamento #435', 'Cliente localizado'],
-            },
-            {
-                'title': 'Despesa informada pela secretaria',
-                'subtitle': 'Fornecedor: Oficina Jose · Categoria material · Hoje 10:03',
-                'amount': 'R$ 230,00',
-                'direction': 'Saida',
-                'direction_class': 'border-[#7f1d1d] bg-[#450a0a] text-[#fecaca]',
-                'status': 'Aguardando confirmacao',
-                'status_class': 'border-[#5b3b13] bg-[#1d1403] text-[#fde68a]',
-                'tags': ['Despesa', 'Material', 'Precisa conferir fornecedor'],
-            },
-            {
-                'title': 'Cartao informado para seguradora',
-                'subtitle': 'Seguradora Porto · Orcamento #440 · Hoje 11:18',
-                'amount': 'R$ 1.200,00',
-                'direction': 'Entrada',
-                'direction_class': 'border-[#14532d] bg-[#052e16] text-[#86efac]',
-                'status': 'Pendente edicao',
-                'status_class': 'border-[#1d4ed8] bg-[#0b1f3b] text-[#bfdbfe]',
-                'tags': ['Cartao', 'Seguradora', 'Ajustar descricao'],
-            },
-        ]
-        return context
+        return {
+            'queue_items': items,
+            'review_item': review_item,
+            'status_filter': status_filter,
+            'prototype_counts': counts,
+            'bank_accounts': list(BankAccount.objects.filter(is_active=True).order_by('bank_name', 'account_name')),
+            'customers': list(Customer.objects.order_by('name')),
+            'suppliers': list(Supplier.objects.filter(is_active=True).order_by('name')),
+            'categories': list(CashCategory.objects.filter(is_active=True).order_by('direction', 'group', 'name')),
+        }
+
+    def get(self, request):
+        return render(request, self.template_name, self._build_queue_context(request))
+
+    def post(self, request):
+        action = (request.POST.get('action') or '').strip()
+        raw_id = (request.POST.get('item_id') or '').strip()
+        redirect_to = reverse('budgets:finance_whatsapp_queue')
+        try:
+            item_id = int(raw_id)
+        except ValueError:
+            item_id = None
+        if not item_id:
+            messages.error(request, 'Item de fila inválido.')
+            return redirect(redirect_to)
+
+        item = WhatsAppFinanceQueueItem.objects.select_related('budget', 'customer', 'supplier').filter(id=item_id).first()
+        if item is None:
+            messages.error(request, 'Item da fila não encontrado.')
+            return redirect(redirect_to)
+
+        if action == 'reject_item':
+            item.status = WhatsAppFinanceQueueItem.Status.REJECTED
+            item.review_notes = (request.POST.get('review_notes') or item.review_notes or '').strip()
+            item.reviewed_by = request.user
+            item.reviewed_at = timezone.now()
+            item.save(update_fields=['status', 'review_notes', 'reviewed_by', 'reviewed_at', 'updated_at'])
+            messages.success(request, 'Lançamento do WhatsApp recusado.')
+            return redirect(redirect_to)
+
+        direction = (request.POST.get('direction') or item.direction or '').strip().upper()
+        if direction not in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
+            messages.error(request, 'Selecione a direção do lançamento.')
+            return redirect(f'{redirect_to}?review={item.id}')
+
+        try:
+            amount = self._parse_money(request.POST.get('amount'))
+        except Exception:
+            amount = Decimal('0')
+        if amount <= 0:
+            messages.error(request, 'Informe um valor válido para continuar.')
+            return redirect(f'{redirect_to}?review={item.id}')
+
+        description = (request.POST.get('description') or item.description or item.message_text or '').strip()[:255]
+        launch_date = self._parse_date(request.POST.get('launch_date'), item.launch_date or timezone.localdate())
+        due_date = self._parse_date(request.POST.get('due_date'), item.due_date or timezone.localdate())
+        review_notes = (request.POST.get('review_notes') or '').strip()
+
+        bank_account_id_raw = (request.POST.get('bank_account_id') or '').strip()
+        category_id_raw = (request.POST.get('category_id') or '').strip()
+        budget_id_raw = (request.POST.get('budget_id') or '').strip()
+        customer_id_raw = (request.POST.get('customer_id') or '').strip()
+        supplier_id_raw = (request.POST.get('supplier_id') or '').strip()
+
+        bank_account = BankAccount.objects.filter(id=bank_account_id_raw, is_active=True).first() if bank_account_id_raw else None
+        if bank_account is None:
+            messages.error(request, 'Selecione a conta bancária para confirmar o lançamento.')
+            return redirect(f'{redirect_to}?review={item.id}')
+
+        category = CashCategory.objects.filter(id=category_id_raw).first() if category_id_raw else None
+        budget = (
+            Budget.objects.filter(id=budget_id_raw).select_related('customer').first()
+            if budget_id_raw
+            else None
+        )
+        customer = Customer.objects.filter(id=customer_id_raw).first() if customer_id_raw else None
+        supplier = Supplier.objects.filter(id=supplier_id_raw, is_active=True).first() if supplier_id_raw else None
+
+        if budget and customer is None:
+            customer = budget.customer
+        if direction == CashMovement.Direction.IN and customer is None:
+            messages.error(request, 'Entradas precisam estar vinculadas a um cliente ou orçamento.')
+            return redirect(f'{redirect_to}?review={item.id}')
+        if direction == CashMovement.Direction.IN:
+            supplier = None
+        else:
+            customer = None
+
+        item.direction = direction
+        item.amount = amount
+        item.description = description
+        item.launch_date = launch_date
+        item.due_date = due_date
+        item.bank_account = bank_account
+        item.category = category
+        item.budget = budget
+        item.customer = customer
+        item.supplier = supplier
+        item.review_notes = review_notes
+        item.reviewed_by = request.user
+        item.reviewed_at = timezone.now()
+
+        if action == 'save_review':
+            item.status = WhatsAppFinanceQueueItem.Status.PENDING
+            item.save(
+                update_fields=[
+                    'direction',
+                    'amount',
+                    'description',
+                    'launch_date',
+                    'due_date',
+                    'bank_account',
+                    'category',
+                    'budget',
+                    'customer',
+                    'supplier',
+                    'review_notes',
+                    'reviewed_by',
+                    'reviewed_at',
+                    'status',
+                    'updated_at',
+                ]
+            )
+            messages.success(request, 'Revisão salva. O item continua pendente.')
+            return redirect(f'{redirect_to}?review={item.id}')
+
+        if action == 'confirm_item':
+            source = self._default_source_for_item(item, direction)
+            movement = CashMovement.objects.create(
+                direction=direction,
+                source=source,
+                category=category,
+                budget=budget,
+                customer=customer,
+                bank_account=bank_account,
+                supplier=supplier,
+                description=description,
+                amount=amount,
+                launch_date=launch_date,
+                due_date=due_date,
+                is_realized=False,
+                realized_at=None,
+            )
+            item.status = WhatsAppFinanceQueueItem.Status.CONFIRMED
+            item.confirmed_movement = movement
+            item.save(
+                update_fields=[
+                    'direction',
+                    'amount',
+                    'description',
+                    'launch_date',
+                    'due_date',
+                    'bank_account',
+                    'category',
+                    'budget',
+                    'customer',
+                    'supplier',
+                    'review_notes',
+                    'reviewed_by',
+                    'reviewed_at',
+                    'status',
+                    'confirmed_movement',
+                    'updated_at',
+                ]
+            )
+            messages.success(request, 'Lançamento confirmado e enviado para o financeiro.')
+            return redirect(redirect_to)
+
+        messages.error(request, 'Ação inválida para a fila do WhatsApp.')
+        return redirect(f'{redirect_to}?review={item.id}')
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class ZapWebhookView(View):
+    http_method_names = ['post']
+
+    def post(self, request):
+        raw_body = request.body or b'{}'
+        signature = _extract_signature(request)
+        signature_valid = _signature_is_valid(raw_body, signature)
+
+        try:
+            payload = json.loads(raw_body.decode('utf-8') or '{}')
+        except Exception:
+            payload = {}
+
+        message_data = _extract_message_payload(payload)
+        duplicate_key = _make_duplicate_key(message_data)
+        headers_data = _extract_json_headers(request)
+
+        log = WhatsAppWebhookLog.objects.create(
+            provider=message_data.get('provider', 'ZAP_API'),
+            event_type=message_data.get('event_type', ''),
+            external_message_id=message_data.get('external_message_id', ''),
+            sender_phone=message_data.get('sender_phone', ''),
+            sender_name=message_data.get('sender_name', ''),
+            chat_id=message_data.get('chat_id', ''),
+            chat_name=message_data.get('chat_name', ''),
+            signature_valid=signature_valid,
+            duplicate_key=duplicate_key,
+            raw_headers=headers_data,
+            raw_payload=payload if isinstance(payload, dict) else {},
+        )
+
+        if not signature_valid:
+            log.error_message = 'Assinatura inválida do webhook.'
+            log.save(update_fields=['error_message'])
+            return JsonResponse({'ok': False, 'error': 'invalid_signature'}, status=403)
+
+        if not message_data.get('sender_phone') or not message_data.get('message_text'):
+            log.processed_ok = True
+            log.error_message = 'Evento ignorado por não conter mensagem financeira utilizável.'
+            log.save(update_fields=['processed_ok', 'error_message'])
+            return JsonResponse({'ok': True, 'ignored': True, 'reason': 'non_message_event'})
+
+        collaborator = _find_authorized_collaborator_by_phone(message_data.get('sender_phone'))
+        if collaborator is None:
+            log.error_message = 'Número não autorizado para integração financeira.'
+            log.save(update_fields=['error_message'])
+            return JsonResponse({'ok': True, 'ignored': True, 'reason': 'unauthorized_number'})
+
+        existing = WhatsAppFinanceQueueItem.objects.filter(duplicate_key=duplicate_key).first()
+        if existing is not None:
+            log.processed_ok = True
+            log.error_message = 'Mensagem duplicada ignorada.'
+            log.queue_item = existing
+            log.save(update_fields=['processed_ok', 'error_message', 'queue_item'])
+            return JsonResponse({'ok': True, 'duplicate': True, 'queue_item_id': existing.id})
+
+        parsed = _parse_whatsapp_command(message_data.get('message_text', ''))
+        budget = None
+        if parsed.get('budget_number'):
+            budget = (
+                Budget.objects.select_related('customer')
+                .filter(Q(cilia_number=parsed['budget_number']) | Q(id=parsed['budget_number']))
+                .first()
+            )
+
+        queue_item = WhatsAppFinanceQueueItem.objects.create(
+            provider=message_data.get('provider', 'ZAP_API'),
+            external_message_id=message_data.get('external_message_id', ''),
+            duplicate_key=duplicate_key,
+            sender_phone=message_data.get('sender_phone', ''),
+            sender_name=message_data.get('sender_name', ''),
+            chat_id=message_data.get('chat_id', ''),
+            chat_name=message_data.get('chat_name', ''),
+            is_group_message=message_data.get('is_group_message', False),
+            collaborator=collaborator,
+            message_text=message_data.get('message_text', ''),
+            normalized_text=message_data.get('message_text', '').lower(),
+            command_name=parsed.get('command_name', ''),
+            parsed_ok=bool(parsed.get('parsed_ok')),
+            direction=parsed.get('direction', ''),
+            amount=parsed.get('amount'),
+            description=parsed.get('description', '')[:255],
+            launch_date=parsed.get('launch_date'),
+            due_date=parsed.get('due_date'),
+            budget=budget,
+            customer=budget.customer if budget and parsed.get('direction') == CashMovement.Direction.IN else None,
+            status=WhatsAppFinanceQueueItem.Status.PENDING,
+            review_notes=parsed.get('review_notes', ''),
+            raw_payload=payload if isinstance(payload, dict) else {},
+        )
+
+        log.processed_ok = True
+        log.queue_item = queue_item
+        log.save(update_fields=['processed_ok', 'queue_item'])
+        return JsonResponse({'ok': True, 'queue_item_id': queue_item.id})
 
 
 class FinanceInsightsView(FinanceDashboardView):
