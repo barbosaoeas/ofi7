@@ -523,14 +523,14 @@ class WhatsAppIntegrationTests(TestCase):
             customer_type=Budget.CustomerType.PARTICULAR,
         )
 
-    def _signed_post(self, payload):
+    def _signed_post(self, payload, signature_header='HTTP_X_HMAC_SHA256'):
         raw = json.dumps(payload).encode('utf-8')
         digest = hmac.new(b'segredo-teste', raw, hashlib.sha256).hexdigest()
         return self.client.post(
             reverse('zap_webhook'),
             data=raw,
             content_type='application/json',
-            HTTP_X_HMAC_SHA256=digest,
+            **{signature_header: digest},
         )
 
     def test_webhook_creates_pending_queue_item_for_authorized_phone(self):
@@ -554,6 +554,22 @@ class WhatsAppIntegrationTests(TestCase):
         self.assertEqual(item.amount, Decimal('500'))
         self.assertTrue(item.parsed_ok)
         self.assertEqual(WhatsAppWebhookLog.objects.count(), 1)
+        self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
+
+    def test_webhook_accepts_zap_signature_header(self):
+        payload = {
+            'event': 'message.received',
+            'data': {
+                'messageId': 'abc-zap-1',
+                'from': '5511988887777',
+                'senderName': 'Financeiro',
+                'chatId': '120363000000000000@g.us',
+                'body': '/pix 500 orcamento 435 cliente fulano',
+            },
+        }
+        response = self._signed_post(payload, signature_header='HTTP_X_ZAP_SIGNATURE')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
         self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
 
     def test_webhook_ignores_unauthorized_phone(self):

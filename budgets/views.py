@@ -291,10 +291,12 @@ def _extract_json_headers(request):
 
 def _extract_signature(request):
     for key in (
+        'X-Zap-Signature',
         'X-HMAC-SHA256',
         'X-Webhook-Signature',
         'X-Signature',
         'X-Hub-Signature-256',
+        'x-zap-signature',
         'x-hmac-sha256',
         'x-webhook-signature',
         'x-signature',
