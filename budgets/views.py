@@ -8,7 +8,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views import View
-from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, UpdateView
+from django.views.generic import CreateView, DeleteView, DetailView, FormView, ListView, TemplateView, UpdateView
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -831,6 +831,52 @@ class FinanceDashboardView(RoleRequiredMixin, View):
 
         messages.error(request, 'Ação inválida.')
         return redirect(next_url or 'budgets:finance_dashboard')
+
+
+class FinanceWhatsappQueueView(RoleRequiredMixin, TemplateView):
+    template_name = 'budgets/finance_whatsapp_queue.html'
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['prototype_counts'] = {
+            'pending': 3,
+            'confirmed': 12,
+            'rejected': 2,
+        }
+        context['prototype_items'] = [
+            {
+                'title': 'Pix recebido do orcamento #435',
+                'subtitle': 'Cliente: Fulano · Remetente autorizado · Hoje 09:12',
+                'amount': 'R$ 500,00',
+                'direction': 'Entrada',
+                'direction_class': 'border-[#14532d] bg-[#052e16] text-[#86efac]',
+                'status': 'Pendente revisao',
+                'status_class': 'border-[#5b3b13] bg-[#1d1403] text-[#fde68a]',
+                'tags': ['PIX', 'Orcamento #435', 'Cliente localizado'],
+            },
+            {
+                'title': 'Despesa informada pela secretaria',
+                'subtitle': 'Fornecedor: Oficina Jose · Categoria material · Hoje 10:03',
+                'amount': 'R$ 230,00',
+                'direction': 'Saida',
+                'direction_class': 'border-[#7f1d1d] bg-[#450a0a] text-[#fecaca]',
+                'status': 'Aguardando confirmacao',
+                'status_class': 'border-[#5b3b13] bg-[#1d1403] text-[#fde68a]',
+                'tags': ['Despesa', 'Material', 'Precisa conferir fornecedor'],
+            },
+            {
+                'title': 'Cartao informado para seguradora',
+                'subtitle': 'Seguradora Porto · Orcamento #440 · Hoje 11:18',
+                'amount': 'R$ 1.200,00',
+                'direction': 'Entrada',
+                'direction_class': 'border-[#14532d] bg-[#052e16] text-[#86efac]',
+                'status': 'Pendente edicao',
+                'status_class': 'border-[#1d4ed8] bg-[#0b1f3b] text-[#bfdbfe]',
+                'tags': ['Cartao', 'Seguradora', 'Ajustar descricao'],
+            },
+        ]
+        return context
 
 
 class FinanceInsightsView(FinanceDashboardView):

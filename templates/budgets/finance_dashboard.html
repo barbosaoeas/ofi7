@@ -21,6 +21,9 @@
         <button type='button' data-open-modal='movement-create' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-3 text-sm font-semibold text-[#0D0D0D] shadow-lg shadow-[#D4AF37]/10'>
           Novo lançamento
         </button>
+        <a href='{% url "budgets:finance_whatsapp_queue" %}' class='rounded-xl border border-[#1d4ed8] bg-[#0b1220] px-4 py-3 text-sm font-semibold text-[#bfdbfe] hover:bg-[#0f1c34]'>
+          Lançamento WhatsApp
+        </a>
         <button type='button' data-open-modal='categories' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
           Tipos
         </button>
@@ -94,135 +97,6 @@
       <div class='text-xs uppercase tracking-wide text-[#fca5a5]'>Atrasado</div>
       <div class='mt-3 text-2xl font-semibold text-[#F5F5F5]'>R$ {{ overdue_open|floatformat:2 }}</div>
       <div class='mt-2 text-sm text-[#A3A3A3]'>Lançamentos em aberto vencidos até hoje</div>
-    </div>
-  </div>
-
-  <div class='mt-6 rounded-3xl border border-[#1d4ed8]/40 bg-gradient-to-br from-[#0b1220] via-[#0d1527] to-[#0a101a] p-5 shadow-xl shadow-[#0b1220]/40'>
-    <div class='flex flex-wrap items-start justify-between gap-4'>
-      <div class='max-w-3xl'>
-        <div class='inline-flex items-center gap-2 rounded-full border border-[#1d4ed8]/40 bg-[#0b1f3b] px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-[#93c5fd]'>
-          Integração WhatsApp
-        </div>
-        <h2 class='mt-3 text-2xl font-semibold text-white'>Prévia do fluxo de aprovação antes de entrar no caixa</h2>
-        <p class='mt-2 text-sm text-slate-300'>
-          Esta área é a proposta visual para quando o Zap financeiro estiver ligado ao sistema: a secretária lança pelo WhatsApp, o sistema registra como
-          <span class='font-semibold text-amber-300'>pendente</span> e só depois alguém do financeiro confirma.
-        </p>
-      </div>
-      <div class='grid min-w-[260px] grid-cols-1 gap-3 sm:grid-cols-3'>
-        <div class='rounded-2xl border border-[#334155] bg-[#0f172a] p-4'>
-          <div class='text-[11px] uppercase tracking-[0.25em] text-slate-400'>Status</div>
-          <div class='mt-2 text-lg font-semibold text-white'>Protótipo visual</div>
-          <div class='mt-1 text-sm text-slate-300'>Sem impacto no caixa real.</div>
-        </div>
-        <div class='rounded-2xl border border-[#5b3b13] bg-[#1d1403] p-4'>
-          <div class='text-[11px] uppercase tracking-[0.25em] text-amber-300'>Entrada</div>
-          <div class='mt-2 text-lg font-semibold text-white'>Pendente</div>
-          <div class='mt-1 text-sm text-slate-300'>Nada entra como realizado automático.</div>
-        </div>
-        <div class='rounded-2xl border border-[#14532d] bg-[#052e16] p-4'>
-          <div class='text-[11px] uppercase tracking-[0.25em] text-emerald-300'>Segurança</div>
-          <div class='mt-2 text-lg font-semibold text-white'>Whitelist + log</div>
-          <div class='mt-1 text-sm text-slate-300'>Somente números autorizados.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class='mt-5 grid grid-cols-1 gap-5 xl:grid-cols-[1.15fr,0.85fr]'>
-      <div class='rounded-3xl border border-[#1e293b] bg-[#0b1220]/80 p-5'>
-        <div class='flex flex-wrap items-center justify-between gap-3'>
-          <div>
-            <h3 class='text-lg font-semibold text-white'>Como a operação vai funcionar</h3>
-            <p class='mt-1 text-sm text-slate-300'>O fluxo foi desenhado para manter a rotina do Zap sem abrir brecha de segurança no financeiro.</p>
-          </div>
-          <div class='rounded-full border border-[#334155] bg-[#111827] px-3 py-1 text-xs text-slate-300'>Fase 1: texto no WhatsApp</div>
-        </div>
-
-        <div class='mt-5 grid grid-cols-1 gap-3 md:grid-cols-3'>
-          <div class='rounded-2xl border border-[#334155] bg-[#111827] p-4'>
-            <div class='text-xs font-semibold uppercase tracking-[0.25em] text-sky-300'>1. Recebe</div>
-            <div class='mt-3 text-base font-semibold text-white'>Mensagem chega pelo Zap</div>
-            <p class='mt-2 text-sm text-slate-300'>Exemplo: <span class='text-slate-100'>/pix 500 orcamento 435 cliente fulano</span></p>
-          </div>
-          <div class='rounded-2xl border border-[#334155] bg-[#111827] p-4'>
-            <div class='text-xs font-semibold uppercase tracking-[0.25em] text-amber-300'>2. Valida</div>
-            <div class='mt-3 text-base font-semibold text-white'>Sistema cria como pendente</div>
-            <p class='mt-2 text-sm text-slate-300'>Checa token, número autorizado, orçamento e valor antes de registrar.</p>
-          </div>
-          <div class='rounded-2xl border border-[#334155] bg-[#111827] p-4'>
-            <div class='text-xs font-semibold uppercase tracking-[0.25em] text-emerald-300'>3. Aprova</div>
-            <div class='mt-3 text-base font-semibold text-white'>Financeiro confirma no painel</div>
-            <p class='mt-2 text-sm text-slate-300'>Só depois da confirmação o lançamento passa a valer no caixa e nos dashboards.</p>
-          </div>
-        </div>
-
-        <div class='mt-5 rounded-2xl border border-[#334155] bg-[#0f172a] p-4'>
-          <div class='text-xs uppercase tracking-[0.25em] text-slate-400'>Comandos previstos</div>
-          <div class='mt-3 flex flex-wrap gap-2 text-sm'>
-            <span class='rounded-full border border-[#1d4ed8]/40 bg-[#0b1f3b] px-3 py-1 text-[#bfdbfe]'>/pix 500 orcamento 435</span>
-            <span class='rounded-full border border-[#1d4ed8]/40 bg-[#0b1f3b] px-3 py-1 text-[#bfdbfe]'>/cartao 1200 orcamento 440</span>
-            <span class='rounded-full border border-[#7f1d1d]/40 bg-[#220808] px-3 py-1 text-[#fecaca]'>/despesa 230 fornecedor jose</span>
-            <span class='rounded-full border border-[#5b3b13]/40 bg-[#1d1403] px-3 py-1 text-[#fde68a]'>/ajuda</span>
-          </div>
-        </div>
-      </div>
-
-      <div class='rounded-3xl border border-[#1e293b] bg-[#0b1220]/80 p-5'>
-        <div class='flex items-start justify-between gap-3'>
-          <div>
-            <h3 class='text-lg font-semibold text-white'>Fila de aprovação</h3>
-            <p class='mt-1 text-sm text-slate-300'>Prévia visual da lista que vai aparecer antes da confirmação final.</p>
-          </div>
-          <span class='rounded-full border border-[#5b3b13] bg-[#1d1403] px-3 py-1 text-xs font-semibold text-[#fde68a]'>3 pendentes</span>
-        </div>
-
-        <div class='mt-4 space-y-3'>
-          <div class='rounded-2xl border border-[#334155] bg-[#0f172a] p-4'>
-            <div class='flex flex-wrap items-start justify-between gap-3'>
-              <div>
-                <div class='text-sm font-semibold text-white'>Pix recebido do orçamento #435</div>
-                <div class='mt-1 text-sm text-slate-300'>Cliente: Fulano · Remetente autorizado · Hoje 09:12</div>
-              </div>
-              <div class='text-right'>
-                <div class='text-lg font-semibold text-emerald-300'>R$ 500,00</div>
-                <div class='mt-1 text-xs text-slate-400'>Entrada via WhatsApp</div>
-              </div>
-            </div>
-            <div class='mt-4 flex flex-wrap gap-2'>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl bg-[#052e16] px-3 py-2 text-xs font-semibold text-[#86efac] opacity-70'>Confirmar</button>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl border border-[#7f1d1d] bg-[#450a0a] px-3 py-2 text-xs font-semibold text-[#fecaca] opacity-70'>Recusar</button>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl border border-[#334155] bg-[#111827] px-3 py-2 text-xs text-slate-300 opacity-70'>Ver log</button>
-            </div>
-          </div>
-
-          <div class='rounded-2xl border border-[#334155] bg-[#0f172a] p-4'>
-            <div class='flex flex-wrap items-start justify-between gap-3'>
-              <div>
-                <div class='text-sm font-semibold text-white'>Despesa informada pela secretária</div>
-                <div class='mt-1 text-sm text-slate-300'>Fornecedor: Oficina José · Categoria material · Hoje 10:03</div>
-              </div>
-              <div class='text-right'>
-                <div class='text-lg font-semibold text-rose-300'>R$ 230,00</div>
-                <div class='mt-1 text-xs text-slate-400'>Saída via WhatsApp</div>
-              </div>
-            </div>
-            <div class='mt-4 flex flex-wrap gap-2'>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl bg-[#052e16] px-3 py-2 text-xs font-semibold text-[#86efac] opacity-70'>Confirmar</button>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl border border-[#7f1d1d] bg-[#450a0a] px-3 py-2 text-xs font-semibold text-[#fecaca] opacity-70'>Recusar</button>
-              <button type='button' disabled class='cursor-not-allowed rounded-xl border border-[#334155] bg-[#111827] px-3 py-2 text-xs text-slate-300 opacity-70'>Ver log</button>
-            </div>
-          </div>
-
-          <div class='rounded-2xl border border-dashed border-[#334155] bg-[#111827]/70 p-4'>
-            <div class='text-sm font-semibold text-white'>Regras que vão valer nessa fila</div>
-            <ul class='mt-3 space-y-2 text-sm text-slate-300'>
-              <li>• nada vindo do WhatsApp entra como <span class='font-semibold text-slate-100'>realizado</span> sozinho</li>
-              <li>• lançamentos ficam separados para revisão manual do financeiro</li>
-              <li>• cada item terá vínculo com orçamento, cliente e log do webhook</li>
-            </ul>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 
