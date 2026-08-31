@@ -404,6 +404,7 @@ class FinanceMovementTests(TestCase):
 
     def test_dashboard_filter_by_origin_category_respects_direction(self):
         self.client.login(email=self.manager.email, password=self.password)
+        today = timezone.localdate()
         CashMovement.objects.create(
             description='Recebimento de peca',
             amount=Decimal('150.00'),
@@ -412,7 +413,7 @@ class FinanceMovementTests(TestCase):
             customer=self.customer,
             bank_account=self.bank_account,
             category=self.category_in,
-            due_date=date(2026, 6, 10),
+            due_date=today,
         )
         CashMovement.objects.create(
             description='Despesa da empresa',
@@ -422,7 +423,7 @@ class FinanceMovementTests(TestCase):
             supplier=self.supplier,
             bank_account=self.bank_account,
             category=self.category_out,
-            due_date=date(2026, 6, 10),
+            due_date=today,
         )
         response = self.client.get(reverse('budgets:finance_dashboard') + f'?direction=IN&source={self.category_in.id}')
         self.assertEqual(response.status_code, 200)

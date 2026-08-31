@@ -388,6 +388,7 @@ def _extract_message_payload(payload):
         sender.get('phone')
         or sender.get('number')
         or sender.get('id')
+        or data.get('phone')
         or data.get('senderPhone')
         or data.get('from')
         or message.get('author')
