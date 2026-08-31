@@ -25,6 +25,8 @@ htmlcov/
 .vscode/
 
 storage/
+.dbg/*.env
+.dbg/trae-debug-log-*.ndjson
 
 Thumbs.db
 Desktop.ini
