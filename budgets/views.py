@@ -1,8 +1,11 @@
+import os
 import hashlib
 import hmac
 import json
 import time
 import base64
+import urllib.error
+import urllib.request
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -288,6 +291,29 @@ def _extract_json_headers(request):
         if lower.startswith('x-') or lower in ('content-type', 'user-agent'):
             data[key] = value
     return data
+
+
+# #region debug-point zap-webhook-403:reporter
+def _dbg_report(msg, *, hypothesis_id='', run_id='', **data):
+    url = (os.environ.get('DEBUG_SERVER_URL') or '').strip()
+    session_id = (os.environ.get('DEBUG_SESSION_ID') or '').strip()
+    if not url or not session_id:
+        return
+    payload = {
+        'sessionId': session_id,
+        'msg': msg,
+        'hypothesisId': hypothesis_id or None,
+        'runId': run_id or None,
+        'data': data or {},
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    req = urllib.request.Request(url, data=raw, headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=1) as resp:
+            resp.read(1)
+    except Exception:
+        return
+# #endregion
 
 
 def _extract_signature(request):
@@ -1320,6 +1346,7 @@ class ZapWebhookView(View):
     http_method_names = ['post']
 
     def post(self, request):
+        run_id = str(uuid4())
         raw_body = request.body or b'{}'
         secret = getattr(settings, 'ZAP_WEBHOOK_SECRET', '') or ''
         raw_body_b64 = base64.b64encode(raw_body).decode('ascii')
@@ -1335,6 +1362,33 @@ class ZapWebhookView(View):
         message_data = _extract_message_payload(payload)
         duplicate_key = _make_duplicate_key(message_data)
         headers_data = _extract_json_headers(request)
+        sig_header_key = ''
+        for key in ('X-Zap-Signature', 'X-Zapapi-Signature-256', 'X-HMAC-SHA256', 'X-Webhook-Signature', 'X-Signature'):
+            if headers_data.get(key):
+                sig_header_key = key
+                break
+        incoming = (signature or '').strip()
+        if incoming.startswith('sha256='):
+            incoming = incoming.split('=', 1)[1]
+        expected = ''
+        if secret:
+            expected = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
+        _dbg_report(
+            '[DEBUG] zap webhook received',
+            hypothesis_id='H1',
+            run_id=run_id,
+            secret_len=len((secret or '').strip()),
+            raw_len=len(raw_body),
+            content_type=headers_data.get('Content-Type', ''),
+            ua=headers_data.get('User-Agent', ''),
+            zap_event_id=headers_data.get('X-Zap-Event-Id', ''),
+            zap_timestamp=headers_data.get('X-Zap-Timestamp', ''),
+            sig_header_key=sig_header_key,
+            sig_len=len(incoming),
+            expected_len=len(expected),
+            sig_match=bool(expected) and (expected == incoming),
+            signature_valid=bool(signature_valid),
+        )
         payload_for_log = payload.copy() if isinstance(payload, dict) else {}
         payload_for_log['_debug_raw_body_len'] = len(raw_body)
         payload_for_log['_debug_raw_body_b64'] = raw_body_b64
@@ -1356,17 +1410,36 @@ class ZapWebhookView(View):
         if not secret:
             log.error_message = 'Configuração ausente: ZAP_WEBHOOK_SECRET.'
             log.save(update_fields=['error_message'])
+            _dbg_report(
+                '[DEBUG] zap webhook rejected missing secret',
+                hypothesis_id='H1',
+                run_id=run_id,
+            )
             return JsonResponse({'ok': False, 'error': 'missing_webhook_secret'}, status=500)
 
         if not signature_valid:
             log.error_message = 'Assinatura inválida do webhook.'
             log.save(update_fields=['error_message'])
+            _dbg_report(
+                '[DEBUG] zap webhook rejected invalid signature',
+                hypothesis_id='H4',
+                run_id=run_id,
+                incoming_prefix=incoming[:12],
+                expected_prefix=expected[:12],
+                sig_match=bool(expected) and (expected == incoming),
+            )
             return JsonResponse({'ok': False, 'error': 'invalid_signature'}, status=403)
 
         if not message_data.get('sender_phone') or not message_data.get('message_text'):
             log.processed_ok = True
             log.error_message = 'Evento ignorado por não conter mensagem financeira utilizável.'
             log.save(update_fields=['processed_ok', 'error_message'])
+            _dbg_report(
+                '[DEBUG] zap webhook ignored non message event',
+                hypothesis_id='H3',
+                run_id=run_id,
+                event_type=message_data.get('event_type', ''),
+            )
             return JsonResponse({'ok': True, 'ignored': True, 'reason': 'non_message_event'})
 
         collaborator = _find_authorized_collaborator_by_phone(message_data.get('sender_phone'))
