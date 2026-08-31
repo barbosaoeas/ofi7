@@ -73,7 +73,28 @@ def phones_match(left, right):
     b = normalize_phone(right)
     if not a or not b:
         return False
-    return a == b or a.endswith(b) or b.endswith(a)
+    if a == b or a.endswith(b) or b.endswith(a):
+        return True
+
+    def br_key(value):
+        if not value.startswith('55'):
+            return None
+        has_9 = len(value) == 13 and value[4] == '9'
+        if len(value) not in (12, 13):
+            return None
+        ddd = value[2:4]
+        last8 = value[-8:]
+        return ddd, last8, has_9
+
+    a_key = br_key(a)
+    b_key = br_key(b)
+    if not a_key or not b_key:
+        return False
+    a_ddd, a_last8, a_has9 = a_key
+    b_ddd, b_last8, b_has9 = b_key
+    if a_ddd != b_ddd or a_last8 != b_last8:
+        return False
+    return a_has9 != b_has9
 
 
 def normalize_whatsapp_text(value):

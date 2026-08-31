@@ -573,6 +573,21 @@ class WhatsAppIntegrationTests(TestCase):
         self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
         self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
 
+    def test_webhook_matches_phone_with_or_without_ninth_digit(self):
+        payload = {
+            'event': 'message.received',
+            'data': {
+                'messageId': 'abc-zap-9digit-1',
+                'from': '551188887777',
+                'senderName': 'Financeiro',
+                'chatId': '120363000000000000@g.us',
+                'body': '/pix 10 teste',
+            },
+        }
+        response = self._signed_post(payload, signature_header='HTTP_X_ZAP_SIGNATURE')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
+
     def test_webhook_ignores_unauthorized_phone(self):
         payload = {
             'event': 'message',
