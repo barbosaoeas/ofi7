@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import time
+import base64
 from calendar import monthrange
 from datetime import date, datetime, time as dt_time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
@@ -1320,6 +1321,9 @@ class ZapWebhookView(View):
 
     def post(self, request):
         raw_body = request.body or b'{}'
+        secret = getattr(settings, 'ZAP_WEBHOOK_SECRET', '') or ''
+        raw_body_b64 = base64.b64encode(raw_body).decode('ascii')
+        raw_body_b64 = raw_body_b64[:12000]
         signature = _extract_signature(request)
         signature_valid = _signature_is_valid(raw_body, signature)
 
@@ -1331,6 +1335,9 @@ class ZapWebhookView(View):
         message_data = _extract_message_payload(payload)
         duplicate_key = _make_duplicate_key(message_data)
         headers_data = _extract_json_headers(request)
+        payload_for_log = payload.copy() if isinstance(payload, dict) else {}
+        payload_for_log['_debug_raw_body_len'] = len(raw_body)
+        payload_for_log['_debug_raw_body_b64'] = raw_body_b64
 
         log = WhatsAppWebhookLog.objects.create(
             provider=message_data.get('provider', 'ZAP_API'),
@@ -1343,8 +1350,13 @@ class ZapWebhookView(View):
             signature_valid=signature_valid,
             duplicate_key=duplicate_key,
             raw_headers=headers_data,
-            raw_payload=payload if isinstance(payload, dict) else {},
+            raw_payload=payload_for_log,
         )
+
+        if not secret:
+            log.error_message = 'Configuração ausente: ZAP_WEBHOOK_SECRET.'
+            log.save(update_fields=['error_message'])
+            return JsonResponse({'ok': False, 'error': 'missing_webhook_secret'}, status=500)
 
         if not signature_valid:
             log.error_message = 'Assinatura inválida do webhook.'

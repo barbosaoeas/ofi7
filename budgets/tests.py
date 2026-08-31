@@ -651,6 +651,14 @@ class WhatsAppIntegrationTests(TestCase):
         self.assertEqual(CashMovement.objects.count(), 1)
 
 
+class WhatsAppWebhookMissingSecretTests(TestCase):
+    def test_webhook_returns_500_when_secret_missing(self):
+        payload = {'event': 'message.received', 'data': {'messageId': 'missing-1', 'from': '5511988887777', 'body': 'teste'}}
+        raw = json.dumps(payload).encode('utf-8')
+        response = self.client.post(reverse('zap_webhook'), data=raw, content_type='application/json')
+        self.assertEqual(response.status_code, 500)
+
+
 class BankAccountDeleteTests(TestCase):
     def setUp(self):
         self.password = '111111'
