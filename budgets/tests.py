@@ -490,7 +490,7 @@ class FinanceInsightsTests(TestCase):
         self.assertIn('Porto Seguro', r.context['insurer_labels'])
 
 
-@override_settings(ZAP_WEBHOOK_SECRET='segredo-teste')
+@override_settings(UAIZAPI_WEBHOOK_SECRET='segredo-teste')
 class WhatsAppIntegrationTests(TestCase):
     def setUp(self):
         self.password = '111111'
@@ -524,11 +524,11 @@ class WhatsAppIntegrationTests(TestCase):
             customer_type=Budget.CustomerType.PARTICULAR,
         )
 
-    def _signed_post(self, payload, signature_header='HTTP_X_HMAC_SHA256'):
+    def _signed_post(self, payload, signature_header='HTTP_X_UAIZAPI_SIGNATURE'):
         raw = json.dumps(payload).encode('utf-8')
         digest = hmac.new(b'segredo-teste', raw, hashlib.sha256).hexdigest()
         return self.client.post(
-            reverse('zap_webhook'),
+            reverse('uaizapi_webhook'),
             data=raw,
             content_type='application/json',
             **{signature_header: digest},
@@ -557,7 +557,7 @@ class WhatsAppIntegrationTests(TestCase):
         self.assertEqual(WhatsAppWebhookLog.objects.count(), 1)
         self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
 
-    def test_webhook_accepts_zap_signature_header(self):
+    def test_webhook_accepts_uaizapi_signature_header(self):
         payload = {
             'event': 'message.received',
             'data': {
@@ -568,7 +568,7 @@ class WhatsAppIntegrationTests(TestCase):
                 'body': '/pix 500 orcamento 435 cliente fulano',
             },
         }
-        response = self._signed_post(payload, signature_header='HTTP_X_ZAP_SIGNATURE')
+        response = self._signed_post(payload, signature_header='HTTP_X_UAIZAPI_SIGNATURE')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
         self.assertTrue(WhatsAppWebhookLog.objects.first().processed_ok)
@@ -584,7 +584,7 @@ class WhatsAppIntegrationTests(TestCase):
                 'body': '/pix 10 teste',
             },
         }
-        response = self._signed_post(payload, signature_header='HTTP_X_ZAP_SIGNATURE')
+        response = self._signed_post(payload, signature_header='HTTP_X_UAIZAPI_SIGNATURE')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(WhatsAppFinanceQueueItem.objects.count(), 1)
 
@@ -671,7 +671,7 @@ class WhatsAppWebhookMissingSecretTests(TestCase):
     def test_webhook_returns_500_when_secret_missing(self):
         payload = {'event': 'message.received', 'data': {'messageId': 'missing-1', 'from': '5511988887777', 'body': 'teste'}}
         raw = json.dumps(payload).encode('utf-8')
-        response = self.client.post(reverse('zap_webhook'), data=raw, content_type='application/json')
+        response = self.client.post(reverse('uaizapi_webhook'), data=raw, content_type='application/json')
         self.assertEqual(response.status_code, 500)
 
 

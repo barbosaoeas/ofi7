@@ -18,11 +18,12 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import include, path
-from budgets.views import ZapWebhookView
+from budgets.views import UaizapiWebhookView, ZapWebhookView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('webhooks/zap/', ZapWebhookView.as_view(), name='zap_webhook'),
+    path('webhooks/uaizapi/', UaizapiWebhookView.as_view(), name='uaizapi_webhook'),
     path('', include('core.urls')),
     path('usuarios/', include('users.urls')),
     path('clientes/', include('customers.urls')),

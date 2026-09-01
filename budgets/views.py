@@ -340,11 +340,17 @@ def _dbg_report(msg, *, hypothesis_id='', run_id='', **data):
 def _extract_signature(request):
     for key in (
         'X-Zap-Signature',
+        'X-UAIZAPI-Signature',
+        'X-Uaizapi-Signature',
+        'X-UAIZAPI-Signature-256',
+        'X-Uaizapi-Signature-256',
         'X-HMAC-SHA256',
         'X-Webhook-Signature',
         'X-Signature',
         'X-Hub-Signature-256',
         'x-zap-signature',
+        'x-uaizapi-signature',
+        'x-uaizapi-signature-256',
         'x-hmac-sha256',
         'x-webhook-signature',
         'x-signature',
@@ -358,6 +364,31 @@ def _extract_signature(request):
 
 def _signature_is_valid(raw_body, signature):
     secret = getattr(settings, 'ZAP_WEBHOOK_SECRET', '') or ''
+    if not secret:
+        return False
+    incoming = (signature or '').strip()
+    if incoming.startswith('sha256='):
+        incoming = incoming.split('=', 1)[1]
+    digest = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(digest, incoming)
+
+
+def _uaizapi_token_is_valid(request):
+    expected = (getattr(settings, 'UAIZAPI_WEBHOOK_TOKEN', '') or '').strip()
+    if not expected:
+        return False
+    incoming = (request.GET.get('token') or '').strip()
+    if not incoming:
+        incoming = (request.headers.get('X-Webhook-Token') or '').strip()
+    if not incoming:
+        incoming = (request.headers.get('X-UAIZAPI-Token') or '').strip()
+    if not incoming:
+        incoming = (request.headers.get('X-Uaizapi-Token') or '').strip()
+    return hmac.compare_digest(expected, incoming)
+
+
+def _uaizapi_signature_is_valid(raw_body, signature):
+    secret = getattr(settings, 'UAIZAPI_WEBHOOK_SECRET', '') or ''
     if not secret:
         return False
     incoming = (signature or '').strip()
@@ -385,7 +416,7 @@ def _safe_dict(value):
     return value if isinstance(value, dict) else {}
 
 
-def _extract_message_payload(payload):
+def _extract_message_payload(payload, *, provider='ZAP_API'):
     root = _safe_dict(payload)
     data = _safe_dict(root.get('data'))
     message = _safe_dict(data.get('message'))
@@ -436,7 +467,7 @@ def _extract_message_payload(payload):
         or ('@g.us' in str(chat_id or ''))
     )
     return {
-        'provider': 'ZAP_API',
+        'provider': str(provider or 'ZAP_API'),
         'event_type': str(event_type or 'message'),
         'external_message_id': str(external_message_id or ''),
         'sender_phone': normalize_phone(sender_phone),
@@ -1368,55 +1399,42 @@ class ZapWebhookView(View):
     http_method_names = ['post']
 
     def post(self, request):
-        run_id = str(uuid4())
+        return JsonResponse({'ok': False, 'error': 'zap_api_deprecated'}, status=410)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UaizapiWebhookView(View):
+    http_method_names = ['post']
+
+    def post(self, request):
         raw_body = request.body or b'{}'
-        secret = getattr(settings, 'ZAP_WEBHOOK_SECRET', '') or ''
         raw_body_b64 = base64.b64encode(raw_body).decode('ascii')
         raw_body_b64 = raw_body_b64[:12000]
         signature = _extract_signature(request)
-        signature_valid = _signature_is_valid(raw_body, signature)
 
         try:
             payload = json.loads(raw_body.decode('utf-8') or '{}')
         except Exception:
             payload = {}
 
-        message_data = _extract_message_payload(payload)
-        duplicate_key = _make_duplicate_key(message_data)
         headers_data = _extract_json_headers(request)
-        sig_header_key = ''
-        for key in ('X-Zap-Signature', 'X-Zapapi-Signature-256', 'X-HMAC-SHA256', 'X-Webhook-Signature', 'X-Signature'):
-            if headers_data.get(key):
-                sig_header_key = key
-                break
-        incoming = (signature or '').strip()
-        if incoming.startswith('sha256='):
-            incoming = incoming.split('=', 1)[1]
-        expected = ''
-        if secret:
-            expected = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
-        _dbg_report(
-            '[DEBUG] zap webhook received',
-            hypothesis_id='H1',
-            run_id=run_id,
-            secret_len=len((secret or '').strip()),
-            raw_len=len(raw_body),
-            content_type=headers_data.get('Content-Type', ''),
-            ua=headers_data.get('User-Agent', ''),
-            zap_event_id=headers_data.get('X-Zap-Event-Id', ''),
-            zap_timestamp=headers_data.get('X-Zap-Timestamp', ''),
-            sig_header_key=sig_header_key,
-            sig_len=len(incoming),
-            expected_len=len(expected),
-            sig_match=bool(expected) and (expected == incoming),
-            signature_valid=bool(signature_valid),
-        )
+        message_data = _extract_message_payload(payload, provider='UAIZAPI')
+        duplicate_key = _make_duplicate_key(message_data)
+
+        token_configured = bool((getattr(settings, 'UAIZAPI_WEBHOOK_TOKEN', '') or '').strip())
+        secret_configured = bool((getattr(settings, 'UAIZAPI_WEBHOOK_SECRET', '') or '').strip())
+        signature_valid = False
+        if token_configured:
+            signature_valid = _uaizapi_token_is_valid(request)
+        elif secret_configured:
+            signature_valid = _uaizapi_signature_is_valid(raw_body, signature)
+
         payload_for_log = payload.copy() if isinstance(payload, dict) else {}
         payload_for_log['_debug_raw_body_len'] = len(raw_body)
         payload_for_log['_debug_raw_body_b64'] = raw_body_b64
 
         log = WhatsAppWebhookLog.objects.create(
-            provider=message_data.get('provider', 'ZAP_API'),
+            provider=message_data.get('provider', 'UAIZAPI'),
             event_type=message_data.get('event_type', ''),
             external_message_id=message_data.get('external_message_id', ''),
             sender_phone=message_data.get('sender_phone', ''),
@@ -1429,39 +1447,20 @@ class ZapWebhookView(View):
             raw_payload=payload_for_log,
         )
 
-        if not secret:
-            log.error_message = 'Configuração ausente: ZAP_WEBHOOK_SECRET.'
+        if not token_configured and not secret_configured:
+            log.error_message = 'Configuração ausente: UAIZAPI_WEBHOOK_TOKEN ou UAIZAPI_WEBHOOK_SECRET.'
             log.save(update_fields=['error_message'])
-            _dbg_report(
-                '[DEBUG] zap webhook rejected missing secret',
-                hypothesis_id='H1',
-                run_id=run_id,
-            )
-            return JsonResponse({'ok': False, 'error': 'missing_webhook_secret'}, status=500)
+            return JsonResponse({'ok': False, 'error': 'missing_webhook_auth'}, status=500)
 
         if not signature_valid:
             log.error_message = 'Assinatura inválida do webhook.'
             log.save(update_fields=['error_message'])
-            _dbg_report(
-                '[DEBUG] zap webhook rejected invalid signature',
-                hypothesis_id='H4',
-                run_id=run_id,
-                incoming_prefix=incoming[:12],
-                expected_prefix=expected[:12],
-                sig_match=bool(expected) and (expected == incoming),
-            )
             return JsonResponse({'ok': False, 'error': 'invalid_signature'}, status=403)
 
         if not message_data.get('sender_phone') or not message_data.get('message_text'):
             log.processed_ok = True
             log.error_message = 'Evento ignorado por não conter mensagem financeira utilizável.'
             log.save(update_fields=['processed_ok', 'error_message'])
-            _dbg_report(
-                '[DEBUG] zap webhook ignored non message event',
-                hypothesis_id='H3',
-                run_id=run_id,
-                event_type=message_data.get('event_type', ''),
-            )
             return JsonResponse({'ok': True, 'ignored': True, 'reason': 'non_message_event'})
 
         collaborator = _find_authorized_collaborator_by_phone(message_data.get('sender_phone'))
@@ -1488,7 +1487,7 @@ class ZapWebhookView(View):
             )
 
         queue_item = WhatsAppFinanceQueueItem.objects.create(
-            provider=message_data.get('provider', 'ZAP_API'),
+            provider=message_data.get('provider', 'UAIZAPI'),
             external_message_id=message_data.get('external_message_id', ''),
             duplicate_key=duplicate_key,
             sender_phone=message_data.get('sender_phone', ''),
