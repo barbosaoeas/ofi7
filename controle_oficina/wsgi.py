@@ -14,3 +14,5 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'controle_oficina.settings')
 
 application = get_wsgi_application()
+
+os.environ["ZAP_WEBHOOK_SECRET"]="tk_18605d1680141f4301d8e16582441d28f0c9de8f"

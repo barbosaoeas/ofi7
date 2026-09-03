@@ -34,3 +34,10 @@ prd.md
 
 gitinit
 bash.teste
+Reload
+*.bak_*
+data/
+logs/
+*.log
+data/*.json
+storage/

@@ -418,6 +418,75 @@ def _safe_dict(value):
 
 def _extract_message_payload(payload, *, provider='ZAP_API'):
     root = _safe_dict(payload)
+
+    uaizapi_message = _safe_dict(root.get('message'))
+    uaizapi_chat = _safe_dict(root.get('chat'))
+
+    if uaizapi_message or uaizapi_chat:
+        content = _safe_dict(uaizapi_message.get('content'))
+
+        text = (
+            _get_nested(uaizapi_message, ('text',))
+            or _get_nested(content, ('caption',))
+            or _get_nested(content, ('title',))
+            or _get_nested(uaizapi_chat, ('wa_lastMessageTextVote',))
+            or ''
+        )
+        if isinstance(text, dict):
+            text = text.get('body') or text.get('text') or text.get('content') or ''
+
+        mimetype = str(content.get('mimetype') or '').strip()
+        file_url = str(content.get('URL') or '').strip()
+        file_name = str(content.get('fileName') or content.get('title') or '').strip()
+        caption = str(content.get('caption') or '').strip()
+
+        sender_phone = (
+            uaizapi_message.get('sender_pn')
+            or uaizapi_chat.get('phone')
+            or uaizapi_message.get('chatid')
+            or uaizapi_chat.get('wa_chatid')
+            or ''
+        )
+        sender_name = (
+            uaizapi_message.get('senderName')
+            or uaizapi_chat.get('wa_name')
+            or uaizapi_chat.get('name')
+            or ''
+        )
+        chat_id = uaizapi_message.get('chatid') or uaizapi_chat.get('wa_chatid') or ''
+        chat_name = uaizapi_chat.get('name') or uaizapi_chat.get('wa_name') or ''
+        external_message_id = (
+            uaizapi_message.get('messageid')
+            or uaizapi_message.get('messageId')
+            or uaizapi_message.get('id')
+            or ''
+        )
+        event_type = root.get('EventType') or 'message'
+        if str(event_type).lower() == 'messages':
+            event_type = 'message'
+
+        is_group_message = bool(
+            uaizapi_message.get('isGroup')
+            or uaizapi_chat.get('wa_isGroup')
+            or ('@g.us' in str(chat_id or ''))
+        )
+
+        return {
+            'provider': str(provider or 'ZAP_API'),
+            'event_type': str(event_type or 'message'),
+            'external_message_id': str(external_message_id or ''),
+            'sender_phone': normalize_phone(sender_phone),
+            'sender_name': str(sender_name or ''),
+            'chat_id': str(chat_id or ''),
+            'chat_name': str(chat_name or ''),
+            'is_group_message': is_group_message,
+            'message_text': normalize_whatsapp_text(str(text or '')),
+            'mimetype': mimetype,
+            'file_url': file_url,
+            'file_name': file_name,
+            'caption': caption,
+        }
+
     data = _safe_dict(root.get('data'))
     message = _safe_dict(data.get('message'))
     sender = _safe_dict(data.get('sender') or message.get('sender'))
@@ -433,6 +502,7 @@ def _extract_message_payload(payload, *, provider='ZAP_API'):
         or _get_nested(root, ('text',))
         or _get_nested(root, ('body',))
     )
+
     if isinstance(text, dict):
         text = text.get('body') or text.get('text') or ''
 
@@ -476,6 +546,10 @@ def _extract_message_payload(payload, *, provider='ZAP_API'):
         'chat_name': str(chat_name or ''),
         'is_group_message': is_group_message,
         'message_text': normalize_whatsapp_text(str(text or '')),
+        'mimetype': '',
+        'file_url': '',
+        'file_name': '',
+        'caption': '',
     }
 
 
@@ -1435,7 +1509,6 @@ class UaizapiWebhookView(View):
 
         log = WhatsAppWebhookLog.objects.create(
             provider=message_data.get('provider', 'UAIZAPI'),
-            event_type=message_data.get('event_type', ''),
             external_message_id=message_data.get('external_message_id', ''),
             sender_phone=message_data.get('sender_phone', ''),
             sender_name=message_data.get('sender_name', ''),
@@ -1457,7 +1530,14 @@ class UaizapiWebhookView(View):
             log.save(update_fields=['error_message'])
             return JsonResponse({'ok': False, 'error': 'invalid_signature'}, status=403)
 
-        if not message_data.get('sender_phone') or not message_data.get('message_text'):
+        mimetype = str(message_data.get('mimetype') or '').strip().lower()
+        file_url = str(message_data.get('file_url') or '').strip()
+
+        is_pdf = mimetype == 'application/pdf' and bool(file_url)
+        is_image = mimetype.startswith('image/') and bool(file_url)
+        is_media = is_pdf or is_image
+
+        if not message_data.get('sender_phone') or (not message_data.get('message_text') and not is_media):
             log.processed_ok = True
             log.error_message = 'Evento ignorado por não conter mensagem financeira utilizável.'
             log.save(update_fields=['processed_ok', 'error_message'])
@@ -1477,7 +1557,142 @@ class UaizapiWebhookView(View):
             log.save(update_fields=['processed_ok', 'error_message', 'queue_item'])
             return JsonResponse({'ok': True, 'duplicate': True, 'queue_item_id': existing.id})
 
+        if is_media:
+            file_name = str(message_data.get('file_name') or '').strip() or ('documento.pdf' if is_pdf else 'imagem.jpg')
+            caption = str(message_data.get('caption') or message_data.get('message_text') or '').strip()
+
+            pdf_text = ''
+            if is_pdf:
+                try:
+                    from io import BytesIO
+                    from urllib.request import Request, urlopen
+                    from pypdf import PdfReader
+
+                    req = Request(file_url, headers={'User-Agent': 'ofi7-webhook/1.0'})
+                    with urlopen(req, timeout=10) as resp:
+                        pdf_bytes = resp.read(10 * 1024 * 1024 + 1)
+
+                    if len(pdf_bytes) <= 10 * 1024 * 1024:
+                        reader = PdfReader(BytesIO(pdf_bytes))
+                        parts = []
+                        for page in reader.pages:
+                            try:
+                                parts.append(page.extract_text() or '')
+                            except Exception:
+                                parts.append('')
+                        pdf_text = '\n'.join([p for p in parts if p]).strip()
+                except Exception:
+                    pdf_text = ''
+
+            excerpt = re.sub(r'\s+', ' ', pdf_text)[:300].strip() if pdf_text else ''
+            review_notes = (pdf_text[:8000] + '\n\n' if pdf_text else '') + f'URL: {file_url}'
+
+            prefix = '[PDF]' if is_pdf else '[IMG]'
+            pdf_message_text = f'{prefix} {file_name}'
+
+            if caption:
+                pdf_message_text = f'{pdf_message_text} — {caption}'
+            if excerpt:
+                pdf_message_text = f'{pdf_message_text} — {excerpt}'
+
+            review_notes = (pdf_text[:8000] + '\n\n' if pdf_text else '') + f'URL: {file_url}'
+
+            queue_item = WhatsAppFinanceQueueItem.objects.create(
+                provider=message_data.get('provider', 'UAIZAPI'),
+                external_message_id=message_data.get('external_message_id', ''),
+                duplicate_key=duplicate_key,
+                sender_phone=message_data.get('sender_phone', ''),
+                sender_name=message_data.get('sender_name', ''),
+                chat_id=message_data.get('chat_id', ''),
+                chat_name=message_data.get('chat_name', ''),
+                is_group_message=bool(message_data.get('is_group_message')),
+                message_text=pdf_message_text,
+                normalized_text=normalize_whatsapp_text(str(pdf_message_text or '')),
+                command_name='',
+                parsed_ok=False,
+                direction='',
+                amount=None,
+                description='',
+                launch_date=None,
+                due_date=None,
+                status='PENDING',
+                review_notes=review_notes,
+                raw_payload=payload_for_log,
+                collaborator=collaborator,
+            )
+
+            try:
+                from urllib.parse import urlparse
+                from urllib.request import Request, urlopen
+                from django.core.files.base import ContentFile
+                import hashlib
+                import re
+                from budgets.models import WhatsAppFinanceQueueAttachment
+            
+                max_bytes = 10 * 1024 * 1024
+                url = (file_url or '').strip().strip('`')
+                parsed = urlparse(url)
+                host = (parsed.hostname or '').lower()
+            
+                orig = re.sub(r'[^a-zA-Z0-9._-]+', '_', (file_name or '').strip())
+                ext = '.pdf' if is_pdf else '.jpg'
+                base = f"queue_item_{queue_item.id}"
+                safe_name = f"{base}{ext}" if not orig else f"{base}__{orig}"
+            
+                if parsed.scheme == 'https' and host.endswith('whatsapp.net') and url:
+                    req = Request(url, headers={'User-Agent': 'ofi7-webhook/1.0'})
+                    with urlopen(req, timeout=10) as resp:
+                        data = resp.read(max_bytes + 1)
+            
+                    if len(data) <= max_bytes:
+                        sha = hashlib.sha256(data).hexdigest()
+                        att = WhatsAppFinanceQueueAttachment(
+                            queue_item=queue_item,
+                            mimetype=mimetype,
+                            original_name=safe_name,
+                            sha256=sha,
+                            size_bytes=len(data),
+                        )
+                        att.file.save(safe_name, ContentFile(data), save=True)
+            
+                        rn = (queue_item.review_notes or '').strip()
+                        if rn:
+                            rn += '\n\n'
+                        rn += f"ARQUIVO_SALVO: {att.file.url}\nURL_ORIG: {url}"
+                        queue_item.review_notes = rn
+                        queue_item.save(update_fields=['review_notes'])
+                    else:
+                        rn = (queue_item.review_notes or '').strip()
+                        if rn:
+                            rn += '\n\n'
+                        rn += f"URL_ORIG: {url}\nOBS: arquivo > 10MB, não foi salvo."
+                        queue_item.review_notes = rn
+                        queue_item.save(update_fields=['review_notes'])
+                else:
+                    rn = (queue_item.review_notes or '').strip()
+                    if rn:
+                        rn += '\n\n'
+                    rn += f"URL_ORIG: {url}\nOBS: URL inválida/domínio inesperado, não foi salvo."
+                    queue_item.review_notes = rn
+                    queue_item.save(update_fields=['review_notes'])
+            except Exception:
+                rn = (queue_item.review_notes or '').strip()
+                if rn:
+                    rn += '\n\n'
+                rn += f"URL_ORIG: {(file_url or '').strip().strip('`')}\nOBS: falha ao baixar/anexar arquivo."
+                queue_item.review_notes = rn
+                queue_item.save(update_fields=['review_notes'])
+
+            log.processed_ok = True
+            log.error_message = ''
+            log.queue_item = queue_item
+            log.save(update_fields=['processed_ok', 'error_message', 'queue_item'])
+            return JsonResponse({'ok': True, 'queue_item_id': queue_item.id})
+
         parsed = _parse_whatsapp_command(message_data.get('message_text', ''))
+
+        parsed = _parse_whatsapp_command(message_data.get('message_text', ''))
+
         budget = None
         if parsed.get('budget_number'):
             budget = (
@@ -1516,7 +1731,6 @@ class UaizapiWebhookView(View):
         log.queue_item = queue_item
         log.save(update_fields=['processed_ok', 'queue_item'])
         return JsonResponse({'ok': True, 'queue_item_id': queue_item.id})
-
 
 class FinanceInsightsView(FinanceDashboardView):
     template_name = 'budgets/finance_insights.html'
@@ -2112,7 +2326,7 @@ class WorkOrderTaskStartView(RoleRequiredMixin, View):
                 next_url = (request.POST.get('next') or '').strip()
                 if next_url:
                     return redirect(next_url)
-                return redirect('budgets:kanban_today')
+                redirect('budgets:kanban_today')
 
         has_running = WorkOrderTask.objects.filter(
             collaborator_id=task.collaborator_id,

@@ -558,3 +558,17 @@ class WhatsAppFinanceQueueItem(models.Model):
 
     def __str__(self):
         return f'Fila WhatsApp #{self.pk} - {self.get_status_display()}'
+
+
+class WhatsAppFinanceQueueAttachment(models.Model):
+    queue_item = models.ForeignKey(
+        'WhatsAppFinanceQueueItem',
+        on_delete=models.CASCADE,
+        related_name='attachments',
+    )
+    file = models.FileField(upload_to='whatsapp/finance_queue/%Y/%m/%d/')
+    mimetype = models.CharField(max_length=100, blank=True)
+    original_name = models.CharField(max_length=255, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True)
+    size_bytes = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
