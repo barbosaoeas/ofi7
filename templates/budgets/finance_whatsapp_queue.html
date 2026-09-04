@@ -121,7 +121,7 @@
           <div class='grid grid-cols-1 gap-3 md:grid-cols-2'>
             <div>
               <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]'>Direção</label>
-              <select name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+              <select id='id_wpp_direction' name='direction' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
                 <option value=''>Selecione</option>
                 <option value='IN' {% if review_item.direction == 'IN' %}selected{% endif %}>Entrada</option>
                 <option value='OUT' {% if review_item.direction == 'OUT' %}selected{% endif %}>Saída</option>
@@ -154,10 +154,10 @@
             </div>
             <div>
               <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]'>Tipo</label>
-              <select name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+              <select id='id_wpp_category' name='category_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
                 <option value=''>Selecione</option>
                 {% for category in categories %}
-                  <option value='{{ category.id }}' {% if review_item.category and review_item.category.id == category.id %}selected{% endif %}>
+                  <option value='{{ category.id }}' data-direction='{{ category.direction }}' {% if review_item.category and review_item.category.id == category.id %}selected{% endif %}>
                     {{ category.get_direction_display }} · {{ category.name }}
                   </option>
                 {% endfor %}
@@ -183,5 +183,60 @@
       {% endif %}
     </div>
   </div>
+
+  <script>
+    (function () {
+      function syncOptions(selectId, directionId) {
+        var select = document.getElementById(selectId);
+        var direction = document.getElementById(directionId);
+        if (!select || !direction) return;
+
+        if (!select.__optionCache) {
+          select.__optionCache = Array.prototype.map.call(select.options, function (opt) {
+            return opt.cloneNode(true);
+          });
+        }
+
+        var dir = (direction.value || '').toUpperCase();
+        var selectedValue = select.value;
+        var options = select.__optionCache || [];
+        var keptSelected = false;
+
+        select.innerHTML = '';
+        var frag = document.createDocumentFragment();
+        Array.prototype.forEach.call(options, function (opt) {
+          if (!opt) return;
+          if (!opt.value) {
+            frag.appendChild(opt.cloneNode(true));
+            return;
+          }
+          var allowed = (opt.getAttribute('data-direction') || '').toUpperCase().split(',');
+          var show = !dir || allowed.indexOf(dir) >= 0;
+          if (!show) return;
+          var cloned = opt.cloneNode(true);
+          if (selectedValue && cloned.value === selectedValue) keptSelected = true;
+          frag.appendChild(cloned);
+        });
+        select.appendChild(frag);
+
+        if (keptSelected) {
+          select.value = selectedValue;
+        } else {
+          select.value = '';
+        }
+      }
+
+      function bind() {
+        var direction = document.getElementById('id_wpp_direction');
+        if (direction) {
+          direction.addEventListener('change', function () { syncOptions('id_wpp_category', 'id_wpp_direction'); });
+        }
+        syncOptions('id_wpp_category', 'id_wpp_direction');
+      }
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+      else bind();
+    })();
+  </script>
 {% endblock %}
 

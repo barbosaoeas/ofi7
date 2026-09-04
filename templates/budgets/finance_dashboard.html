@@ -18,12 +18,12 @@
         <a href='{% url "budgets:finance_insights" %}' class='rounded-xl border border-[#1d4ed8] bg-[#0b1f3b] px-4 py-3 text-sm font-semibold text-[#bfdbfe] hover:brightness-110'>
           Abrir dashboard financeiro
         </a>
+        <a href='{% url "budgets:finance_whatsapp_queue" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+          WhatsApp
+        </a>
         <button type='button' data-open-modal='movement-create' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-3 text-sm font-semibold text-[#0D0D0D] shadow-lg shadow-[#D4AF37]/10'>
           Novo lançamento
         </button>
-        <a href='{% url "budgets:finance_whatsapp_queue" %}' class='rounded-xl border border-[#1d4ed8] bg-[#0b1220] px-4 py-3 text-sm font-semibold text-[#bfdbfe] hover:bg-[#0f1c34]'>
-          Lançamento WhatsApp
-        </a>
         <button type='button' data-open-modal='categories' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
           Tipos
         </button>
@@ -291,6 +291,16 @@
           </select>
         </div>
 
+        <div class='md:col-span-12'>
+          <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_wpp_queue'>WhatsApp (opcional)</label>
+          <select id='id_mov_wpp_queue' name='whatsapp_queue_item_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <option value=''>Não usar</option>
+            {% for item in whatsapp_queue_items %}
+              <option value='{{ item.id }}' data-direction='{{ item.direction }}' data-amount='{{ item.amount|default_if_none:""|unlocalize }}' data-description='{{ item.description|default:item.message_text|default_if_none:"" }}' data-customer-id='{{ item.customer_id|default_if_none:"" }}' data-supplier-id='{{ item.supplier_id|default_if_none:"" }}'>#{{ item.id }} · {{ item.command_name|default:"-" }} · {% if item.amount %}R$ {{ item.amount|floatformat:2 }}{% else %}-{% endif %} · {{ item.description|default:item.message_text|truncatechars:70 }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
         <div class='md:col-span-2'>
           <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]' for='id_mov_recurrence_total'>Recorrência mensal</label>
           <input id='id_mov_recurrence_total' name='recurrence_total' type='number' min='1' max='60' value='1' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]' />
@@ -543,22 +553,38 @@
         var direction = document.getElementById(directionId);
         if (!sourceSelect || !direction) return;
 
+        if (!sourceSelect.__optionCache) {
+          sourceSelect.__optionCache = Array.prototype.map.call(sourceSelect.options, function (opt) {
+            return opt.cloneNode(true);
+          });
+        }
+
         var dir = (direction.value || '').toUpperCase();
-        var selectedOk = !sourceSelect.value;
-        var firstVisibleValue = '';
-        Array.prototype.forEach.call(sourceSelect.options, function (opt) {
-          if (!opt || !opt.value) return;
+        var selectedValue = sourceSelect.value;
+        var options = sourceSelect.__optionCache || [];
+        var keptSelected = false;
+
+        sourceSelect.innerHTML = '';
+        var frag = document.createDocumentFragment();
+        Array.prototype.forEach.call(options, function (opt) {
+          if (!opt) return;
+          if (!opt.value) {
+            frag.appendChild(opt.cloneNode(true));
+            return;
+          }
           var allowed = (opt.getAttribute('data-direction') || '').toUpperCase().split(',');
           var show = !dir || allowed.indexOf(dir) >= 0;
-          opt.hidden = !show;
-          opt.disabled = !show;
-          if (show && !firstVisibleValue) firstVisibleValue = opt.value;
-          if (opt.selected && show) selectedOk = true;
-          if (opt.selected && !show) opt.selected = false;
+          if (!show) return;
+          var cloned = opt.cloneNode(true);
+          if (selectedValue && cloned.value === selectedValue) keptSelected = true;
+          frag.appendChild(cloned);
         });
+        sourceSelect.appendChild(frag);
 
-        if (!selectedOk) {
-          sourceSelect.value = firstVisibleValue;
+        if (keptSelected) {
+          sourceSelect.value = selectedValue;
+        } else {
+          sourceSelect.value = '';
         }
       }
 
@@ -599,12 +625,39 @@
         if (direction) direction.addEventListener('change', function () {
           syncSplitEntryUI();
           syncCounterpartyUI('id_mov_dir', 'customer-block', 'id_mov_customer', 'supplier-block', 'id_mov_supplier', 'id_mov_source', 'id_mov_source_value');
+          syncSourceOptions('id_mov_wpp_queue', 'id_mov_dir');
+        });
+
+        var wppQueue = document.getElementById('id_mov_wpp_queue');
+        if (wppQueue) wppQueue.addEventListener('change', function () {
+          var opt = wppQueue.options[wppQueue.selectedIndex];
+          if (!opt || !opt.value) return;
+
+          var amount = (opt.getAttribute('data-amount') || '').trim();
+          var description = (opt.getAttribute('data-description') || '').trim();
+          var customerId = (opt.getAttribute('data-customer-id') || '').trim();
+          var supplierId = (opt.getAttribute('data-supplier-id') || '').trim();
+
+          var amountInput = document.getElementById('id_mov_amount');
+          var descInput = document.getElementById('id_mov_desc');
+          var customerSelect = document.getElementById('id_mov_customer');
+          var supplierSelect = document.getElementById('id_mov_supplier');
+
+          if (amountInput && amount) amountInput.value = amount;
+          if (descInput && description) descInput.value = description;
+
+          if (direction && (direction.value || '').toUpperCase() === 'IN') {
+            if (customerSelect && customerId) customerSelect.value = customerId;
+          } else {
+            if (supplierSelect && supplierId) supplierSelect.value = supplierId;
+          }
         });
 
         var splitCheckbox = document.getElementById('id_mov_split_entry');
         if (splitCheckbox) splitCheckbox.addEventListener('change', syncSplitEntryUI);
         syncSplitEntryUI();
         syncCounterpartyUI('id_mov_dir', 'customer-block', 'id_mov_customer', 'supplier-block', 'id_mov_supplier', 'id_mov_source', 'id_mov_source_value');
+        syncSourceOptions('id_mov_wpp_queue', 'id_mov_dir');
 
         var directionEdit = document.getElementById('id_mov_dir_edit');
         if (directionEdit) directionEdit.addEventListener('change', function () {
@@ -655,6 +708,26 @@
             if (ev.target === modal) closeModal(modal.getAttribute('data-modal'));
           });
         });
+
+        var params = new URLSearchParams(window.location.search || '');
+        var openKey = (params.get('open') || '').trim();
+        if (openKey === 'movement-create') {
+          openModal('movement-create');
+          var wppId = (params.get('wpp') || '').trim();
+          var wppDir = (params.get('direction') || '').trim().toUpperCase();
+          var directionEl = document.getElementById('id_mov_dir');
+          if (directionEl && (wppDir === 'IN' || wppDir === 'OUT')) {
+            directionEl.value = wppDir;
+            directionEl.dispatchEvent(new Event('change'));
+          }
+          if (wppId) {
+            var wppSelect = document.getElementById('id_mov_wpp_queue');
+            if (wppSelect) {
+              wppSelect.value = wppId;
+              wppSelect.dispatchEvent(new Event('change'));
+            }
+          }
+        }
       }
 
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);

@@ -597,16 +597,88 @@ def _parse_whatsapp_command(message_text):
         result['review_notes'] = 'Mensagem vazia recebida do WhatsApp.'
         return result
 
+    tokens = lower.split()
+    command = tokens[0] if tokens else ''
+    if command == '/emprestimo':
+        result['command_name'] = 'EMPRESTIMO'
+
+        direction = ''
+        for token in tokens[1:]:
+            if token in ('in', 'entrada', 'ent'):
+                direction = CashMovement.Direction.IN
+                break
+            if token in ('out', 'saida', 'saída'):
+                direction = CashMovement.Direction.OUT
+                break
+        result['direction'] = direction
+
+        amount_token = ''
+        if len(tokens) > 1:
+            amount_token = tokens[1]
+        if amount_token in ('in', 'entrada', 'ent', 'out', 'saida', 'saída') and len(tokens) > 2:
+            amount_token = tokens[2]
+        if amount_token:
+            try:
+                amount = amount_token.replace('.', '').replace(',', '.')
+                result['amount'] = Decimal(amount)
+            except Exception:
+                result['amount'] = None
+
+        import re
+
+        budget_match = re.search(r'(orcamento|orçamento|os)\s+(\d+)', lower)
+        if budget_match:
+            try:
+                result['budget_number'] = int(budget_match.group(2))
+            except Exception:
+                result['budget_number'] = None
+
+        raw_tokens = text.split()
+        raw_tokens_lower = [t.lower() for t in raw_tokens]
+        dir_tokens = ('in', 'entrada', 'ent', 'out', 'saida', 'saída')
+        direction_idx = None
+        for idx, tok in enumerate(raw_tokens_lower):
+            if idx == 0:
+                continue
+            if tok in dir_tokens:
+                direction_idx = idx
+                break
+
+        amount_idx = None
+        if len(raw_tokens_lower) > 1:
+            if raw_tokens_lower[1] in dir_tokens:
+                if len(raw_tokens_lower) > 2:
+                    amount_idx = 2
+            else:
+                amount_idx = 1
+
+        start_idx = 1
+        if amount_idx is not None:
+            start_idx = max(start_idx, amount_idx + 1)
+        if direction_idx is not None:
+            start_idx = max(start_idx, direction_idx + 1)
+
+        description_tokens = raw_tokens[start_idx:]
+        result['description'] = ' '.join(description_tokens)[:255] or text[:255]
+
+        if result['amount'] and result['amount'] > 0 and result['direction'] in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
+            result['parsed_ok'] = True
+            result['review_notes'] = 'Campos principais identificados automaticamente. Revise antes de confirmar.'
+        elif not result['direction']:
+            result['review_notes'] = 'Comando reconhecido, mas informe entrada/saida para definir a direção.'
+        else:
+            result['review_notes'] = 'Comando reconhecido, mas o valor precisa ser revisado antes da confirmação.'
+        return result
+
     command_map = {
         '/pix': ('PIX', CashMovement.Direction.IN),
+        '/piz': ('PIX', CashMovement.Direction.IN),
         '/cartao': ('CARTAO', CashMovement.Direction.IN),
         '/dinheiro': ('DINHEIRO', CashMovement.Direction.IN),
         '/despesa': ('DESPESA', CashMovement.Direction.OUT),
         '/boleto': ('BOLETO', CashMovement.Direction.OUT),
         '/salario': ('SALARIO', CashMovement.Direction.OUT),
     }
-    tokens = lower.split()
-    command = tokens[0] if tokens else ''
     if command in command_map:
         result['command_name'], result['direction'] = command_map[command]
         if len(tokens) > 1:
@@ -913,6 +985,12 @@ class FinanceDashboardView(RoleRequiredMixin, View):
                 .first()
             )
 
+        whatsapp_queue_items = list(
+            WhatsAppFinanceQueueItem.objects.select_related('customer', 'supplier')
+            .filter(status=WhatsAppFinanceQueueItem.Status.PENDING)
+            .order_by('-created_at', '-id')[:80]
+        )
+
         current_query = request.get_full_path()
         q = request.GET.copy()
         if 'edit' in q:
@@ -932,6 +1010,7 @@ class FinanceDashboardView(RoleRequiredMixin, View):
             'expense_groups': list(CashCategory.ExpenseGroup.choices),
             'filters': f,
             'edit_movement': edit_movement,
+            'whatsapp_queue_items': whatsapp_queue_items,
             'current_query': current_query,
             'current_query_no_edit': current_query_no_edit,
             'expected_in': expected_in,
@@ -1093,6 +1172,21 @@ class FinanceDashboardView(RoleRequiredMixin, View):
 
             recurrence_total = self._parse_positive_int(request.POST.get('recurrence_total'), default=1)
             split_entry = (request.POST.get('split_entry') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+            whatsapp_queue_item_id_raw = (request.POST.get('whatsapp_queue_item_id') or '').strip()
+            try:
+                whatsapp_queue_item_id = int(whatsapp_queue_item_id_raw) if whatsapp_queue_item_id_raw else None
+            except ValueError:
+                whatsapp_queue_item_id = None
+            whatsapp_item = None
+            if whatsapp_queue_item_id:
+                if split_entry or recurrence_total > 1:
+                    messages.error(request, 'Selecione uma mensagem do WhatsApp apenas para lançamentos únicos (sem recorrência e sem divisão).')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+                whatsapp_item = WhatsAppFinanceQueueItem.objects.filter(id=whatsapp_queue_item_id).first()
+                if whatsapp_item is None or whatsapp_item.status != WhatsAppFinanceQueueItem.Status.PENDING:
+                    messages.error(request, 'Item do WhatsApp inválido ou já processado.')
+                    return redirect(next_url or 'budgets:finance_dashboard')
+
             entry_amount = Decimal('0')
             if split_entry:
                 try:
@@ -1145,8 +1239,9 @@ class FinanceDashboardView(RoleRequiredMixin, View):
                     return redirect(next_url or 'budgets:finance_dashboard')
 
                 recurrence_group = uuid4().hex if recurrence_total > 1 else ''
+                movement_created = None
                 for idx in range(recurrence_total):
-                    CashMovement.objects.create(
+                    created = CashMovement.objects.create(
                         direction=direction,
                         source=source,
                         customer=customer,
@@ -1162,6 +1257,41 @@ class FinanceDashboardView(RoleRequiredMixin, View):
                         recurrence_group=recurrence_group,
                         recurrence_index=idx + 1,
                         recurrence_total=recurrence_total,
+                    )
+                    if idx == 0:
+                        movement_created = created
+
+                if whatsapp_item is not None and movement_created is not None:
+                    whatsapp_item.direction = direction
+                    whatsapp_item.amount = amount
+                    whatsapp_item.description = description
+                    whatsapp_item.launch_date = launch_date
+                    whatsapp_item.due_date = due_date
+                    whatsapp_item.bank_account = bank_account
+                    whatsapp_item.category_id = category_id
+                    whatsapp_item.customer = customer
+                    whatsapp_item.supplier = supplier
+                    whatsapp_item.reviewed_by = request.user
+                    whatsapp_item.reviewed_at = timezone.now()
+                    whatsapp_item.status = WhatsAppFinanceQueueItem.Status.CONFIRMED
+                    whatsapp_item.confirmed_movement = movement_created
+                    whatsapp_item.save(
+                        update_fields=[
+                            'direction',
+                            'amount',
+                            'description',
+                            'launch_date',
+                            'due_date',
+                            'bank_account',
+                            'category',
+                            'customer',
+                            'supplier',
+                            'reviewed_by',
+                            'reviewed_at',
+                            'status',
+                            'confirmed_movement',
+                            'updated_at',
+                        ]
                     )
                 if recurrence_total > 1:
                     messages.success(request, f'Lançamento recorrente criado com {recurrence_total} meses.')
@@ -1537,6 +1667,13 @@ class UaizapiWebhookView(View):
         is_image = mimetype.startswith('image/') and bool(file_url)
         is_media = is_pdf or is_image
 
+        event_type = str(message_data.get('event_type') or '').strip().lower()
+        if event_type and event_type not in ('message', 'messages'):
+            log.processed_ok = True
+            log.error_message = 'Evento ignorado por não ser uma mensagem.'
+            log.save(update_fields=['processed_ok', 'error_message'])
+            return JsonResponse({'ok': True, 'ignored': True, 'reason': 'non_message_event_type'})
+
         if not message_data.get('sender_phone') or (not message_data.get('message_text') and not is_media):
             log.processed_ok = True
             log.error_message = 'Evento ignorado por não conter mensagem financeira utilizável.'
@@ -1690,8 +1827,11 @@ class UaizapiWebhookView(View):
             return JsonResponse({'ok': True, 'queue_item_id': queue_item.id})
 
         parsed = _parse_whatsapp_command(message_data.get('message_text', ''))
-
-        parsed = _parse_whatsapp_command(message_data.get('message_text', ''))
+        if not parsed.get('command_name'):
+            log.processed_ok = True
+            log.error_message = 'Texto ignorado por não seguir padrão financeiro.'
+            log.save(update_fields=['processed_ok', 'error_message'])
+            return JsonResponse({'ok': True, 'ignored': True, 'reason': 'non_financial_text'})
 
         budget = None
         if parsed.get('budget_number'):
