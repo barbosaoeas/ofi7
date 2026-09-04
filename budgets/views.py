@@ -101,6 +101,44 @@ def normalize_whatsapp_text(value):
     return ' '.join((value or '').strip().split())
 
 
+def _extract_money_from_text(text):
+    import re
+
+    raw = normalize_whatsapp_text(text)
+    if not raw:
+        return None
+
+    candidates = []
+    for pattern in (r'R\$\s*[\d\.\,]+', r'\b\d{1,3}(?:\.\d{3})*,\d{2}\b', r'\b\d+,\d{2}\b'):
+        for match in re.findall(pattern, raw, flags=re.IGNORECASE):
+            candidates.append(match)
+
+    for match in candidates:
+        cleaned = str(match).lower().replace('r$', '').strip()
+        cleaned = cleaned.replace(' ', '')
+        cleaned = cleaned.replace('.', '').replace(',', '.')
+        try:
+            value = Decimal(cleaned)
+        except Exception:
+            value = None
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def _guess_direction_from_text(text):
+    lower = normalize_whatsapp_text(text).lower()
+    if not lower:
+        return ''
+    in_words = ('receb', 'entrada', 'credit', 'crédito', 'pix', 'recebido')
+    out_words = ('pag', 'saída', 'saida', 'deb', 'débito', 'compra', 'despesa')
+    if any(w in lower for w in in_words) and not any(w in lower for w in out_words):
+        return CashMovement.Direction.IN
+    if any(w in lower for w in out_words) and not any(w in lower for w in in_words):
+        return CashMovement.Direction.OUT
+    return ''
+
+
 def budget_has_pending_shop_parts(budget):
     if not budget or not getattr(budget, 'id', None):
         return False
@@ -1458,16 +1496,11 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
             return redirect(redirect_to)
 
         if action == 'quick_ignore':
-            preview = (item.message_text or '').strip()
-            is_media_preview = preview.startswith('[IMG]') or preview.startswith('[PDF]')
             if item.status != WhatsAppFinanceQueueItem.Status.PENDING:
                 messages.error(request, 'Apenas itens pendentes podem ser ignorados.')
                 return redirect(redirect_to)
-            if item.command_name or is_media_preview:
-                messages.error(request, 'Este item não pode ser ignorado por atalho.')
-                return redirect(redirect_to)
             item.status = WhatsAppFinanceQueueItem.Status.IGNORED
-            item.review_notes = 'Ignorado: mensagem fora do padrão financeiro.'
+            item.review_notes = 'Ignorado pela fila (limpeza de testes).'
             item.reviewed_by = request.user
             item.reviewed_at = timezone.now()
             item.save(update_fields=['status', 'review_notes', 'reviewed_by', 'reviewed_at', 'updated_at'])
@@ -1750,7 +1783,31 @@ class UaizapiWebhookView(View):
             if excerpt:
                 pdf_message_text = f'{pdf_message_text} — {excerpt}'
 
-            review_notes = (pdf_text[:8000] + '\n\n' if pdf_text else '') + f'URL: {file_url}'
+            parsed_caption = _parse_whatsapp_command(caption) if caption else {}
+            extracted_amount = None
+            guessed_direction = ''
+            if is_pdf and pdf_text:
+                extracted_amount = _extract_money_from_text(pdf_text)
+                guessed_direction = _guess_direction_from_text(pdf_text)
+
+            direction = parsed_caption.get('direction') or guessed_direction or ''
+            amount = parsed_caption.get('amount') if parsed_caption.get('amount') is not None else extracted_amount
+            description = ''
+            if parsed_caption.get('command_name'):
+                description = (parsed_caption.get('description') or '').strip()
+            if not description:
+                description = (caption or '').strip()
+            description = description[:255]
+
+            parsed_ok = bool(direction in (CashMovement.Direction.IN, CashMovement.Direction.OUT) and amount and amount > 0)
+
+            notes_parts = []
+            if parsed_caption.get('command_name'):
+                notes_parts.append(parsed_caption.get('review_notes') or '')
+            elif amount or direction:
+                notes_parts.append('Campos extraídos do anexo automaticamente. Revise antes de confirmar.')
+            notes_parts.append((pdf_text[:8000] + '\n\n' if pdf_text else '') + f'URL: {file_url}')
+            review_notes = '\n\n'.join([p.strip() for p in notes_parts if str(p or '').strip()])
 
             queue_item = WhatsAppFinanceQueueItem.objects.create(
                 provider=message_data.get('provider', 'UAIZAPI'),
@@ -1763,13 +1820,13 @@ class UaizapiWebhookView(View):
                 is_group_message=bool(message_data.get('is_group_message')),
                 message_text=pdf_message_text,
                 normalized_text=normalize_whatsapp_text(str(pdf_message_text or '')),
-                command_name='',
-                parsed_ok=False,
-                direction='',
-                amount=None,
-                description='',
-                launch_date=None,
-                due_date=None,
+                command_name=str(parsed_caption.get('command_name') or ''),
+                parsed_ok=parsed_ok,
+                direction=str(direction or ''),
+                amount=amount,
+                description=description,
+                launch_date=timezone.localdate(),
+                due_date=timezone.localdate(),
                 status='PENDING',
                 review_notes=review_notes,
                 raw_payload=payload_for_log,
