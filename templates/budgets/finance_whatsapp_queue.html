@@ -86,11 +86,19 @@
                   <span class='rounded-full border border-[#404040] bg-[#0D0D0D] px-3 py-1 text-xs uppercase tracking-wide'>{{ item.get_status_display }}</span>
                 </td>
                 <td class='px-4 py-3'>
-                  {% if item.status == 'PENDING' and not item.command_name and item.message_text|slice:":5" != "[IMG]" and item.message_text|slice:":5" != "[PDF]" %}
+                  {% if item.status == 'PENDING' %}
                     <form method='post' class='inline'>
                       {% csrf_token %}
                       <input type='hidden' name='item_id' value='{{ item.id }}' />
-                      <button type='submit' name='action' value='quick_ignore' class='rounded-lg border border-[#7f1d1d] bg-[#2a0b0b] px-3 py-1.5 text-xs font-semibold text-[#fecaca]'>Excluir</button>
+                      <button
+                        type='submit'
+                        name='action'
+                        value='quick_ignore'
+                        {% if item.command_name or item.message_text|slice:":5" == "[IMG]" or item.message_text|slice:":5" == "[PDF]" %}disabled{% endif %}
+                        class='rounded-lg border px-3 py-1.5 text-xs font-semibold {% if item.command_name or item.message_text|slice:":5" == "[IMG]" or item.message_text|slice:":5" == "[PDF]" %}border-[#404040] bg-[#0D0D0D] text-[#737373]{% else %}border-[#7f1d1d] bg-[#2a0b0b] text-[#fecaca]{% endif %}'
+                      >
+                        Excluir
+                      </button>
                     </form>
                   {% else %}
                     <span class='text-xs text-[#737373]'>—</span>
