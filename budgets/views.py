@@ -1457,6 +1457,23 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
             messages.error(request, 'Item da fila não encontrado.')
             return redirect(redirect_to)
 
+        if action == 'quick_ignore':
+            preview = (item.message_text or '').strip()
+            is_media_preview = preview.startswith('[IMG]') or preview.startswith('[PDF]')
+            if item.status != WhatsAppFinanceQueueItem.Status.PENDING:
+                messages.error(request, 'Apenas itens pendentes podem ser ignorados.')
+                return redirect(redirect_to)
+            if item.command_name or is_media_preview:
+                messages.error(request, 'Este item não pode ser ignorado por atalho.')
+                return redirect(redirect_to)
+            item.status = WhatsAppFinanceQueueItem.Status.IGNORED
+            item.review_notes = 'Ignorado: mensagem fora do padrão financeiro.'
+            item.reviewed_by = request.user
+            item.reviewed_at = timezone.now()
+            item.save(update_fields=['status', 'review_notes', 'reviewed_by', 'reviewed_at', 'updated_at'])
+            messages.success(request, f'Item #{item.id} ignorado.')
+            return redirect(redirect_to)
+
         if action == 'reject_item':
             item.status = WhatsAppFinanceQueueItem.Status.REJECTED
             item.review_notes = (request.POST.get('review_notes') or item.review_notes or '').strip()
@@ -1639,6 +1656,7 @@ class UaizapiWebhookView(View):
 
         log = WhatsAppWebhookLog.objects.create(
             provider=message_data.get('provider', 'UAIZAPI'),
+            event_type=message_data.get('event_type', ''),
             external_message_id=message_data.get('external_message_id', ''),
             sender_phone=message_data.get('sender_phone', ''),
             sender_name=message_data.get('sender_name', ''),
