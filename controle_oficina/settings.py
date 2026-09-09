@@ -135,3 +135,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 ZAP_WEBHOOK_SECRET = os.environ.get('ZAP_WEBHOOK_SECRET', '').strip()
 UAIZAPI_WEBHOOK_SECRET = os.environ.get('UAIZAPI_WEBHOOK_SECRET', '').strip()
 UAIZAPI_WEBHOOK_TOKEN = os.environ.get('UAIZAPI_WEBHOOK_TOKEN', '').strip()
+UAIZAPI_INSTANCE = os.environ.get('UAIZAPI_INSTANCE', '').strip()
+UAIZAPI_API_KEY = os.environ.get('UAIZAPI_API_KEY', '').strip()
+UAIZAPI_DOWNLOAD_TOKEN = os.environ.get('UAIZAPI_DOWNLOAD_TOKEN', os.environ.get('UAIZAPI_TOKEN', '')).strip()

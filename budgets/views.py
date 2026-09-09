@@ -55,6 +55,24 @@ from .models import (
 KANBAN_CUTOFF_TIME = dt_time(17, 48)
 
 
+def _sniff_mimetype(data_bytes: bytes) -> str:
+    head = (data_bytes or b'')[:32]
+    if not head:
+        return ''
+    if head.startswith(b'%PDF'):
+        return 'application/pdf'
+    if head.startswith(b'\xFF\xD8\xFF'):
+        return 'image/jpeg'
+    if head.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if len(head) >= 12 and head[:4] == b'RIFF' and head[8:12] == b'WEBP':
+        return 'image/webp'
+    head_str = (head or b'').decode('utf-8', errors='ignore').lstrip()
+    if head_str.startswith('<!DOCTYPE html') or head_str.lower().startswith('<html') or head_str.lower().startswith('<?xml'):
+        return 'text/html'
+    return ''
+
+
 def normalize_phone(value):
     raw = (value or '').strip()
     if '@' in raw:
@@ -1683,15 +1701,7 @@ class FinanceWhatsappAttachmentView(RoleRequiredMixin, View):
         stored = (att.mimetype or '').strip()
         content_type = stored or guessed
 
-        sniffed = ''
-        if head.startswith(b'%PDF'):
-            sniffed = 'application/pdf'
-        elif head.startswith(b'\xFF\xD8\xFF'):
-            sniffed = 'image/jpeg'
-        elif head.startswith(b'\x89PNG\r\n\x1a\n'):
-            sniffed = 'image/png'
-        elif head[:4] == b'RIFF' and head[8:12] == b'WEBP':
-            sniffed = 'image/webp'
+        sniffed = _sniff_mimetype(head)
         if sniffed:
             content_type = sniffed
 
@@ -1930,48 +1940,114 @@ class UaizapiWebhookView(View):
                 ext = '.pdf' if is_pdf else '.jpg'
                 base = f"queue_item_{queue_item.id}"
                 safe_name = f"{base}{ext}" if not orig else f"{base}__{orig}"
+
+                uaizapi_instance = str(getattr(settings, 'UAIZAPI_INSTANCE', '') or '').strip()
+                uaizapi_api_key = str(getattr(settings, 'UAIZAPI_API_KEY', '') or '').strip()
+                uaizapi_download_token = str(getattr(settings, 'UAIZAPI_DOWNLOAD_TOKEN', '') or '').strip()
+                uaizapi_webhook_token = str(getattr(settings, 'UAIZAPI_WEBHOOK_TOKEN', '') or '').strip()
+                uaizapi_webhook_secret = str(getattr(settings, 'UAIZAPI_WEBHOOK_SECRET', '') or '').strip()
             
-                if parsed.scheme == 'https' and host.endswith('whatsapp.net') and url:
-                    req = Request(url, headers={'User-Agent': 'ofi7-webhook/1.0'})
-                    with urlopen(req, timeout=10) as resp:
-                        data = resp.read(max_bytes + 1)
+                headers = {'User-Agent': 'ofi7-webhook/1.0'}
+                if uaizapi_instance:
+                    headers['X-UAIZAPI-Instance'] = uaizapi_instance
+                if uaizapi_api_key:
+                    headers['apikey'] = uaizapi_api_key
+                    headers['Authorization'] = f'Bearer {uaizapi_api_key}'
+                elif uaizapi_download_token:
+                    headers['Authorization'] = f'Bearer {uaizapi_download_token}'
+                elif uaizapi_webhook_token:
+                    headers['X-UAIZAPI-Token'] = uaizapi_webhook_token
+                if uaizapi_webhook_secret and not uaizapi_api_key and not uaizapi_download_token:
+                    headers['X-UAIZAPI-Secret'] = uaizapi_webhook_secret
             
-                    if len(data) <= max_bytes:
-                        sha = hashlib.sha256(data).hexdigest()
-                        att = WhatsAppFinanceQueueAttachment(
-                            queue_item=queue_item,
-                            mimetype=mimetype,
-                            original_name=safe_name,
-                            sha256=sha,
-                            size_bytes=len(data),
-                        )
-                        att.file.save(safe_name, ContentFile(data), save=True)
-            
-                        rn = (queue_item.review_notes or '').strip()
-                        if rn:
-                            rn += '\n\n'
-                        rn += f"ARQUIVO_SALVO: {att.file.url}\nURL_ORIG: {url}"
-                        queue_item.review_notes = rn
-                        queue_item.save(update_fields=['review_notes'])
+                http_status = None
+                data = b''
+                error_hint = ''
+                allow_save = False
+
+                if parsed.scheme == 'https' and host and url:
+                    try:
+                        req = Request(url, headers=headers)
+                        with urlopen(req, timeout=10) as resp:
+                            http_status = getattr(resp, 'status', 200)
+                            data = resp.read(max_bytes + 1)
+                    except urllib.error.HTTPError as e:
+                        http_status = getattr(e, 'code', None)
+                        try:
+                            tmp = e.read(4096) or b''
+                        except Exception:
+                            tmp = b''
+                        error_hint = f'HTTPError {http_status}: {(tmp[:400].decode("utf-8", errors="ignore") or "").strip()}'
+                    except Exception as e:
+                        error_hint = f'Exception: {type(e).__name__}: {e}'
+                else:
+                    error_hint = f'URL inválida/domínio inesperado (host={host}, scheme={parsed.scheme})'
+
+                sniffed_ct = _sniff_mimetype(data) if data else ''
+                html_like = sniffed_ct == 'text/html'
+                valid_content = bool(sniffed_ct) and not html_like
+
+                if http_status is None:
+                    pass
+                elif http_status == 200:
+                    if len(data) > max_bytes:
+                        error_hint = f'arquivo > 10MB ({len(data)} bytes)'
+                    elif valid_content:
+                        allow_save = True
                     else:
-                        rn = (queue_item.review_notes or '').strip()
-                        if rn:
-                            rn += '\n\n'
-                        rn += f"URL_ORIG: {url}\nOBS: arquivo > 10MB, não foi salvo."
-                        queue_item.review_notes = rn
-                        queue_item.save(update_fields=['review_notes'])
+                        head_hex = (data[:16] or b'').hex()
+                        error_hint = (
+                            f'anexo inválido: conteúdo não bate com JPEG/PNG/WEBP/PDF. '
+                            f'sniffed={sniffed_ct or "desconhecido"} head_hex={head_hex}'
+                        )
+                else:
+                    if not error_hint:
+                        error_hint = f'HTTP {http_status}'
+                    error_hint = f'HTTP {http_status}: {error_hint}'
+
+                if allow_save:
+                    sha = hashlib.sha256(data).hexdigest()
+                    stored_mimetype = (
+                        sniffed_ct if sniffed_ct else ('application/pdf' if is_pdf else 'image/jpeg')
+                    )
+                    att = WhatsAppFinanceQueueAttachment(
+                        queue_item=queue_item,
+                        mimetype=stored_mimetype,
+                        original_name=safe_name,
+                        sha256=sha,
+                        size_bytes=len(data),
+                    )
+                    att.file.save(safe_name, ContentFile(data), save=True)
+            
+                    rn = (queue_item.review_notes or '').strip()
+                    if rn:
+                        rn += '\n\n'
+                    rn += (
+                        f"ARQUIVO_SALVO: {att.file.url}\n"
+                        f"URL_ORIG: {url}\n"
+                        f"ANEXO_OK: sim  mimetype_salvo={stored_mimetype}  bytes={len(data)}"
+                    )
+                    queue_item.review_notes = rn
+                    queue_item.save(update_fields=['review_notes'])
                 else:
                     rn = (queue_item.review_notes or '').strip()
                     if rn:
                         rn += '\n\n'
-                    rn += f"URL_ORIG: {url}\nOBS: URL inválida/domínio inesperado, não foi salvo."
+                    rn += (
+                        f"URL_ORIG: {url}\n"
+                        f"ANEXO_OK: nao  HTTP={http_status or 'n/a'}  bytes={len(data)}  "
+                        f"sniffed={sniffed_ct or 'desconhecido'}  obs={error_hint or ''}"
+                    )
                     queue_item.review_notes = rn
                     queue_item.save(update_fields=['review_notes'])
-            except Exception:
+            except Exception as e:
                 rn = (queue_item.review_notes or '').strip()
                 if rn:
                     rn += '\n\n'
-                rn += f"URL_ORIG: {(file_url or '').strip().strip('`')}\nOBS: falha ao baixar/anexar arquivo."
+                rn += (
+                    f"URL_ORIG: {(file_url or '').strip().strip('`')}\n"
+                    f"ANEXO_OK: nao  obs=falha ao baixar/anexar arquivo ({type(e).__name__}: {e})"
+                )
                 queue_item.review_notes = rn
                 queue_item.save(update_fields=['review_notes'])
 

@@ -180,6 +180,9 @@
                       <div class='rounded-2xl border border-[#262626] bg-[#0D0D0D] p-3'>
                         <div class='text-xs text-[#A3A3A3] truncate'>{{ att.original_name|default:"arquivo" }}</div>
                         <div class='mt-1 text-[11px] text-[#737373] truncate'>{{ att.mimetype|default:"" }}</div>
+                        <div class='mt-2 flex flex-wrap gap-2'>
+                          <a href='{% url "budgets:finance_whatsapp_attachment" att.id %}?debug=1' target='_blank' rel='noopener noreferrer' class='rounded-lg border border-[#404040] bg-[#1A1A1A] px-2 py-1 text-[11px] hover:border-[#D4AF37]'>Debug</a>
+                        </div>
                       </div>
                     {% endfor %}
                   </div>
@@ -338,105 +341,139 @@
           downloadLink.setAttribute('aria-label', 'Baixar ' + name);
         }
 
-        fetch(url, { credentials: 'same-origin', cache: 'no-store' })
-          .then(function (res) {
-            if (!res.ok) {
-              preview.innerHTML =
-                '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao buscar o arquivo (' +
-                res.status +
-                '). URL: ' +
-                (res.url || url) +
-                '. Use Baixar.</div>';
-              throw new Error('handled_http_' + res.status);
-            }
-            return res.blob().then(function (blob) {
-              return { res: res, blob: blob };
+        var debugUrl = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'debug=1';
+
+        Promise.resolve()
+          .then(function () {
+            return fetch(debugUrl, { credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
+              if (!r.ok) return null;
+              return r.json().catch(function () { return null; });
             });
           })
-          .then(function (data) {
-            var headerCt = (data.res.headers.get('Content-Type') || '').toLowerCase();
-            var mt = (mimetype || '').toLowerCase();
-            var ct = headerCt || mt;
-            var size = data.blob && typeof data.blob.size === 'number' ? data.blob.size : 0;
+          .then(function (meta) {
+            var sniffed = (meta && (meta.sniffed_mimetype || '') || '').toLowerCase();
+            var stored = (meta && (meta.stored_mimetype || '') || '').toLowerCase();
+            var guessed = (meta && (meta.guessed_mimetype || '') || '').toLowerCase();
+            var headHex = (meta && meta.head_hex) ? String(meta.head_hex) : '';
+            var sizeBytes = (meta && typeof meta.size_bytes === 'number') ? meta.size_bytes : 0;
+            var invalid =
+              !sniffed ||
+              sniffed === 'text/html' ||
+              (stored === 'image/jpeg' && sniffed && sniffed.indexOf('pdf') < 0 && sniffed.indexOf('image/') < 0) ||
+              (stored === 'application/pdf' && sniffed && sniffed !== 'application/pdf');
 
-            if (ct.indexOf('text/html') >= 0) {
+            if (invalid) {
               preview.innerHTML =
-                '<div class="p-3 text-xs text-[#A3A3A3]">O servidor retornou HTML (normalmente login/permissão). URL: ' +
-                (data.res.url || url) +
-                '. Recarregue a página e tente novamente.</div>';
-              return;
+                '<div class="p-3 text-[11px] text-[#F87171] space-y-1">' +
+                  '<div>Arquivo salvo com conteúdo inválido para preview (não é JPEG/PNG/WEBP/PDF).</div>' +
+                  '<div>Tamanho: ' + sizeBytes + ' bytes · sniffed: ' + (sniffed || 'desconhecido') + ' · stored: ' + (stored || 'n/a') + ' · guessed: ' + (guessed || 'n/a') + '</div>' +
+                  (headHex ? '<div>head_hex: <span class="font-mono">' + headHex + '</span></div>' : '') +
+                  '<div>Use <strong>Baixar</strong> ou <strong>Abrir em nova guia</strong> para verificar.</div>' +
+                '</div>';
+              return { skip: true };
             }
 
-            currentObjectUrl = URL.createObjectURL(data.blob);
-            preview.innerHTML = '';
-
-            if (ct.indexOf('pdf') >= 0) {
-              var hasPdfJs = typeof window.pdfjsLib !== 'undefined' && window.pdfjsLib;
-              if (!hasPdfJs) {
-                var iframe = document.createElement('iframe');
-                iframe.src = currentObjectUrl;
-                iframe.className = 'h-full w-full bg-black';
-                iframe.setAttribute('loading', 'lazy');
-                preview.appendChild(iframe);
-                return;
-              }
-
-              window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-                'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js';
-
-              data.blob
-                .arrayBuffer()
-                .then(function (buf) {
-                  return window.pdfjsLib.getDocument({ data: buf }).promise;
-                })
-                .then(function (pdf) {
-                  return pdf.getPage(1);
-                })
-                .then(function (page) {
-                  var canvas = document.createElement('canvas');
-                  var ctx = canvas.getContext('2d');
-                  var viewport = page.getViewport({ scale: 1 });
-                  var maxW = preview.clientWidth || 300;
-                  var maxH = preview.clientHeight || 180;
-                  var scale = Math.min(maxW / viewport.width, maxH / viewport.height);
-                  if (!scale || scale <= 0) scale = 1;
-                  viewport = page.getViewport({ scale: scale });
-                  canvas.width = viewport.width;
-                  canvas.height = viewport.height;
-                  canvas.className = 'rounded-2xl border border-[#262626] bg-black';
-                  preview.appendChild(canvas);
-                  return page.render({ canvasContext: ctx, viewport: viewport }).promise;
-                })
-                .catch(function (e) {
+            var effective = sniffed || stored || guessed || (mimetype || '').toLowerCase();
+            return fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+              .then(function (res) {
+                if (!res.ok) {
                   preview.innerHTML =
-                    '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar PDF no preview. Tamanho: ' +
-                    size +
-                    ' bytes. Use Baixar. (' +
-                    String(e || 'erro') +
-                    ')</div>';
+                    '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao buscar o arquivo (' +
+                    res.status +
+                    '). URL: ' +
+                    (res.url || url) +
+                    '. Use Baixar.</div>';
+                  throw new Error('handled_http_' + res.status);
+                }
+                return res.blob().then(function (blob) {
+                  return { res: res, blob: blob, effective: effective };
                 });
-              return;
-            }
+              })
+              .then(function (data) {
+                var headerCt = (data.res.headers.get('Content-Type') || '').toLowerCase();
+                var mt = (mimetype || '').toLowerCase();
+                var ct = headerCt || mt || data.effective;
+                var size = data.blob && typeof data.blob.size === 'number' ? data.blob.size : 0;
 
-            if (ct.indexOf('image/') >= 0) {
-              var img = document.createElement('img');
-              img.src = currentObjectUrl;
-              img.className = 'h-full w-full object-contain';
-              img.alt = name || 'Comprovante';
-              img.addEventListener('error', function () {
+                if (ct.indexOf('text/html') >= 0) {
+                  preview.innerHTML =
+                    '<div class="p-3 text-xs text-[#A3A3A3]">O servidor retornou HTML (normalmente login/permissão). URL: ' +
+                    (data.res.url || url) +
+                    '. Recarregue a página e tente novamente.</div>';
+                  return;
+                }
+
+                currentObjectUrl = URL.createObjectURL(data.blob);
+                preview.innerHTML = '';
+
+                if (ct.indexOf('pdf') >= 0) {
+                  var hasPdfJs = typeof window.pdfjsLib !== 'undefined' && window.pdfjsLib;
+                  if (!hasPdfJs) {
+                    var iframe = document.createElement('iframe');
+                    iframe.src = currentObjectUrl;
+                    iframe.className = 'h-full w-full bg-black';
+                    iframe.setAttribute('loading', 'lazy');
+                    preview.appendChild(iframe);
+                    return;
+                  }
+
+                  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                    'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js';
+
+                  data.blob
+                    .arrayBuffer()
+                    .then(function (buf) {
+                      return window.pdfjsLib.getDocument({ data: buf }).promise;
+                    })
+                    .then(function (pdf) {
+                      return pdf.getPage(1);
+                    })
+                    .then(function (page) {
+                      var canvas = document.createElement('canvas');
+                      var ctx = canvas.getContext('2d');
+                      var viewport = page.getViewport({ scale: 1 });
+                      var maxW = preview.clientWidth || 300;
+                      var maxH = preview.clientHeight || 180;
+                      var scale = Math.min(maxW / viewport.width, maxH / viewport.height);
+                      if (!scale || scale <= 0) scale = 1;
+                      viewport = page.getViewport({ scale: scale });
+                      canvas.width = viewport.width;
+                      canvas.height = viewport.height;
+                      canvas.className = 'rounded-2xl border border-[#262626] bg-black';
+                      preview.appendChild(canvas);
+                      return page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                    })
+                    .catch(function (e) {
+                      preview.innerHTML =
+                        '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar PDF no preview. Tamanho: ' +
+                        size +
+                        ' bytes. Use Baixar. (' +
+                        String(e || 'erro') +
+                        ')</div>';
+                    });
+                  return;
+                }
+
+                if (ct.indexOf('image/') >= 0) {
+                  var img = document.createElement('img');
+                  img.src = currentObjectUrl;
+                  img.className = 'h-full w-full object-contain';
+                  img.alt = name || 'Comprovante';
+                  img.addEventListener('error', function () {
+                    preview.innerHTML =
+                      '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar imagem no preview. Tamanho: ' +
+                      size +
+                      ' bytes. Use Baixar.</div>';
+                  });
+                  preview.appendChild(img);
+                  return;
+                }
+
                 preview.innerHTML =
-                  '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar imagem no preview. Tamanho: ' +
-                  size +
-                  ' bytes. Use Baixar.</div>';
+                  '<div class="p-3 text-xs text-[#A3A3A3]">Tipo de arquivo não suportado no preview (' +
+                  (headerCt || 'desconhecido') +
+                  '). Use Abrir em nova guia ou Baixar.</div>';
               });
-              preview.appendChild(img);
-              return;
-            }
-
-            preview.innerHTML =
-              '<div class="p-3 text-xs text-[#A3A3A3]">Tipo de arquivo não suportado no preview (' +
-              (headerCt || 'desconhecido') +
-              '). Use Abrir em nova guia ou Baixar.</div>';
           })
           .catch(function (err) {
             if (String(err || '').indexOf('handled_http_') >= 0) return;
