@@ -5,12 +5,13 @@ from django.db import transaction
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.urls import reverse_lazy
+from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DeleteView, ListView, UpdateView
 
 from core.views import RoleRequiredMixin
 from .forms import CollaboratorForm, CustomUserCreationForm, SimplePasswordChangeForm
-from .models import Collaborator, CustomUser
+from .models import Collaborator, CustomUser, TimeClockDay
 
 
 DEFAULT_PASSWORD = '123456'
@@ -88,7 +89,37 @@ class CustomLoginView(LoginView):
             user
             and getattr(user, 'is_authenticated', False)
             and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) in (CustomUser.Role.OPERATIONAL, CustomUser.Role.ESTIMATOR)
+        ):
+            collaborator = Collaborator.objects.filter(
+                email__iexact=(getattr(user, 'email', '') or '').strip(),
+                is_active=True,
+                function__in=(Collaborator.Function.OPERATIONAL, Collaborator.Function.ESTIMATOR),
+            ).first()
+            if collaborator is not None:
+                today = timezone.localdate()
+                day = TimeClockDay.objects.filter(collaborator=collaborator, date=today).first()
+                if not day or not day.entry_at:
+                    return f'{reverse("core:timeclock_ponto")}?next={reverse("budgets:kanban_today")}'
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
             and getattr(user, 'role', None) == CustomUser.Role.VISUAL
+        ):
+            return reverse('core:timeclock_visual')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.PONTO
+        ):
+            return reverse('core:timeclock_ponto')
+        if (
+            user
+            and getattr(user, 'is_authenticated', False)
+            and not getattr(user, 'is_superuser', False)
+            and getattr(user, 'role', None) == CustomUser.Role.TVKANBAN
         ):
             return reverse('budgets:kanban_today')
         return super().get_success_url()

@@ -17,7 +17,9 @@
   </head>
   <body class='bg-[#0D0D0D] text-[#F5F5F5] font-sans antialiased'>
     <div class='min-h-screen'>
-      {% if user.is_authenticated and not user.is_superuser and user.role == 'VISUAL' and request.resolver_match.view_name == 'budgets:kanban_today' %}
+      {% if user.is_authenticated and not user.is_superuser and user.role == 'VISUAL' %}
+      {% elif user.is_authenticated and not user.is_superuser and user.role == 'PONTO' %}
+      {% elif user.is_authenticated and not user.is_superuser and user.role == 'TVKANBAN' %}
       {% else %}
         <header class='sticky top-0 z-50 border-b border-[#262626] bg-[#141414]'>
           <div class='mx-auto flex max-w-6xl items-center justify-between px-4 py-4'>
@@ -54,6 +56,18 @@
                   Kanban
                 </a>
 
+                {% if timeclock_nav %}
+                  {% if timeclock_nav.disabled %}
+                    <button type='button' disabled class='rounded-md px-3 py-2 text-sm {{ timeclock_nav.class }}'>
+                      {{ timeclock_nav.label }}
+                    </button>
+                  {% else %}
+                    <a href='{{ timeclock_nav.url }}' class='rounded-md px-3 py-2 text-sm font-semibold {{ timeclock_nav.class }}'>
+                      {{ timeclock_nav.label }}
+                    </a>
+                  {% endif %}
+                {% endif %}
+
                 {% if user.is_superuser or role != 'OPERATIONAL' and role != 'VISUAL' %}
                   <a href='{% url "budgets:vehicle_entry_kanban" %}' class='rounded-md border border-[#262626] bg-[#1A1A1A] px-3 py-2 hover:border-[#D4AF37]'>
                     Kanban de entrada de veículo
@@ -73,6 +87,16 @@
                       {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' or role == 'ESTIMATOR' %}
                         <a href='{% url "budgets:report_pieces" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
                           Peças
+                        </a>
+                      {% endif %}
+                      {% if user.is_superuser or role == 'MANAGER' or role == 'FINANCE' %}
+                        <a href='{% url "core:timeclock_report" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                          Ponto
+                        </a>
+                      {% endif %}
+                      {% if user.is_superuser or role == 'MANAGER' %}
+                        <a href='{% url "core:timeclock_visual" %}' class='block px-4 py-3 text-sm hover:bg-[#121212]'>
+                          Ponto (Visual)
                         </a>
                       {% endif %}
                     </div>

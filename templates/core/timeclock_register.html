@@ -1,0 +1,315 @@
+{% extends 'base.html' %}
+
+{% block title %}Registrar Ponto | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-2xl px-4 py-10{% endblock %}
+
+{% block content %}
+  <div class='rounded-3xl border border-[#262626] bg-gradient-to-br from-[#1A1A1A] via-[#161616] to-[#101010] p-6 shadow-2xl'>
+    <div class='flex flex-wrap items-start justify-between gap-4'>
+      <div>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Ponto</div>
+        <h1 class='mt-2 text-3xl font-semibold text-[#F5F5F5]'>Registrar</h1>
+        {% if kiosk_mode %}
+          <p class='mt-2 text-sm text-[#A3A3A3]'>Selecione o colaborador e aponte a câmera para o QR Code (na TV) ou digite o código.</p>
+        {% else %}
+          <p class='mt-2 text-sm text-[#A3A3A3]'>Olá, {{ collaborator_name }}. Aponte a câmera para o QR Code ou digite o código.</p>
+        {% endif %}
+      </div>
+      <div class='text-right'>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Validade</div>
+        <div class='mt-2 font-mono text-2xl font-semibold text-[#F5F5F5]'><span id='ttl'>--</span>s</div>
+      </div>
+    </div>
+
+    {% if kiosk_mode %}
+      <div class='mt-5 rounded-2xl border border-[#2d2d2d] bg-[#121212]/80 px-4 py-3 text-sm text-[#E5E7EB]'>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Colaborador</div>
+        <div class='mt-2'>
+          <select id='collaborator-select' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-3 text-sm text-[#F5F5F5]'>
+            <option value=''>Selecione...</option>
+            {% for c in eligible_collaborators %}
+              <option value='{{ c.id }}' {% if selected_collaborator_id == c.id|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+            {% endfor %}
+          </select>
+          <div class='mt-2 text-xs text-[#A3A3A3]'>Este modo é para um totem/tablet. O QR e o código ficam na tela Visual (TV).</div>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class='mt-5 rounded-2xl border border-[#2d2d2d] bg-[#121212]/80 px-4 py-3 text-sm text-[#E5E7EB]'>
+      <div class='font-semibold text-[#F5F5F5]'>Atenção</div>
+      <div class='mt-1 text-[#A3A3A3]'>
+        O QR Code e o código de 6 dígitos aparecem na tela <span class='font-semibold text-[#F5F5F5]'>Visual (TV)</span>.
+        Aqui você só escaneia com a câmera ou digita o código.
+      </div>
+      {% if user.is_superuser or user.role == 'MANAGER' or user.role == 'FINANCE' %}
+        <div class='mt-3'>
+          <a href='{% url "core:timeclock_visual" %}' class='inline-flex rounded-xl border border-[#404040] bg-[#1A1A1A] px-4 py-2 text-sm hover:border-[#D4AF37]'>
+            Abrir Visual (TV)
+          </a>
+        </div>
+      {% else %}
+        <div class='mt-2 text-xs text-[#A3A3A3]'>Peça para o gerente/financeiro abrir a tela Visual na TV/PC da recepção.</div>
+      {% endif %}
+    </div>
+
+    <div class='mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2'>
+      <div class='rounded-2xl border border-[#262626] bg-[#0D0D0D] p-4'>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Câmera</div>
+        <div class='mt-3 overflow-hidden rounded-2xl border border-[#262626] bg-black'>
+          <video id='video' class='h-60 w-full object-cover' autoplay playsinline muted></video>
+        </div>
+        <div class='mt-3 flex flex-wrap gap-2'>
+          <button id='btn-start' type='button' class='rounded-xl border border-[#404040] bg-[#1A1A1A] px-4 py-2 text-sm hover:border-[#D4AF37]'>Ativar câmera</button>
+          <button id='btn-stop' type='button' class='rounded-xl border border-[#404040] bg-[#1A1A1A] px-4 py-2 text-sm hover:border-[#D4AF37]'>Parar</button>
+        </div>
+        <div id='camera-hint' class='mt-3 text-xs text-[#A3A3A3]'>Se o QR abrir um link, você pode usar a câmera do celular fora do sistema também.</div>
+      </div>
+
+      <div class='rounded-2xl border border-[#262626] bg-[#0D0D0D] p-4'>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Código</div>
+        <form id='code-form' class='mt-3'>
+          <input id='code-input' inputmode='numeric' autocomplete='one-time-code' maxlength='6' class='w-full rounded-xl border border-[#404040] bg-[#141414] px-4 py-3 font-mono text-2xl tracking-[0.3em] text-[#F5F5F5]' placeholder='______' />
+          <div class='mt-3 flex justify-end'>
+            <button id='btn-use-code' type='button' class='rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-5 py-3 text-sm font-semibold text-[#0D0D0D]'>Validar</button>
+          </div>
+        </form>
+        <div id='scan-status' class='mt-3 text-xs text-[#A3A3A3]'>Digite o código de 6 dígitos ou use a câmera.</div>
+      </div>
+    </div>
+  </div>
+
+  <div id='confirm-modal' class='fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4'>
+    <div class='w-full max-w-lg rounded-3xl border border-[#262626] bg-[#0D0D0D] p-6 shadow-2xl'>
+      <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Confirmação</div>
+      <h2 class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>Confirmar registro</h2>
+      <p class='mt-2 text-sm text-[#A3A3A3]'>Se estiver na oficina, confirme para registrar o ponto.</p>
+
+      <form method='post' class='mt-6 flex flex-wrap justify-end gap-3'>
+        {% csrf_token %}
+        <input type='hidden' name='next' value='{{ next_url }}' />
+        {% if kiosk_mode %}
+          <input type='hidden' name='collaborator_id' id='collaborator-hidden' value='' />
+        {% endif %}
+        <input type='hidden' name='token' id='token-hidden' value='' />
+        <input type='hidden' name='code' id='code-hidden' value='' />
+        <button type='button' id='btn-cancel' class='rounded-xl border border-[#404040] bg-[#1A1A1A] px-4 py-2.5 text-sm hover:border-[#D4AF37]'>Cancelar</button>
+        <button type='submit' class='rounded-xl bg-gradient-to-r from-[#22c55e] to-[#16a34a] px-5 py-2.5 text-sm font-semibold text-[#0D0D0D]'>Confirmar</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var tokenFromUrl = '{{ token|escapejs }}';
+      var ttlEl = document.getElementById('ttl');
+      var modal = document.getElementById('confirm-modal');
+      var tokenHidden = document.getElementById('token-hidden');
+      var codeHidden = document.getElementById('code-hidden');
+      var btnCancel = document.getElementById('btn-cancel');
+      var scanStatus = document.getElementById('scan-status');
+      var codeInput = document.getElementById('code-input');
+      var btnUseCode = document.getElementById('btn-use-code');
+      var btnStart = document.getElementById('btn-start');
+      var btnStop = document.getElementById('btn-stop');
+      var video = document.getElementById('video');
+      var intervalSeconds = {{ interval_seconds|default:10 }};
+      var autoRedirectSeconds = {{ auto_redirect_seconds|default:0 }};
+      var nextUrl = '{{ next_url|escapejs }}';
+      var kioskMode = {{ kiosk_mode|yesno:"true,false" }};
+      var collaboratorSelect = document.getElementById('collaborator-select');
+      var lastAutoCode = '';
+
+      var stream = null;
+      var detector = null;
+      var scanTimer = null;
+      var ttlTimer = null;
+      var autoTimer = null;
+
+      function openModal(payload) {
+        tokenHidden.value = payload.token || '';
+        codeHidden.value = payload.code || '';
+        if (kioskMode && collaboratorSelect) {
+          var cid = (collaboratorSelect.value || '').trim();
+          var existing = document.getElementById('collaborator-hidden');
+          if (existing) existing.value = cid;
+        }
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        stopAutoRedirect();
+      }
+
+      function closeModal() {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        startAutoRedirect();
+      }
+
+      function onlyDigits(value) {
+        return (value || '').toString().replace(/\D+/g, '');
+      }
+
+      function parseTokenFromValue(value) {
+        if (!value) return '';
+        if (value.indexOf('token=') >= 0) {
+          try {
+            var url = new URL(value);
+            return url.searchParams.get('token') || '';
+          } catch (e) {}
+        }
+        return value;
+      }
+
+      function updateTtl() {
+        var now = Math.floor(Date.now() / 1000);
+        var bucket = Math.floor(now / intervalSeconds) * intervalSeconds;
+        var ttl = Math.max(intervalSeconds - (now - bucket), 0);
+        ttlEl.textContent = String(ttl);
+      }
+
+      function stopCamera() {
+        if (scanTimer) {
+          clearInterval(scanTimer);
+          scanTimer = null;
+        }
+        if (stream) {
+          stream.getTracks().forEach(function (t) {
+            t.stop();
+          });
+          stream = null;
+        }
+        if (video) {
+          video.srcObject = null;
+        }
+      }
+
+      function stopAutoRedirect() {
+        if (autoTimer) {
+          clearTimeout(autoTimer);
+          autoTimer = null;
+        }
+      }
+
+      function startAutoRedirect() {
+        stopAutoRedirect();
+        if (!autoRedirectSeconds || autoRedirectSeconds <= 0) return;
+        if (!nextUrl) return;
+        autoTimer = setTimeout(function () {
+          window.location.href = nextUrl;
+        }, autoRedirectSeconds * 1000);
+      }
+
+      function bumpAutoRedirect() {
+        startAutoRedirect();
+      }
+
+      function startCamera() {
+        stopCamera();
+        bumpAutoRedirect();
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          scanStatus.textContent = 'Câmera não disponível neste dispositivo.';
+          return;
+        }
+        if (!('BarcodeDetector' in window)) {
+          scanStatus.textContent = 'Leitor de QR não suportado. Use o código numérico.';
+          return;
+        }
+        detector = new BarcodeDetector({ formats: ['qr_code'] });
+        navigator.mediaDevices
+          .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+          .then(function (s) {
+            stream = s;
+            video.srcObject = stream;
+            scanStatus.textContent = 'Aponte para o QR Code...';
+            scanTimer = setInterval(scanOnce, 400);
+          })
+          .catch(function () {
+            scanStatus.textContent = 'Não foi possível acessar a câmera.';
+          });
+      }
+
+      function scanOnce() {
+        if (!detector || !video) return;
+        detector
+          .detect(video)
+          .then(function (codes) {
+            if (!codes || !codes.length) return;
+            var raw = codes[0].rawValue || '';
+            var token = parseTokenFromValue(raw);
+            if (!token) return;
+            if (kioskMode && collaboratorSelect) {
+              var cid = (collaboratorSelect.value || '').trim();
+              if (!cid) {
+                scanStatus.textContent = 'Selecione o colaborador.';
+                return;
+              }
+            }
+            scanStatus.textContent = 'QR lido. Confirme.';
+            openModal({ token: token });
+            stopCamera();
+          })
+          .catch(function () {});
+      }
+
+      btnStart.addEventListener('click', startCamera);
+      btnStop.addEventListener('click', stopCamera);
+      codeInput.addEventListener('input', function () {
+        bumpAutoRedirect();
+        if (kioskMode) return;
+        if (!modal.classList.contains('hidden')) return;
+        var digits = onlyDigits(codeInput.value).slice(0, 6);
+        if (digits.length !== 6) {
+          lastAutoCode = '';
+          return;
+        }
+        if (digits === lastAutoCode) return;
+        lastAutoCode = digits;
+        scanStatus.textContent = 'Código informado. Confirme.';
+        openModal({ code: digits });
+      });
+      if (collaboratorSelect) {
+        collaboratorSelect.addEventListener('change', function () {
+          bumpAutoRedirect();
+        });
+      }
+      btnCancel.addEventListener('click', function () {
+        closeModal();
+      });
+
+      btnUseCode.addEventListener('click', function () {
+        bumpAutoRedirect();
+        if (kioskMode && collaboratorSelect) {
+          var cid = (collaboratorSelect.value || '').trim();
+          if (!cid) {
+            scanStatus.textContent = 'Selecione o colaborador.';
+            return;
+          }
+        }
+        var digits = onlyDigits(codeInput.value).slice(0, 6);
+        if (digits.length !== 6) {
+          scanStatus.textContent = 'Digite o código de 6 dígitos.';
+          return;
+        }
+        scanStatus.textContent = 'Código informado. Confirme.';
+        openModal({ code: digits });
+      });
+
+      ttlTimer = setInterval(updateTtl, 500);
+      updateTtl();
+      startAutoRedirect();
+
+      if (tokenFromUrl) {
+        if (kioskMode && collaboratorSelect) {
+          var cid = (collaboratorSelect.value || '').trim();
+          if (!cid) {
+            scanStatus.textContent = 'Selecione o colaborador antes de confirmar.';
+          } else {
+            openModal({ token: tokenFromUrl });
+          }
+        } else {
+          openModal({ token: tokenFromUrl });
+        }
+      }
+    })();
+  </script>
+{% endblock %}

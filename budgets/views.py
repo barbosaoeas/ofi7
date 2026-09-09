@@ -1424,16 +1424,20 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
         return CashMovement.Source.COMPANY
 
     def _base_queryset(self):
-        return WhatsAppFinanceQueueItem.objects.select_related(
-            'budget',
-            'customer',
-            'supplier',
-            'bank_account',
-            'category',
-            'collaborator',
-            'reviewed_by',
-            'confirmed_movement',
-        ).order_by('-created_at', '-id')
+        return (
+            WhatsAppFinanceQueueItem.objects.select_related(
+                'budget',
+                'customer',
+                'supplier',
+                'bank_account',
+                'category',
+                'collaborator',
+                'reviewed_by',
+                'confirmed_movement',
+            )
+            .prefetch_related('attachments')
+            .order_by('-created_at', '-id')
+        )
 
     def _get_review_item(self, request, items):
         raw_id = (request.GET.get('review') or '').strip()
@@ -2286,6 +2290,7 @@ class WorkOrderKanbanTodayView(RoleRequiredMixin, ListView):
         CustomUser.Role.ESTIMATOR,
         CustomUser.Role.OPERATIONAL,
         CustomUser.Role.VISUAL,
+        CustomUser.Role.TVKANBAN,
     )
 
     def _next_workday(self, day):

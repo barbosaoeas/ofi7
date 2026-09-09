@@ -44,6 +44,7 @@ Status de Implementação (07/06/2026)
 - [ ] RF08 - Fluxo de Caixa e Lançamentos Condicionais (Modais)
 - [~] RF09 - Dashboard e Relatórios (comissões + peças OK; dashboard e demais relatórios pendentes)
 - [ ] RF10 - Integração WhatsApp ↔️ Financeiro (UAIZAPI / Evolution API) — LANÇAMENTO POR COMANDO DE VOZ/TEXTO NO ZAP
+- [~] RF11 - Ponto Eletrônico (QR Dinâmico na TV/Monitor)
 
 RF01 - Autenticação Customizada e Nível de Acesso
 
@@ -335,6 +336,55 @@ Regras de Negócio e Segurança:
 Modelos Novos (criar na app budgets / ou app dedicada integrations:
 -   WhatsAppWebhookLog: id, received_at, sender_phone, message_text, audio_transcript, parsed_ok, error_message, cash_movement_id FK (FK para CashMovement), raw_body JSON.
 -   WhatsAppIntegrationConfig: provedor (UAIZAPI/EVOLUTION/META_CLOUD), api_token, webhook_secret, numero_dedicado, active, default_bank_account_id FK (padrão para Pix
+
+RF11 - Ponto Eletrônico (QR Dinâmico na TV/Monitor)
+
+Objetivo: Registrar ponto de entrada/saída com antifraude usando QR Code dinâmico exibido em monitor fixo (TV/PC na oficina). O QR não fica no celular do funcionário.
+
+Escopo / Elegibilidade:
+- Somente colaboradores com:
+  - Collaborator.is_active=True
+  - Collaborator.function ∈ { OPERACIONAL, ORÇAMENTISTA }
+- Demais funções não marcam ponto e não visualizam telas de ponto por URL direta.
+
+Acesso:
+- Tela Visual do QR (TV/Monitor): apenas MANAGER e FINANCE.
+- Registro do ponto (câmera/código): apenas OPERACIONAL e ORÇAMENTISTA ativos.
+
+RF11.1 — Tela Visual (TV/Monitor)
+- URL sugerida: /ponto/visual/
+- Exibir QR Code no canto inferior direito.
+- Exibir um código numérico curto (fallback) junto ao QR para casos em que a câmera falhar.
+- Renovar QR + código automaticamente a cada 5 ou 10 segundos (configurável).
+- Token do QR deve conter timestamp e assinatura para expirar rapidamente e impedir uso por foto.
+
+RF11.2 — Registro de Ponto (Celular do Colaborador)
+- URL sugerida: /ponto/registrar/
+- Ao abrir a tela, exibir câmera para leitura do QR e opção de digitar o código numérico.
+- Se token/código for validado, abrir modal de ponto e registrar o evento.
+- Após registrar, redirecionar para a tela normal do colaborador (Kanban/serviços do dia).
+
+RF11.3 — Fluxo Obrigatório na Manhã (antes do Kanban)
+- No primeiro login do dia, o sistema verifica se já existe ponto de entrada do dia para o colaborador elegível.
+- Se não existir, redireciona obrigatoriamente para /ponto/registrar/ antes de liberar o acesso ao Kanban.
+- Se existir, segue fluxo normal.
+
+RF11.4 — Botão Inteligente no Navbar (Saída)
+- Para colaboradores elegíveis:
+  - Se jornada aberta (tem entrada e não tem saída): botão verde "Registrar Saída".
+  - Se jornada finalizada (já tem saída): botão cinza "Jornada Concluída" (desabilitado).
+- Para não elegíveis: botão não aparece.
+
+RF11.5 — Intervalo (Almoço) — Preparado para o futuro
+- Manter estrutura preparada para almoço (ida/volta), mesmo que inicialmente seja opcional.
+- Permitir no futuro: registro de almoço via QR ou desconto automático de intervalo fixo (configurável).
+
+RF11.6 — Relatórios de Ponto (Gerência/Financeiro)
+- Disponível no dropdown Relatórios (apenas para funções diferentes de Operacional).
+- Permissão: MANAGER / FINANCE.
+- Filtros: mês/ano, colaborador (todos/um) e opcional incluir inativos.
+- Relatório mensal dia a dia: entrada, saída, horas, faltas, atrasos e horas extras.
+- Regra: sábado pode ser considerado hora extra (configurável).
 
 4. Flowchart Mermaid com os Fluxos de UX
 

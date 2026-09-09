@@ -37,6 +37,8 @@ class CustomUser(AbstractUser):
         ESTIMATOR = 'ESTIMATOR', _('Orçamentista')
         OPERATIONAL = 'OPERATIONAL', _('Operacional')
         VISUAL = 'VISUAL', _('Visual')
+        PONTO = 'PONTO', _('Ponto (Totem)')
+        TVKANBAN = 'TVKANBAN', _('TV Kanban')
 
     username = None
     email = models.EmailField(_('email address'), unique=True)
@@ -60,6 +62,8 @@ class Collaborator(models.Model):
         ESTIMATOR = 'ESTIMATOR', _('Orçamentista')
         OPERATIONAL = 'OPERATIONAL', _('Operacional')
         VISUAL = 'VISUAL', _('Visual')
+        PONTO = 'PONTO', _('Ponto (Totem)')
+        TVKANBAN = 'TVKANBAN', _('TV Kanban')
 
     name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True, unique=True)
@@ -89,3 +93,25 @@ class Collaborator(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class TimeClockDay(models.Model):
+    collaborator = models.ForeignKey(Collaborator, on_delete=models.CASCADE, related_name='timeclock_days')
+    date = models.DateField()
+    entry_at = models.DateTimeField(null=True, blank=True)
+    exit_at = models.DateTimeField(null=True, blank=True)
+    lunch_out_at = models.DateTimeField(null=True, blank=True)
+    lunch_in_at = models.DateTimeField(null=True, blank=True)
+    minutes_late = models.IntegerField(default=0)
+    minutes_extra = models.IntegerField(default=0)
+    minutes_missing = models.IntegerField(default=0)
+    minutes_worked = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = (('collaborator', 'date'),)
+        ordering = ('-date', 'collaborator__name', 'id')
+
+    def __str__(self):
+        return f'{self.collaborator} - {self.date}'

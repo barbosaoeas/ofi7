@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Relatório de Ponto | Controle Oficina{% endblock %}
+{% block main_class %}mx-auto max-w-7xl px-4 py-8{% endblock %}
+
+{% block content %}
+  <div class='rounded-3xl border border-[#262626] bg-gradient-to-br from-[#1A1A1A] via-[#161616] to-[#101010] p-6 shadow-2xl'>
+    <div class='flex flex-wrap items-start justify-between gap-4'>
+      <div>
+        <div class='text-xs uppercase tracking-[0.35em] text-[#A3A3A3]'>Relatórios</div>
+        <h1 class='mt-2 text-3xl font-semibold text-[#F5F5F5]'>Ponto</h1>
+        <p class='mt-2 max-w-3xl text-sm text-[#A3A3A3]'>Lista de pontos registrados no mês selecionado.</p>
+      </div>
+      <div class='flex flex-wrap gap-3'>
+        <a href='{% url "core:timeclock_visual" %}' class='rounded-xl border border-[#404040] bg-[#262626] px-4 py-3 text-sm hover:border-[#D4AF37]'>
+          Abrir Visual (TV)
+        </a>
+      </div>
+    </div>
+
+    <form method='get' class='mt-6 grid grid-cols-1 gap-3 md:grid-cols-3'>
+      <div>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]'>Mês</label>
+        <input type='month' name='month' value='{{ selected_month|date:"Y-m" }}' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]' />
+      </div>
+      <div>
+        <label class='mb-1 block text-xs uppercase tracking-wide text-[#A3A3A3]'>Colaborador</label>
+        <select name='collaborator_id' class='w-full rounded-xl border border-[#404040] bg-[#0D0D0D] px-3 py-2.5 text-sm text-[#F5F5F5]'>
+          <option value=''>Todos</option>
+          {% for c in collaborators %}
+            <option value='{{ c.id }}' {% if selected_collaborator_id == c.id|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class='flex items-end justify-end'>
+        <button type='submit' class='w-full rounded-xl bg-gradient-to-r from-[#D4AF37] to-[#AA882C] px-4 py-3 text-sm font-semibold text-[#0D0D0D] md:w-auto'>
+          Filtrar
+        </button>
+      </div>
+    </form>
+
+    <div class='mt-6 grid grid-cols-1 gap-4 md:grid-cols-5'>
+      <div class='rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4'>
+        <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Registros</div>
+        <div class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>{{ days|length }}</div>
+      </div>
+      <div class='rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4'>
+        <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Minutos trabalhados</div>
+        <div class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>{{ total_minutes_worked }}</div>
+      </div>
+      <div class='rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4'>
+        <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Horas trabalhadas</div>
+        <div class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>{{ total_hours_worked }}</div>
+      </div>
+      <div class='rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4'>
+        <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Minutos extra</div>
+        <div class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>{{ total_minutes_extra|default:0 }}</div>
+      </div>
+      <div class='rounded-2xl border border-[#2d2d2d] bg-[#121212]/90 p-4'>
+        <div class='text-xs uppercase tracking-wide text-[#A3A3A3]'>Minutos faltantes</div>
+        <div class='mt-2 text-2xl font-semibold text-[#F5F5F5]'>{{ total_minutes_missing|default:0 }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class='mt-6 overflow-hidden rounded-3xl border border-[#262626] bg-[#161616] shadow-xl'>
+    <table class='w-full text-left text-sm'>
+      <thead class='bg-[#141414] text-[#D4AF37]'>
+        <tr>
+          <th class='px-4 py-3 font-semibold'>Data</th>
+          <th class='px-4 py-3 font-semibold'>Colaborador</th>
+          <th class='px-4 py-3 font-semibold'>Entrada</th>
+          <th class='px-4 py-3 font-semibold'>Saída</th>
+          <th class='px-4 py-3 font-semibold'>Minutos</th>
+          <th class='px-4 py-3 font-semibold'>Atraso</th>
+          <th class='px-4 py-3 font-semibold'>Extra</th>
+          <th class='px-4 py-3 font-semibold'>Faltante</th>
+        </tr>
+      </thead>
+      <tbody class='divide-y divide-[#262626] text-[#F5F5F5]'>
+        {% for d in days %}
+          <tr>
+            <td class='px-4 py-3'>{{ d.date|date:"d/m/Y" }}</td>
+            <td class='px-4 py-3'>{{ d.collaborator.name }}</td>
+            <td class='px-4 py-3'>{% if d.entry_at %}{{ d.entry_at|date:"H:i" }}{% else %}—{% endif %}</td>
+            <td class='px-4 py-3'>{% if d.exit_at %}{{ d.exit_at|date:"H:i" }}{% else %}—{% endif %}</td>
+            <td class='px-4 py-3'>{{ d.minutes_worked|default:0 }}</td>
+            <td class='px-4 py-3'>{{ d.minutes_late|default:0 }}</td>
+            <td class='px-4 py-3'>{{ d.minutes_extra|default:0 }}</td>
+            <td class='px-4 py-3'>{{ d.minutes_missing|default:0 }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan='8' class='px-4 py-8 text-center text-sm text-[#A3A3A3]'>Nenhum ponto registrado no período.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
