@@ -123,6 +123,100 @@ def _is_valid_media_bytes(data_bytes):
     return False, sniffed or ''
 
 
+def _whatsapp_media_app_info(media_type_hint: str, mimetype: str = '') -> bytes:
+    mt = (media_type_hint or '').lower()
+    mime = (mimetype or '').lower()
+    if mt == 'image' or mime.startswith('image/') or mt == 'sticker':
+        return b'WhatsApp Image Keys'
+    if mt == 'video' or mime.startswith('video/'):
+        return b'WhatsApp Video Keys'
+    if mt == 'audio' or mime.startswith('audio/') or mt == 'ptt' or mt == 'voice':
+        return b'WhatsApp Audio Keys'
+    return b'WhatsApp Document Keys'
+
+
+def _hkdf_sha256_expand(ikm: bytes, info: bytes, length: int, salt: bytes = b'') -> bytes:
+    try:
+        from hashlib import sha256
+        import hmac
+        if not salt:
+            salt = b'\x00' * 32
+        prk = hmac.new(salt, ikm, sha256).digest()
+        t = b''
+        output = b''
+        counter = 1
+        while len(output) < length:
+            t = hmac.new(prk, t + info + bytes([counter]), sha256).digest()
+            output += t
+            counter += 1
+        return output[:length]
+    except Exception:
+        return b''
+
+
+def _pkcs7_unpad(data: bytes, block_size: int = 16) -> bytes:
+    if not data or len(data) % block_size != 0:
+        return data
+    pad_len = data[-1]
+    if pad_len < 1 or pad_len > block_size:
+        return data
+    if data[-pad_len:] != bytes([pad_len]) * pad_len:
+        return data
+    return data[:-pad_len]
+
+
+def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = '') -> bytes:
+    if not cipher_bytes or not media_key_b64:
+        return b''
+    try:
+        mk = base64.b64decode(media_key_b64 + '=' * (-len(media_key_b64) % 4))
+    except Exception:
+        return b''
+    if len(mk) < 32:
+        return b''
+    mk = mk[:32]
+    app_info = _whatsapp_media_app_info(media_type_hint, mimetype)
+    expanded = _hkdf_sha256_expand(mk, app_info, 112)
+    if len(expanded) < 112:
+        return b''
+    _iv_ignored = expanded[0:16]
+    cipher_key = expanded[16:48]
+    mac_key = expanded[48:80]
+    stream = cipher_bytes
+    if len(stream) < 16 + 32 + 1:
+        return b''
+    iv = stream[0:16]
+    mac = stream[-32:]
+    body = stream[:-32]
+    try:
+        from hashlib import sha256
+        import hmac
+        expected_mac = hmac.new(mac_key, body, sha256).digest()
+        if not hmac.compare_digest(expected_mac, mac):
+            pass
+    except Exception:
+        pass
+    ciphertext = stream[16:-32]
+    if not ciphertext:
+        return b''
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+        cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        return _pkcs7_unpad(padded, 16)
+    except Exception:
+        pass
+    try:
+        from Crypto.Cipher import AES
+        cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
+        padded = cipher.decrypt(ciphertext)
+        return _pkcs7_unpad(padded, 16)
+    except Exception:
+        return b''
+
+
 def _try_uaizapi_media_endpoints(*, message_data, max_bytes, media_type_hint=''):
     attempts = []
     base_url = str(message_data.get('uaizapi_base_url') or '').strip()
@@ -2144,6 +2238,34 @@ class UaizapiWebhookView(View):
                         attempts_summary.append(f"T0 DIRECT err={msg[:160]}")
                 elif not data:
                     error_parts.append('URL inválida/domínio inesperado.')
+
+                _decrypt_used = False
+                if data and not _is_valid_media_bytes(data[:32])[0] and (is_whatsapp_encrypted or message_data.get('media_key')):
+                    _media_key_b64 = str(message_data.get('media_key') or '').strip()
+                    if _media_key_b64:
+                        try:
+                            _mimetype_orig = str(message_data.get('mimetype') or '').strip()
+                            _decrypted = _decrypt_whatsapp_media(
+                                data, _media_key_b64, media_type_hint, _mimetype_orig
+                            )
+                            if _decrypted and len(_decrypted) >= 16:
+                                _d_ok, _d_sniff = _is_valid_media_bytes(_decrypted[:32])
+                                attempts_summary.append(
+                                    f"TDECRYPT AES bytes={len(_decrypted)} sniffed={_d_sniff or 'n/a'} valid={_d_ok}"
+                                )
+                                if _d_ok:
+                                    data = _decrypted
+                                    sniffed_ct = _d_sniff
+                                    used_source = 'whatsapp_media_decrypt'
+                                    _decrypt_used = True
+                            else:
+                                attempts_summary.append(
+                                    f"TDECRYPT AES bytes_output={len(_decrypted or b'')} (vazio/falha)"
+                                )
+                        except Exception as _dec_e:
+                            attempts_summary.append(
+                                f"TDECRYPT AES err={type(_dec_e).__name__}: {str(_dec_e)[:120]}"
+                            )
 
                 pdf_text = ''
                 if is_pdf and data:

@@ -12,6 +12,30 @@ def setup_django():
     django.setup()
 
 
+def _clean_text(s) -> str:
+    if s is None:
+        return ''
+    v = str(s).strip()
+    if not v:
+        return ''
+    while len(v) >= 2 and v[0] in ('`', '"', "'") and v[-1] == v[0]:
+        v = v[1:-1].strip()
+    v = v.replace('\r', ' ').replace('\n', ' ').strip()
+    return v
+
+
+def _extract_host_base_from_url(url: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        p = urlparse(url)
+        host = (p.hostname or '').lower()
+        if not host:
+            return ''
+        return host
+    except Exception:
+        return ''
+
+
 def sniff(data: bytes) -> str:
     head = (data or b'')[:32]
     if not head:
@@ -34,26 +58,45 @@ def build_candidates(base_url, message_id, media_type_hint='', direct_path='', f
     base = base_url.rstrip('/') if base_url else ''
     out = []
     if base and message_id:
-        standard = [
+        get_first = [
+            ('GET', f'{base}/message/{message_id}', None),
+            ('GET', f'{base}/messages/{message_id}', None),
+            ('GET', f'{base}/chat/message/{message_id}', None),
+            ('GET', f'{base}/chat/messages/{message_id}', None),
+            ('GET', f'{base}/message/get/{message_id}', None),
+            ('GET', f'{base}/message?messageId={message_id}', None),
+            ('GET', f'{base}/chat?messageId={message_id}', None),
+            ('GET', f'{base}/chat/messages/get?messageId={message_id}', None),
+            ('GET', f'{base}/instance/message/{message_id}', None),
+            ('GET', f'{base}/message/{message_id}/download', None),
+            ('GET', f'{base}/download/message/{message_id}', None),
+            ('GET', f'{base}/chat/message/{message_id}/download', None),
+            ('GET', f'{base}/media/download/{message_id}', None),
+            ('GET', f'{base}/instance/message/{message_id}/media', None),
+        ]
+        for method, url, body in get_first:
+            out.append({'method': method, 'url': url, 'body': body, 'note': 'getmsg'})
+        standard_post = [
             ('POST', f'{base}/message/mdownloadMedia', {'messageId': message_id}),
             ('POST', f'{base}/chat/download', {'messageId': message_id}),
             ('POST', f'{base}/chat/media/download', {'messageId': message_id}),
             ('POST', f'{base}/media/message', {'messageId': message_id}),
             ('POST', f'{base}/download/message', {'messageId': message_id}),
-            ('GET', f'{base}/message/{message_id}/download', None),
-            ('GET', f'{base}/download/message/{message_id}', None),
-            ('GET', f'{base}/chat/message/{message_id}/download', None),
-            ('GET', f'{base}/media/download/{message_id}', None),
         ]
-        for method, url, body in standard:
-            out.append({'method': method, 'url': url, 'body': body, 'note': 'standard'})
+        for method, url, body in standard_post:
+            out.append({'method': method, 'url': url, 'body': body, 'note': 'postmedia'})
         variants = [
             ('POST', f'{base}/message/media', {'id': message_id}),
             ('POST', f'{base}/message/get', {'id': message_id}),
             ('POST', f'{base}/chat/message/get', {'id': message_id}),
             ('POST', f'{base}/instance/message/{message_id}/media', {}),
-            ('GET', f'{base}/instance/message/{message_id}/media', None),
         ]
+        if chat_id:
+            variants += [
+                ('POST', f'{base}/chat/messages', {'chatId': chat_id, 'ids': [message_id]}),
+                ('POST', f'{base}/chat/messages', {'chat_id': chat_id, 'ids': [message_id]}),
+                ('GET', f'{base}/chat/messages?chatId={chat_id}&ids={message_id}', None),
+            ]
         if media_type_hint:
             variants += [
                 ('POST', f'{base}/{media_type_hint}/download', {'messageId': message_id}),
@@ -72,8 +115,66 @@ def build_candidates(base_url, message_id, media_type_hint='', direct_path='', f
     return out
 
 
-def http_call(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024):
-    import urllib.request
+def _parse_json_body(resp_bytes: bytes):
+    try:
+        return json.loads(resp_bytes.decode('utf-8', errors='replace'))
+    except Exception:
+        return None
+
+
+def _find_media_candidates_in_json(j):
+    out = {'urls': [], 'datauris': []}
+    if isinstance(j, dict):
+        for k, v in j.items():
+            kl = (k or '').lower()
+            if isinstance(v, str):
+                if kl in ('url', 'downloadurl', 'mediaurl', 'media_url', 'download_url',
+                           'fileurl', 'file_url', 'direct_url', 'link', 'href', 'attachment'):
+                    if v.startswith('http') or v.startswith('/'):
+                        out['urls'].append(v)
+                    elif v.startswith('data:') and ';base64,' in v:
+                        out['datauris'].append(v)
+                elif 'data:' in v and ';base64,' in v:
+                    try:
+                        i = v.index('data:')
+                        out['datauris'].append(v[i:].split('"')[0].split("'")[0].split()[0])
+                    except Exception:
+                        pass
+            else:
+                sub = _find_media_candidates_in_json(v)
+                out['urls'].extend(sub['urls'])
+                out['datauris'].extend(sub['datauris'])
+    elif isinstance(j, list):
+        for item in j:
+            sub = _find_media_candidates_in_json(item)
+            out['urls'].extend(sub['urls'])
+            out['datauris'].extend(sub['datauris'])
+    return out
+
+
+def _resolve_media_bytes(candidate_url_or_datauri, headers, base_url='', timeout=20, max_bytes=10 * 1024 * 1024):
+    if candidate_url_or_datauri.startswith('data:') and ';base64,' in candidate_url_or_datauri:
+        try:
+            import base64
+            head = candidate_url_or_datauri.split(',', 1)[1]
+            bin_ = base64.b64decode(head + ('=' * (-len(head) % 4)))
+            return {
+                'status': 200,
+                'content_type': 'data-uri',
+                'bytes': len(bin_),
+                'head_hex': (bin_[:16] or b'').hex(),
+                'sniffed': sniff(bin_[:32]),
+                'preview_txt': (bin_[:200] or b'').decode('utf-8', errors='ignore').replace('\x00', ''),
+                'ok': sniff(bin_[:32]) in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp'),
+            }
+        except Exception as ee:
+            return {'status': None, 'error': f'base64: {type(ee).__name__}: {ee}', 'ok': False}
+    if candidate_url_or_datauri.startswith('/') and base_url:
+        candidate_url_or_datauri = base_url.rstrip('/') + candidate_url_or_datauri
+    return http_call_raw('GET', candidate_url_or_datauri, headers, body=None, timeout=timeout, max_bytes=max_bytes)
+
+
+def http_call_raw(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024):
     import urllib.error
     try:
         data = None
@@ -117,6 +218,193 @@ def http_call(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 *
         return {'status': None, 'error': f'{type(e).__name__}: {e}', 'ok': False}
 
 
+def http_call(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024):
+    import copy
+    base_r = http_call_raw(method, url, headers, body=body, timeout=timeout, max_bytes=max_bytes)
+    r = dict(base_r)
+    r['json_follow'] = []
+    r['json_datauri'] = []
+    if not r.get('ok') and r.get('status') and 200 <= int(r['status']) < 300:
+        try:
+            import base64
+            head_hex = r.get('head_hex') or ''
+            first_bytes = bytes.fromhex(head_hex) if head_hex and len(head_hex) >= 2 else b''
+            if first_bytes[:1] in (b'{', b'['):
+                payload = base_r.get('head_hex')  # we only stored up to 16 bytes in raw, cannot trust for full JSON
+        except Exception:
+            pass
+        j = None
+        try:
+            sample_preview = r.get('preview_txt') or ''
+            if sample_preview.lstrip().startswith('{') or sample_preview.lstrip().startswith('['):
+                j = _parse_json_body(bytes.fromhex(r.get('head_hex') or ''))  # too short; will likely fail
+        except Exception:
+            j = None
+        if j is None:
+            r['json_parse_note'] = 'sample too short'
+            return r
+    return r
+
+
+def _whatsapp_media_app_info_probe(media_type_hint: str, mimetype: str = '') -> bytes:
+    mt = (media_type_hint or '').lower()
+    mime = (mimetype or '').lower()
+    if mt == 'image' or mime.startswith('image/') or mt == 'sticker':
+        return b'WhatsApp Image Keys'
+    if mt == 'video' or mime.startswith('video/'):
+        return b'WhatsApp Video Keys'
+    if mt == 'audio' or mime.startswith('audio/') or mt == 'ptt' or mt == 'voice':
+        return b'WhatsApp Audio Keys'
+    return b'WhatsApp Document Keys'
+
+
+def _hkdf_sha256_expand_probe(ikm: bytes, info: bytes, length: int, salt: bytes = b'') -> bytes:
+    try:
+        from hashlib import sha256
+        import hmac
+        if not salt:
+            salt = b'\x00' * 32
+        prk = hmac.new(salt, ikm, sha256).digest()
+        t = b''
+        output = b''
+        counter = 1
+        while len(output) < length:
+            t = hmac.new(prk, t + info + bytes([counter]), sha256).digest()
+            output += t
+            counter += 1
+        return output[:length]
+    except Exception:
+        return b''
+
+
+def _pkcs7_unpad_probe(data: bytes, block_size: int = 16) -> bytes:
+    if not data or len(data) % block_size != 0:
+        return data
+    pad_len = data[-1]
+    if pad_len < 1 or pad_len > block_size:
+        return data
+    if data[-pad_len:] != bytes([pad_len]) * pad_len:
+        return data
+    return data[:-pad_len]
+
+
+def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = '') -> bytes:
+    if not cipher_bytes or not media_key_b64:
+        return b''
+    import base64 as _b64
+    try:
+        mk = _b64.b64decode(media_key_b64 + '=' * (-len(media_key_b64) % 4))
+    except Exception:
+        return b''
+    if len(mk) < 32:
+        return b''
+    mk = mk[:32]
+    app_info = _whatsapp_media_app_info_probe(media_type_hint, mimetype)
+    expanded = _hkdf_sha256_expand_probe(mk, app_info, 112)
+    if len(expanded) < 112:
+        return b''
+    cipher_key = expanded[16:48]
+    mac_key = expanded[48:80]
+    stream = cipher_bytes
+    if len(stream) < 16 + 32 + 1:
+        return b''
+    iv = stream[0:16]
+    ciphertext = stream[16:-32]
+    if not ciphertext:
+        return b''
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+        cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        return _pkcs7_unpad_probe(padded, 16)
+    except Exception:
+        pass
+    try:
+        from Crypto.Cipher import AES
+        cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
+        padded = cipher.decrypt(ciphertext)
+        return _pkcs7_unpad_probe(padded, 16)
+    except Exception:
+        return b''
+
+
+def http_call_with_json_follow(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024, base_url=''):
+    import urllib.error
+    data = None
+    hdrs = dict(headers)
+    if method.upper() == 'POST' and body is not None:
+        data = json.dumps(body).encode('utf-8')
+        hdrs['Content-Type'] = 'application/json'
+    hdrs['Accept'] = 'application/octet-stream, application/pdf, image/*, application/json'
+    try:
+        req = urllib.request.Request(url, data=data, headers=hdrs, method=method.upper())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, 'status', 200)
+            ct = (resp.headers.get('Content-Type') or '').strip()
+            payload = resp.read(max_bytes + 1)
+    except urllib.error.HTTPError as e:
+        payload = b''
+        try:
+            payload = e.read(max_bytes) or b''
+        except Exception:
+            payload = b''
+        status = getattr(e, 'code', None)
+        ct = (e.headers.get('Content-Type') or '').strip() if getattr(e, 'headers', None) else ''
+    except Exception as e:
+        return {
+            'status': None,
+            'content_type': '',
+            'bytes': 0,
+            'head_hex': '',
+            'sniffed': '',
+            'preview_txt': '',
+            'ok': False,
+            'error': f'{type(e).__name__}: {e}',
+            'json_follow': [],
+            'json_datauri': [],
+        }
+    payload = payload or b''
+    sn = sniff(payload[:32])
+    is_json_resp = (
+        ('json' in (ct or '').lower())
+        or ((payload[:1] or b'') in (b'{', b'['))
+        or (((payload[:200] or b'').decode('utf-8', errors='ignore').lstrip().startswith(('{', '['))))
+    )
+    ok = bool(status) and 200 <= int(status) < 300 and sn in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+    preview_txt = (payload[:500] or b'').decode('utf-8', errors='ignore').replace('\x00', '')
+    r = {
+        'status': status,
+        'content_type': ct,
+        'bytes': len(payload),
+        'head_hex': (payload[:16] or b'').hex(),
+        'sniffed': sn,
+        'preview_txt': preview_txt,
+        'ok': ok,
+        'json_follow': [],
+        'json_datauri': [],
+    }
+    if is_json_resp:
+        j = _parse_json_body(payload)
+        found = _find_media_candidates_in_json(j)
+        r['json_found_urls'] = found['urls'][:5]
+        r['json_found_datauri_count'] = len(found['datauris'])
+        for m in found['urls'][:2]:
+            f = _resolve_media_bytes(m, headers, base_url=base_url, timeout=timeout, max_bytes=max_bytes)
+            r['json_follow'].append({**f, 'src': m})
+            if f.get('ok'):
+                r['ok'] = True
+                break
+        for m in found['datauris'][:1]:
+            f = _resolve_media_bytes(m, headers, base_url=base_url, timeout=timeout, max_bytes=max_bytes)
+            r['json_datauri'].append({**f})
+            if f.get('ok'):
+                r['ok'] = True
+                break
+    return r
+
+
 def main():
     parser = argparse.ArgumentParser(description='Sonda para descobrir endpoint correto de download de midia UAZAPI.')
     parser.add_argument('--base-url', default='', help='Base URL da instancia UAZAPI. Ex: https://ofii7.uazapi.com')
@@ -130,6 +418,8 @@ def main():
     parser.add_argument('--chat-id', default='', help='chat_id (opcional).')
     parser.add_argument('--out', default='', help='Caminho para salvar resultado em JSON.')
     parser.add_argument('--save-ok', default='', help='Pasta para salvar binarios quando a sonda der OK (opcional).')
+    parser.add_argument('--media-key', default='', help='mediaKey (base64) para fallback de descriptografia WhatsApp.')
+    parser.add_argument('--mimetype', default='', help='mimetype original do payload (ex: image/jpeg).')
     args = parser.parse_args()
 
     base_url = (args.base_url or '').strip()
@@ -140,6 +430,8 @@ def main():
     direct_path = (args.direct_path or '').strip()
     file_url = (args.file_url or '').strip()
     chat_id = (args.chat_id or '').strip()
+    media_key = (args.media_key or '').strip()
+    mimetype_orig = (args.mimetype or '').strip()
 
     setup_django()
     from django.conf import settings
@@ -179,26 +471,48 @@ def main():
                 if not chat_id:
                     chat_id = str(msg.get('chatid') or (raw.get('chat') or {}).get('wa_chatid') or '').strip()
                 mime = str(content.get('mimetype') or '').lower()
+                if not mimetype_orig:
+                    mimetype_orig = mime
+                if not media_key:
+                    media_key = str(content.get('mediaKey') or '').strip()
                 if not media_type:
                     if mime.startswith('image/'):
                         media_type = 'image'
                     elif mime == 'application/pdf':
                         media_type = 'pdf'
+    base_url = _clean_text(base_url)
+    instance = _clean_text(instance)
+    direct_path = _clean_text(direct_path)
+    file_url = _clean_text(file_url)
+    message_id = _clean_text(message_id)
+    chat_id = _clean_text(chat_id)
+    media_key = _clean_text(media_key)
+    if not base_url and file_url:
+        host = _extract_host_base_from_url(file_url)
     candidates = build_candidates(base_url, message_id, media_type, direct_path, file_url, chat_id)
 
+    host_sub = ''
+    if base_url:
+        host = _extract_host_base_from_url(base_url) or ''
+        if host:
+            parts = host.split('.')
+            if len(parts) >= 3:
+                host_sub = parts[0]
     headers = {
         'User-Agent': 'ofi7-probe/1.0',
     }
     if token:
         headers['apikey'] = token
         headers['Authorization'] = f'Bearer {token}'
-    if instance:
-        headers['X-UAIZAPI-Instance'] = instance
+    used_instance = _clean_text(instance) or host_sub
+    if used_instance:
+        headers['X-UAIZAPI-Instance'] = used_instance
 
     results = []
     ok_ids = []
+    last_direct_raw = b''
     for idx, c in enumerate(candidates, start=1):
-        res = http_call(c['method'], c['url'], headers, body=c.get('body'))
+        res = http_call_with_json_follow(c['method'], c['url'], headers, body=c.get('body'), base_url=base_url)
         entry = {
             'id': idx,
             'method': c['method'],
@@ -209,17 +523,56 @@ def main():
         results.append(entry)
         if entry.get('ok'):
             ok_ids.append(idx)
+        if c.get('note') == 'directUrl' and entry.get('bytes', 0) > 0 and not entry.get('ok'):
+            try:
+                import urllib.request as _u
+                hdrs2 = dict(headers)
+                hdrs2['Accept'] = 'application/octet-stream, */*'
+                req2 = _u.Request(c['url'], headers=hdrs2, method='GET')
+                with _u.urlopen(req2, timeout=20) as resp2:
+                    last_direct_raw = resp2.read(20 * 1024 * 1024 + 1)
+            except Exception:
+                last_direct_raw = b''
+
+    if media_key and (not ok_ids) and last_direct_raw:
+        dec_bytes = _decrypt_whatsapp_media_probe(last_direct_raw, media_key, media_type, mimetype_orig)
+        dec_sniff = sniff(dec_bytes[:32]) if dec_bytes else ''
+        dec_ok = dec_sniff in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+        dec_id = len(results) + 1
+        dec_entry = {
+            'id': dec_id,
+            'method': 'AES',
+            'url': 'whatsapp://media-decrypt',
+            'note': 'decrypt_fallback',
+            'status': 200 if dec_bytes else None,
+            'content_type': dec_sniff or ('application/octet-stream' if dec_bytes else ''),
+            'bytes': len(dec_bytes or b''),
+            'head_hex': (dec_bytes[:16] or b'').hex(),
+            'sniffed': dec_sniff,
+            'preview_txt': (dec_bytes[:200] or b'').decode('utf-8', errors='ignore').replace('\x00', ''),
+            'ok': dec_ok,
+            'json_follow': [],
+            'json_datauri': [],
+            'decrypt_media_key_set': True,
+            'decrypt_raw_len': len(last_direct_raw),
+        }
+        results.append(dec_entry)
+        if dec_ok:
+            ok_ids.append(dec_id)
 
     out = {
         'probe': {
             'base_url': base_url,
-            'instance': instance,
+            'instance': used_instance,
+            'instance_from_payload': _clean_text(instance),
             'token_set': bool(token),
             'message_id': message_id,
             'media_type': media_type,
             'direct_path': direct_path,
             'chat_id': chat_id,
             'queue_item_id': args.queue_item_id or None,
+            'media_key_set': bool(media_key),
+            'mimetype_orig': mimetype_orig,
         },
         'ok_ids': ok_ids,
         'results': results,
