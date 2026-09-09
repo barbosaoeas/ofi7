@@ -1669,12 +1669,56 @@ class FinanceWhatsappAttachmentView(RoleRequiredMixin, View):
         except Exception:
             raise Http404('Arquivo não encontrado.')
 
-        content_type = (att.mimetype or '').strip() or (guess_type(att.file.name or '')[0] or '')
+        head = b''
+        try:
+            head = f.read(32) or b''
+            try:
+                f.seek(0)
+            except Exception:
+                pass
+        except Exception:
+            head = b''
+
+        guessed = (guess_type(att.file.name or '')[0] or '').strip()
+        stored = (att.mimetype or '').strip()
+        content_type = stored or guessed
+
+        sniffed = ''
+        if head.startswith(b'%PDF'):
+            sniffed = 'application/pdf'
+        elif head.startswith(b'\xFF\xD8\xFF'):
+            sniffed = 'image/jpeg'
+        elif head.startswith(b'\x89PNG\r\n\x1a\n'):
+            sniffed = 'image/png'
+        elif head[:4] == b'RIFF' and head[8:12] == b'WEBP':
+            sniffed = 'image/webp'
+        if sniffed:
+            content_type = sniffed
+
         if not content_type:
             content_type = 'application/octet-stream'
 
         filename = (att.original_name or '').strip() or os.path.basename(att.file.name or 'arquivo')
         disposition = 'attachment' if (request.GET.get('download') or '').strip() == '1' else 'inline'
+
+        if (request.GET.get('debug') or '').strip() == '1':
+            try:
+                size = int(getattr(att.file, 'size', 0) or 0)
+            except Exception:
+                size = 0
+            return JsonResponse(
+                {
+                    'id': att.id,
+                    'queue_item_id': getattr(att, 'queue_item_id', None),
+                    'stored_mimetype': stored,
+                    'guessed_mimetype': guessed,
+                    'sniffed_mimetype': sniffed,
+                    'response_mimetype': content_type,
+                    'size_bytes': size,
+                    'head_hex': head[:16].hex(),
+                    'file_name': filename,
+                }
+            )
 
         resp = FileResponse(f, content_type=content_type)
         safe_ascii = filename.encode('ascii', errors='ignore').decode('ascii') or 'arquivo'
