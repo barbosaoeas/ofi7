@@ -332,6 +332,7 @@ def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media
 
 def http_call_with_json_follow(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024, base_url=''):
     import urllib.error
+    import traceback
     data = None
     hdrs = dict(headers)
     if method.upper() == 'POST' and body is not None:
@@ -353,6 +354,7 @@ def http_call_with_json_follow(method, url, headers, body=None, timeout=20, max_
         status = getattr(e, 'code', None)
         ct = (e.headers.get('Content-Type') or '').strip() if getattr(e, 'headers', None) else ''
     except Exception as e:
+        tb = traceback.format_exc(limit=3)
         return {
             'status': None,
             'content_type': '',
@@ -362,6 +364,7 @@ def http_call_with_json_follow(method, url, headers, body=None, timeout=20, max_
             'preview_txt': '',
             'ok': False,
             'error': f'{type(e).__name__}: {e}',
+            'error_trace': tb,
             'json_follow': [],
             'json_datauri': [],
         }
@@ -480,13 +483,16 @@ def main():
                         media_type = 'image'
                     elif mime == 'application/pdf':
                         media_type = 'pdf'
+
     base_url = _clean_text(base_url)
+    token = _clean_text(token)
     instance = _clean_text(instance)
     direct_path = _clean_text(direct_path)
     file_url = _clean_text(file_url)
     message_id = _clean_text(message_id)
     chat_id = _clean_text(chat_id)
     media_key = _clean_text(media_key)
+    mimetype_orig = _clean_text(mimetype_orig)
     if not base_url and file_url:
         host = _extract_host_base_from_url(file_url)
     candidates = build_candidates(base_url, message_id, media_type, direct_path, file_url, chat_id)
@@ -520,19 +526,24 @@ def main():
             'note': c.get('note') or '',
             **res,
         }
+        if res.get('error'):
+            entry['error'] = res['error']
+        if res.get('error_trace'):
+            entry['error_trace'] = res['error_trace']
         results.append(entry)
         if entry.get('ok'):
             ok_ids.append(idx)
-        if c.get('note') == 'directUrl' and entry.get('bytes', 0) > 0 and not entry.get('ok'):
+        if c.get('note') == 'directUrl':
             try:
                 import urllib.request as _u
-                hdrs2 = dict(headers)
-                hdrs2['Accept'] = 'application/octet-stream, */*'
+                hdrs2 = {'User-Agent': 'WhatsApp/2.24.25.82 Android/14', 'Accept': '*/*'}
                 req2 = _u.Request(c['url'], headers=hdrs2, method='GET')
-                with _u.urlopen(req2, timeout=20) as resp2:
+                with _u.urlopen(req2, timeout=30) as resp2:
                     last_direct_raw = resp2.read(20 * 1024 * 1024 + 1)
-            except Exception:
+            except Exception as dle:
                 last_direct_raw = b''
+                if not entry.get('error'):
+                    entry['error'] = f'directRaw {type(dle).__name__}: {dle}'
 
     if media_key and (not ok_ids) and last_direct_raw:
         dec_bytes = _decrypt_whatsapp_media_probe(last_direct_raw, media_key, media_type, mimetype_orig)
