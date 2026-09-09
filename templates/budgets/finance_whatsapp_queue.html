@@ -312,6 +312,7 @@
       else bind();
     })();
   </script>
+  <script src='https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js'></script>
   <script>
     (function () {
       var preview = document.getElementById('attachment-preview');
@@ -356,6 +357,7 @@
             var headerCt = (data.res.headers.get('Content-Type') || '').toLowerCase();
             var mt = (mimetype || '').toLowerCase();
             var ct = headerCt || mt;
+            var size = data.blob && typeof data.blob.size === 'number' ? data.blob.size : 0;
 
             if (ct.indexOf('text/html') >= 0) {
               preview.innerHTML =
@@ -369,11 +371,50 @@
             preview.innerHTML = '';
 
             if (ct.indexOf('pdf') >= 0) {
-              var iframe = document.createElement('iframe');
-              iframe.src = currentObjectUrl;
-              iframe.className = 'h-full w-full bg-black';
-              iframe.setAttribute('loading', 'lazy');
-              preview.appendChild(iframe);
+              var hasPdfJs = typeof window.pdfjsLib !== 'undefined' && window.pdfjsLib;
+              if (!hasPdfJs) {
+                var iframe = document.createElement('iframe');
+                iframe.src = currentObjectUrl;
+                iframe.className = 'h-full w-full bg-black';
+                iframe.setAttribute('loading', 'lazy');
+                preview.appendChild(iframe);
+                return;
+              }
+
+              window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js';
+
+              data.blob
+                .arrayBuffer()
+                .then(function (buf) {
+                  return window.pdfjsLib.getDocument({ data: buf }).promise;
+                })
+                .then(function (pdf) {
+                  return pdf.getPage(1);
+                })
+                .then(function (page) {
+                  var canvas = document.createElement('canvas');
+                  var ctx = canvas.getContext('2d');
+                  var viewport = page.getViewport({ scale: 1 });
+                  var maxW = preview.clientWidth || 300;
+                  var maxH = preview.clientHeight || 180;
+                  var scale = Math.min(maxW / viewport.width, maxH / viewport.height);
+                  if (!scale || scale <= 0) scale = 1;
+                  viewport = page.getViewport({ scale: scale });
+                  canvas.width = viewport.width;
+                  canvas.height = viewport.height;
+                  canvas.className = 'rounded-2xl border border-[#262626] bg-black';
+                  preview.appendChild(canvas);
+                  return page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                })
+                .catch(function (e) {
+                  preview.innerHTML =
+                    '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar PDF no preview. Tamanho: ' +
+                    size +
+                    ' bytes. Use Baixar. (' +
+                    String(e || 'erro') +
+                    ')</div>';
+                });
               return;
             }
 
@@ -382,6 +423,12 @@
               img.src = currentObjectUrl;
               img.className = 'h-full w-full object-contain';
               img.alt = name || 'Comprovante';
+              img.addEventListener('error', function () {
+                preview.innerHTML =
+                  '<div class="p-3 text-xs text-[#A3A3A3]">Falha ao renderizar imagem no preview. Tamanho: ' +
+                  size +
+                  ' bytes. Use Baixar.</div>';
+              });
               preview.appendChild(img);
               return;
             }
