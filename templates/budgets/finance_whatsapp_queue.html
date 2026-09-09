@@ -336,12 +336,20 @@
           iframe.src = url;
           iframe.className = 'h-full w-full bg-black';
           iframe.setAttribute('loading', 'lazy');
+          iframe.addEventListener('error', function () {
+            preview.innerHTML =
+              '<div class=\"p-3 text-xs text-[#A3A3A3]\">Falha ao carregar o PDF no preview. Use Baixar.</div>';
+          });
           preview.appendChild(iframe);
         } else {
           var img = document.createElement('img');
           img.src = url;
           img.className = 'h-full w-full object-contain';
           img.alt = name || 'Comprovante';
+          img.addEventListener('error', function () {
+            preview.innerHTML =
+              '<div class=\"p-3 text-xs text-[#A3A3A3]\">Falha ao carregar a imagem no preview. Use Abrir em nova guia ou Baixar.</div>';
+          });
           preview.appendChild(img);
         }
       }

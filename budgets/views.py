@@ -1677,7 +1677,10 @@ class FinanceWhatsappAttachmentView(RoleRequiredMixin, View):
         disposition = 'attachment' if (request.GET.get('download') or '').strip() == '1' else 'inline'
 
         resp = FileResponse(f, content_type=content_type)
-        resp['Content-Disposition'] = f"{disposition}; filename*=UTF-8''{quote(filename)}"
+        safe_ascii = filename.encode('ascii', errors='ignore').decode('ascii') or 'arquivo'
+        resp['Content-Disposition'] = f'{disposition}; filename="{safe_ascii}"; filename*=UTF-8\'\'{quote(filename)}'
+        resp['X-Frame-Options'] = 'SAMEORIGIN'
+        resp['Cache-Control'] = 'no-store'
         return resp
 
 
