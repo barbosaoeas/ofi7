@@ -18,7 +18,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, Q
 from django.db.models.deletion import ProtectedError
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -44,6 +44,7 @@ from .models import (
     ServiceCatalog,
     Supplier,
     ThirdPartyService,
+    WhatsAppFinanceQueueAttachment,
     WhatsAppFinanceQueueItem,
     WhatsAppWebhookLog,
     WorkOrder,
@@ -1650,6 +1651,34 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
 
         messages.error(request, 'Ação inválida para a fila do WhatsApp.')
         return redirect(f'{redirect_to}?review={item.id}')
+
+
+class FinanceWhatsappAttachmentView(RoleRequiredMixin, View):
+    allowed_roles = (CustomUser.Role.MANAGER, CustomUser.Role.FINANCE)
+
+    def get(self, request, pk):
+        from mimetypes import guess_type
+        from urllib.parse import quote
+
+        att = WhatsAppFinanceQueueAttachment.objects.filter(pk=pk).first()
+        if att is None or not getattr(att, 'file', None):
+            raise Http404('Arquivo não encontrado.')
+
+        try:
+            f = att.file.open('rb')
+        except Exception:
+            raise Http404('Arquivo não encontrado.')
+
+        content_type = (att.mimetype or '').strip() or (guess_type(att.file.name or '')[0] or '')
+        if not content_type:
+            content_type = 'application/octet-stream'
+
+        filename = (att.original_name or '').strip() or os.path.basename(att.file.name or 'arquivo')
+        disposition = 'attachment' if (request.GET.get('download') or '').strip() == '1' else 'inline'
+
+        resp = FileResponse(f, content_type=content_type)
+        resp['Content-Disposition'] = f"{disposition}; filename*=UTF-8''{quote(filename)}"
+        return resp
 
 
 @method_decorator(csrf_exempt, name='dispatch')

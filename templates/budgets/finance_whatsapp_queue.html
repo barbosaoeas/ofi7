@@ -146,7 +146,7 @@
                   {% for att in attachments %}
                     <button
                       type='button'
-                      data-preview-attachment='{{ att.file.url }}'
+                      data-preview-attachment='{% url "budgets:finance_whatsapp_attachment" att.id %}'
                       data-preview-mimetype='{{ att.mimetype|default:"" }}'
                       data-preview-name='{{ att.original_name|default:"" }}'
                       class='rounded-xl border border-[#404040] bg-[#1A1A1A] px-3 py-2 text-xs hover:border-[#D4AF37]'
@@ -324,7 +324,7 @@
         if (!url) return;
         preview.innerHTML = '';
         openLink.href = url;
-        downloadLink.href = url;
+        downloadLink.href = url + '?download=1';
         if (name) {
           openLink.setAttribute('aria-label', 'Abrir ' + name);
           downloadLink.setAttribute('aria-label', 'Baixar ' + name);
