@@ -192,6 +192,19 @@
           {% endif %}
         {% endwith %}
 
+        {% if review_item and review_item.review_notes %}
+          {% with notes=review_item.review_notes|stringformat:"s" %}
+            {% if "ANEXO_OK:" in notes %}
+              <div class='mt-4 rounded-2xl border border-[#3f2b0b] bg-[#1a1208]/90 p-4'>
+                <div class='mb-2 flex flex-wrap items-center justify-between gap-2'>
+                  <div class='text-xs uppercase tracking-wide text-[#D4AF37] font-semibold'>Status do Anexo</div>
+                </div>
+                <div id='attachment-status' class='whitespace-pre-wrap break-words text-[11px] leading-relaxed text-[#E5E7EB] font-mono'></div>
+              </div>
+            {% endif %}
+          {% endwith %}
+        {% endif %}
+
         <form method='post' class='mt-4 space-y-3'>
           {% csrf_token %}
           <input type='hidden' name='item_id' value='{{ review_item.id }}' />
@@ -502,6 +515,19 @@
           );
         });
       });
+
+      (function renderAttachmentStatus() {
+        var target = document.getElementById('attachment-status');
+        var notesEl = document.querySelector('textarea[name="review_notes"]');
+        if (!target || !notesEl) return;
+        var notes = String(notesEl.value || '');
+        var idx = notes.indexOf('ANEXO_OK:');
+        if (idx < 0) { target.parentElement.style.display = 'none'; return; }
+        target.parentElement.style.display = '';
+        var tail = notes.substring(idx);
+        var targetText = tail.split('\n\n')[0] || tail;
+        target.textContent = targetText;
+      })();
     })();
   </script>
 {% endblock %}

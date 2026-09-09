@@ -73,6 +73,136 @@ def _sniff_mimetype(data_bytes: bytes) -> str:
     return ''
 
 
+def _build_uaizapi_auth_headers(*, base_url='', message_data=None, settings_fallback=True):
+    md = message_data or {}
+    headers = {'User-Agent': 'ofi7-webhook/1.0'}
+    token = ''
+    api_key = ''
+    instance = ''
+
+    token = str(md.get('uaizapi_token') or '').strip()
+    instance = str(md.get('uaizapi_instance_name') or '').strip()
+    if not instance:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url or '')
+            host = (parsed.hostname or '').lower()
+            if host and '.uazapi.com' in host:
+                parts = host.split('.')
+                if parts:
+                    candidate = parts[0].strip()
+                    if candidate and candidate != 'www':
+                        instance = candidate
+        except Exception:
+            instance = ''
+
+    if settings_fallback:
+        if not token:
+            token = str(getattr(settings, 'UAIZAPI_API_KEY', '') or '').strip()
+        if not token:
+            token = str(getattr(settings, 'UAIZAPI_DOWNLOAD_TOKEN', '') or '').strip()
+        if not token:
+            token = str(getattr(settings, 'UAIZAPI_WEBHOOK_TOKEN', '') or '').strip()
+        if not instance:
+            instance = str(getattr(settings, 'UAIZAPI_INSTANCE', '') or '').strip()
+
+    if instance:
+        headers['X-UAIZAPI-Instance'] = instance
+    if token:
+        headers['apikey'] = token
+        headers['Authorization'] = f'Bearer {token}'
+    return headers, {'instance': instance, 'token': bool(token), 'base_url': base_url}
+
+
+def _is_valid_media_bytes(data_bytes):
+    if not data_bytes:
+        return False, ''
+    sniffed = _sniff_mimetype(data_bytes)
+    if sniffed in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp'):
+        return True, sniffed
+    return False, sniffed or ''
+
+
+def _try_uaizapi_media_endpoints(*, message_data, max_bytes, media_type_hint=''):
+    attempts = []
+    base_url = str(message_data.get('uaizapi_base_url') or '').strip()
+    external_message_id = str(message_data.get('external_message_id') or '').strip()
+    if not base_url or not external_message_id:
+        return None, attempts
+
+    headers, _auth_info = _build_uaizapi_auth_headers(base_url=base_url, message_data=message_data)
+
+    def post_json(url, body):
+        try:
+            from urllib.request import Request, urlopen
+            req_body = json.dumps(body).encode('utf-8')
+            hdrs = dict(headers)
+            hdrs['Content-Type'] = 'application/json'
+            hdrs['Accept'] = 'application/octet-stream, application/pdf, image/*, application/json'
+            req = Request(url, data=req_body, headers=hdrs, method='POST')
+            try:
+                with urlopen(req, timeout=15) as resp:
+                    status = getattr(resp, 'status', 200)
+                    data = resp.read(max_bytes + 1)
+                    return status, data, ''
+            except urllib.error.HTTPError as e:
+                status = getattr(e, 'code', None)
+                try:
+                    tmp = e.read(4096) or b''
+                except Exception:
+                    tmp = b''
+                return status, b'', tmp[:1000].decode('utf-8', errors='ignore').strip()
+        except Exception as e:
+            return None, b'', f'{type(e).__name__}: {e}'
+
+    def get_binary(url):
+        try:
+            from urllib.request import Request, urlopen
+            hdrs = dict(headers)
+            hdrs['Accept'] = 'application/octet-stream, application/pdf, image/*, application/json'
+            req = Request(url, headers=hdrs, method='GET')
+            try:
+                with urlopen(req, timeout=15) as resp:
+                    status = getattr(resp, 'status', 200)
+                    data = resp.read(max_bytes + 1)
+                    return status, data, ''
+            except urllib.error.HTTPError as e:
+                status = getattr(e, 'code', None)
+                try:
+                    tmp = e.read(4096) or b''
+                except Exception:
+                    tmp = b''
+                return status, b'', tmp[:1000].decode('utf-8', errors='ignore').strip()
+        except Exception as e:
+            return None, b'', f'{type(e).__name__}: {e}'
+
+    candidates = [
+        ('POST', f'{base_url.rstrip("/")}/message/downloadMedia', {'messageId': external_message_id}),
+        ('POST', f'{base_url.rstrip("/")}/media/download', {'messageId': external_message_id}),
+        ('GET', f'{base_url.rstrip("/")}/message/{external_message_id}/media', None),
+        ('POST', f'{base_url.rstrip("/")}/chat/message/downloadMedia', {'messageId': external_message_id}),
+        ('GET', f'{base_url.rstrip("/")}/chat/messages/{external_message_id}/media', None),
+    ]
+
+    for method, url, body in candidates:
+        if method == 'POST':
+            status, data, err = post_json(url, body or {})
+        else:
+            status, data, err = get_binary(url)
+        ok, sniffed = _is_valid_media_bytes(data[:32])
+        attempts.append({
+            'method': method,
+            'url': url,
+            'status': status,
+            'bytes': len(data or b''),
+            'sniffed': sniffed or '',
+            'err': err or '',
+        })
+        if status == 200 and data and len(data) <= max_bytes and ok:
+            return data, attempts
+    return None, attempts
+
+
 def normalize_phone(value):
     raw = (value or '').strip()
     if '@' in raw:
@@ -497,6 +627,14 @@ def _extract_message_payload(payload, *, provider='ZAP_API'):
         file_name = str(content.get('fileName') or content.get('title') or '').strip()
         caption = str(content.get('caption') or '').strip()
 
+        media_key = str(content.get('mediaKey') or '').strip()
+        direct_path = str(content.get('directPath') or '').strip()
+
+        base_url = str(root.get('BaseUrl') or '').strip()
+        instance_name = str(root.get('instanceName') or '').strip()
+        provider_token = str(root.get('token') or '').strip()
+        owner_phone = normalize_phone(str(root.get('owner') or uaizapi_chat.get('owner') or uaizapi_message.get('owner') or ''))
+
         sender_phone = (
             uaizapi_message.get('sender_pn')
             or uaizapi_chat.get('phone')
@@ -542,6 +680,12 @@ def _extract_message_payload(payload, *, provider='ZAP_API'):
             'file_url': file_url,
             'file_name': file_name,
             'caption': caption,
+            'media_key': media_key,
+            'direct_path': direct_path,
+            'uaizapi_base_url': base_url,
+            'uaizapi_instance_name': instance_name,
+            'uaizapi_token': provider_token,
+            'uaizapi_owner_phone': owner_phone,
         }
 
     data = _safe_dict(root.get('data'))
@@ -1930,80 +2074,111 @@ class UaizapiWebhookView(View):
                 import hashlib
                 import re
                 from budgets.models import WhatsAppFinanceQueueAttachment
-            
+
                 max_bytes = 10 * 1024 * 1024
                 url = (file_url or '').strip().strip('`')
                 parsed = urlparse(url)
                 host = (parsed.hostname or '').lower()
-            
+
                 orig = re.sub(r'[^a-zA-Z0-9._-]+', '_', (file_name or '').strip())
                 ext = '.pdf' if is_pdf else '.jpg'
                 base = f"queue_item_{queue_item.id}"
                 safe_name = f"{base}{ext}" if not orig else f"{base}__{orig}"
 
-                uaizapi_instance = str(getattr(settings, 'UAIZAPI_INSTANCE', '') or '').strip()
-                uaizapi_api_key = str(getattr(settings, 'UAIZAPI_API_KEY', '') or '').strip()
-                uaizapi_download_token = str(getattr(settings, 'UAIZAPI_DOWNLOAD_TOKEN', '') or '').strip()
-                uaizapi_webhook_token = str(getattr(settings, 'UAIZAPI_WEBHOOK_TOKEN', '') or '').strip()
-                uaizapi_webhook_secret = str(getattr(settings, 'UAIZAPI_WEBHOOK_SECRET', '') or '').strip()
-            
-                headers = {'User-Agent': 'ofi7-webhook/1.0'}
-                if uaizapi_instance:
-                    headers['X-UAIZAPI-Instance'] = uaizapi_instance
-                if uaizapi_api_key:
-                    headers['apikey'] = uaizapi_api_key
-                    headers['Authorization'] = f'Bearer {uaizapi_api_key}'
-                elif uaizapi_download_token:
-                    headers['Authorization'] = f'Bearer {uaizapi_download_token}'
-                elif uaizapi_webhook_token:
-                    headers['X-UAIZAPI-Token'] = uaizapi_webhook_token
-                if uaizapi_webhook_secret and not uaizapi_api_key and not uaizapi_download_token:
-                    headers['X-UAIZAPI-Secret'] = uaizapi_webhook_secret
-            
-                http_status = None
-                data = b''
-                error_hint = ''
-                allow_save = False
+                media_type_hint = 'pdf' if is_pdf else ('image' if is_image else '')
+                is_whatsapp_encrypted = bool(
+                    host
+                    and host.endswith('whatsapp.net')
+                    and str(message_data.get('media_key') or '').strip()
+                ) or bool(message_data.get('direct_path') or '')
 
-                if parsed.scheme == 'https' and host and url:
+                data = b''
+                sniffed_ct = ''
+                error_parts = []
+                used_source = ''
+                attempts_summary = []
+
+                if is_whatsapp_encrypted or message_data.get('uaizapi_base_url'):
+                    uaizapi_data, uaizapi_attempts = _try_uaizapi_media_endpoints(
+                        message_data=message_data,
+                        max_bytes=max_bytes,
+                        media_type_hint=media_type_hint,
+                    )
+                    for idx, a in enumerate(uaizapi_attempts, start=1):
+                        attempts_summary.append(
+                            f"T{idx} {a.get('method')} {a.get('status') or '?'} bytes={a.get('bytes',0)} sniffed={a.get('sniffed') or 'n/a'}"
+                        )
+                        if a.get('err'):
+                            attempts_summary[-1] += f" err={a.get('err')[:120]}"
+                    if uaizapi_data:
+                        data = uaizapi_data
+                        sniffed_ct = _sniff_mimetype(data) or ''
+                        used_source = 'uaizapi_media_endpoint'
+
+                if not data and parsed.scheme == 'https' and host and url:
+                    headers, _auth_info = _build_uaizapi_auth_headers(
+                        base_url=message_data.get('uaizapi_base_url') or '',
+                        message_data=message_data,
+                    )
                     try:
                         req = Request(url, headers=headers)
                         with urlopen(req, timeout=10) as resp:
-                            http_status = getattr(resp, 'status', 200)
+                            direct_status = getattr(resp, 'status', 200)
                             data = resp.read(max_bytes + 1)
+                        sniffed_ct = _sniff_mimetype(data) or ''
+                        used_source = 'direct_url'
+                        attempts_summary.append(f"T0 DIRECT {direct_status} bytes={len(data)} sniffed={sniffed_ct or 'n/a'}")
                     except urllib.error.HTTPError as e:
-                        http_status = getattr(e, 'code', None)
+                        status = getattr(e, 'code', None)
+                        tmp = b''
                         try:
                             tmp = e.read(4096) or b''
                         except Exception:
                             tmp = b''
-                        error_hint = f'HTTPError {http_status}: {(tmp[:400].decode("utf-8", errors="ignore") or "").strip()}'
+                        msg = f'HTTPError {status}: {(tmp[:300].decode("utf-8", errors="ignore") or "").strip()}'
+                        error_parts.append(msg)
+                        attempts_summary.append(f"T0 DIRECT {status} err={msg[:160]}")
                     except Exception as e:
-                        error_hint = f'Exception: {type(e).__name__}: {e}'
-                else:
-                    error_hint = f'URL inválida/domínio inesperado (host={host}, scheme={parsed.scheme})'
+                        msg = f'Exception: {type(e).__name__}: {e}'
+                        error_parts.append(msg)
+                        attempts_summary.append(f"T0 DIRECT err={msg[:160]}")
+                elif not data:
+                    error_parts.append('URL inválida/domínio inesperado.')
 
-                sniffed_ct = _sniff_mimetype(data) if data else ''
-                html_like = sniffed_ct == 'text/html'
-                valid_content = bool(sniffed_ct) and not html_like
+                pdf_text = ''
+                if is_pdf and data:
+                    try:
+                        from io import BytesIO
+                        from pypdf import PdfReader
+                        if len(data) <= 10 * 1024 * 1024:
+                            reader = PdfReader(BytesIO(data))
+                            parts = []
+                            for page in reader.pages:
+                                try:
+                                    parts.append(page.extract_text() or '')
+                                except Exception:
+                                    parts.append('')
+                            pdf_text = '\n'.join([p for p in parts if p]).strip()
+                    except Exception:
+                        pdf_text = ''
 
-                if http_status is None:
+                valid_content = bool(sniffed_ct) and sniffed_ct != 'text/html'
+                allow_save = False
+                final_bytes = len(data or b'')
+                http_status = None
+
+                if not data:
                     pass
-                elif http_status == 200:
-                    if len(data) > max_bytes:
-                        error_hint = f'arquivo > 10MB ({len(data)} bytes)'
-                    elif valid_content:
-                        allow_save = True
-                    else:
-                        head_hex = (data[:16] or b'').hex()
-                        error_hint = (
-                            f'anexo inválido: conteúdo não bate com JPEG/PNG/WEBP/PDF. '
-                            f'sniffed={sniffed_ct or "desconhecido"} head_hex={head_hex}'
-                        )
+                elif final_bytes > max_bytes:
+                    error_parts.insert(0, f'arquivo > 10MB ({final_bytes} bytes)')
+                elif valid_content:
+                    allow_save = True
                 else:
-                    if not error_hint:
-                        error_hint = f'HTTP {http_status}'
-                    error_hint = f'HTTP {http_status}: {error_hint}'
+                    head_hex = (data[:16] or b'').hex()
+                    error_parts.insert(
+                        0,
+                        f'anexo inválido: conteúdo não bate com JPEG/PNG/WEBP/PDF. sniffed={sniffed_ct or "desconhecido"} head_hex={head_hex}',
+                    )
 
                 if allow_save:
                     sha = hashlib.sha256(data).hexdigest()
@@ -2018,15 +2193,33 @@ class UaizapiWebhookView(View):
                         size_bytes=len(data),
                     )
                     att.file.save(safe_name, ContentFile(data), save=True)
-            
+
                     rn = (queue_item.review_notes or '').strip()
                     if rn:
                         rn += '\n\n'
                     rn += (
                         f"ARQUIVO_SALVO: {att.file.url}\n"
                         f"URL_ORIG: {url}\n"
-                        f"ANEXO_OK: sim  mimetype_salvo={stored_mimetype}  bytes={len(data)}"
+                        f"ANEXO_OK: sim  mimetype_salvo={stored_mimetype}  bytes={len(data)}  fonte={used_source}"
                     )
+                    if attempts_summary:
+                        rn += '\n' + '; '.join(attempts_summary)
+                    if pdf_text:
+                        excerpt_pdf = re.sub(r'\s+', ' ', pdf_text)[:300].strip()
+                        if excerpt_pdf:
+                            rn += f"\nEXCERTO_PDF: {excerpt_pdf}"
+                        queue_item_description = (description or '').strip()
+                        extracted_money = _extract_money_from_text(pdf_text)
+                        guessed_dir = _guess_direction_from_text(pdf_text)
+                        if (not queue_item.amount) and extracted_money and extracted_money > 0:
+                            queue_item.amount = extracted_money
+                        if (not queue_item.direction) and guessed_dir in (CashMovement.Direction.IN, CashMovement.Direction.OUT):
+                            queue_item.direction = guessed_dir
+                        queue_upd = ['amount', 'direction']
+                        if not queue_item_description and excerpt_pdf:
+                            queue_item.description = excerpt_pdf[:255]
+                            queue_upd.append('description')
+                        queue_item.save(update_fields=queue_upd)
                     queue_item.review_notes = rn
                     queue_item.save(update_fields=['review_notes'])
                 else:
@@ -2035,9 +2228,15 @@ class UaizapiWebhookView(View):
                         rn += '\n\n'
                     rn += (
                         f"URL_ORIG: {url}\n"
-                        f"ANEXO_OK: nao  HTTP={http_status or 'n/a'}  bytes={len(data)}  "
-                        f"sniffed={sniffed_ct or 'desconhecido'}  obs={error_hint or ''}"
+                        f"ANEXO_OK: nao  bytes={len(data or b'')}  "
+                        f"sniffed={sniffed_ct or 'desconhecido'}  fonte={used_source or 'n/a'}"
                     )
+                    if error_parts:
+                        rn += f"\nOBS: {' | '.join(error_parts)}"
+                    if attempts_summary:
+                        rn += '\n' + '; '.join(attempts_summary)
+                    if is_whatsapp_encrypted:
+                        rn += '\nOBS_ADICIONAL: midia WhatsApp criptografada (mmg.whatsapp.net/mediaKey). Download bem-sucedido apenas via endpoint UAZAPI com token/api-key da instancia.'
                     queue_item.review_notes = rn
                     queue_item.save(update_fields=['review_notes'])
             except Exception as e:
