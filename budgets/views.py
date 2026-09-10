@@ -1085,10 +1085,11 @@ def _find_authorized_collaborator_by_phone(phone):
 
 
 def _parse_chat_allow_list(raw: str):
+    import re as _re
     if not raw:
         return []
     out = []
-    for part in re.split(r'[,;|\n]+', raw):
+    for part in _re.split(r'[,;|\n]+', raw):
         cleaned = _clean_text(part)
         if cleaned:
             out.append(cleaned)
