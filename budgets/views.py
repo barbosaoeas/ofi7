@@ -1084,6 +1084,50 @@ def _find_authorized_collaborator_by_phone(phone):
     return None
 
 
+def _parse_chat_allow_list(raw: str):
+    if not raw:
+        return []
+    out = []
+    for part in re.split(r'[,;|\n]+', raw):
+        cleaned = _clean_text(part)
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+def _is_finance_chat_allowed(*, chat_id, chat_name, is_group_message):
+    chat_id = _clean_text(str(chat_id or ''))
+    chat_name = _clean_text(str(chat_name or ''))
+    raw_ids = getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_IDS', '') or ''
+    raw_names = getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES', '') or ''
+    allowed_ids = _parse_chat_allow_list(raw_ids)
+    allowed_names = _parse_chat_allow_list(raw_names)
+    if not allowed_ids and not allowed_names:
+        return True, ''
+    if allowed_ids:
+        for needle in allowed_ids:
+            if needle and needle in chat_id:
+                return True, ''
+    if allowed_names:
+        lowered = (chat_name or '').lower()
+        for needle in allowed_names:
+            if needle and needle.lower() in lowered:
+                return True, ''
+    reason_parts = []
+    if allowed_ids:
+        reason_parts.append('chat_id=' + (chat_id or '(vazio)'))
+        reason_parts.append('allowed_ids=' + ','.join(allowed_ids[:4]) + ('...' if len(allowed_ids) > 4 else ''))
+    if allowed_names:
+        reason_parts.append('chat_name=' + (chat_name or '(vazio)'))
+        reason_parts.append('allowed_names=' + ','.join(allowed_names[:4]) + ('...' if len(allowed_names) > 4 else ''))
+    if is_group_message:
+        reason_parts.append('tipo=grupo')
+    else:
+        reason_parts.append('tipo=privado')
+    reason = 'chat_nao_autorizado (' + ' | '.join(reason_parts) + ')'
+    return False, reason
+
+
 def _parse_whatsapp_command(message_text):
     text = normalize_whatsapp_text(message_text)
     lower = text.lower()
@@ -2276,6 +2320,17 @@ class UaizapiWebhookView(View):
             log.error_message = 'Número não autorizado para integração financeira.'
             log.save(update_fields=['error_message'])
             return JsonResponse({'ok': True, 'ignored': True, 'reason': 'unauthorized_number'})
+
+        chat_allowed, chat_block_reason = _is_finance_chat_allowed(
+            chat_id=message_data.get('chat_id', ''),
+            chat_name=message_data.get('chat_name', ''),
+            is_group_message=message_data.get('is_group_message', False),
+        )
+        if not chat_allowed:
+            log.processed_ok = True
+            log.error_message = chat_block_reason or 'Mensagem de chat/grupo não autorizado para o financeiro.'
+            log.save(update_fields=['processed_ok', 'error_message'])
+            return JsonResponse({'ok': True, 'ignored': True, 'reason': 'finance_chat_not_allowed', 'detail': chat_block_reason})
 
         existing = WhatsAppFinanceQueueItem.objects.filter(duplicate_key=duplicate_key).first()
         if existing is not None:

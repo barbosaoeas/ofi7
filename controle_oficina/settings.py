@@ -138,3 +138,6 @@ UAIZAPI_WEBHOOK_TOKEN = os.environ.get('UAIZAPI_WEBHOOK_TOKEN', '').strip()
 UAIZAPI_INSTANCE = os.environ.get('UAIZAPI_INSTANCE', '').strip()
 UAIZAPI_API_KEY = os.environ.get('UAIZAPI_API_KEY', '').strip()
 UAIZAPI_DOWNLOAD_TOKEN = os.environ.get('UAIZAPI_DOWNLOAD_TOKEN', os.environ.get('UAIZAPI_TOKEN', '')).strip()
+
+UAIZAPI_FINANCE_ALLOWED_CHAT_IDS = os.environ.get('UAIZAPI_FINANCE_ALLOWED_CHAT_IDS', '').strip()
+UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES = os.environ.get('UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES', '').strip()
