@@ -1096,10 +1096,11 @@ def _parse_chat_allow_list(raw: str):
 
 
 def _is_finance_chat_allowed(*, chat_id, chat_name, is_group_message):
+    import os as _os
     chat_id = _clean_text(str(chat_id or ''))
     chat_name = _clean_text(str(chat_name or ''))
-    raw_ids = getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_IDS', '') or ''
-    raw_names = getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES', '') or ''
+    raw_ids = _os.environ.get('UAIZAPI_FINANCE_ALLOWED_CHAT_IDS', '') or getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_IDS', '') or ''
+    raw_names = _os.environ.get('UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES', '') or getattr(settings, 'UAIZAPI_FINANCE_ALLOWED_CHAT_NAMES', '') or ''
     allowed_ids = _parse_chat_allow_list(raw_ids)
     allowed_names = _parse_chat_allow_list(raw_names)
     if not allowed_ids and not allowed_names:
