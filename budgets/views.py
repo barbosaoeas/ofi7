@@ -168,24 +168,45 @@ def _pkcs7_unpad(data: bytes, block_size: int = 16) -> bytes:
 def _aes_cbc_decrypt_webhook(cipher_key: bytes, iv: bytes, ciphertext: bytes):
     if not ciphertext:
         return b'', 'ciphertext_vazio'
-    errs = []
-    try:
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        from cryptography.hazmat.backends import default_backend
-        cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded = decryptor.update(ciphertext) + decryptor.finalize()
-        return _pkcs7_unpad(padded, 16), 'ok_cryptography'
-    except Exception as e:
-        errs.append(f'cryptography: {type(e).__name__}')
+    variants = []
+    cts = []
+    orig = ciphertext
+    cts.append(('exact', orig))
+    if len(orig) % 16 != 0:
+        t = (len(orig) // 16) * 16
+        if t >= 16:
+            cts.append(('trunc', orig[:t]))
+        p = (16 - (len(orig) % 16)) % 16
+        if p:
+            cts.append(('pad0', orig + b'\x00' * p))
+            cts.append(('padPKCS7', orig + bytes([p]) * p))
+    for tag, ct in cts:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.backends import default_backend
+            cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            padded = decryptor.update(ct) + decryptor.finalize()
+            unpadded = _pkcs7_unpad(padded, 16)
+            variants.append((unpadded, f'ok_crypto_{tag}'))
+        except Exception:
+            pass
     try:
         from Crypto.Cipher import AES
-        cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
-        padded = cipher.decrypt(ciphertext)
-        return _pkcs7_unpad(padded, 16), 'ok_pycrypto'
-    except Exception as e:
-        errs.append(f'pycryptodome: {type(e).__name__}')
-    return b'', ' | '.join(errs) or 'sem_lib_cripto'
+        for tag, ct in cts:
+            try:
+                cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
+                padded = cipher.decrypt(ct)
+                unpadded = _pkcs7_unpad(padded, 16)
+                variants.append((unpadded, f'ok_pycrypto_{tag}'))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if variants:
+        variants.sort(key=lambda x: -len(x[0]))
+        return variants[0]
+    return b'', 'sem_desempacotamento'
 
 
 def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = '') -> dict:
@@ -202,42 +223,68 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
         out['variants'].append({'v': 'short_media_key', 'ok': False, 'note': f'len={len(mk)}'})
         return out
     mk = mk[:32]
-    app_info = _whatsapp_media_app_info(media_type_hint, mimetype)
-    expanded = _hkdf_sha256_expand(mk, app_info, 112)
-    if len(expanded) < 112:
-        out['variants'].append({'v': 'hkdf_fail', 'ok': False, 'note': f'expanded_len={len(expanded)}'})
-        return out
-    hkdf_iv = expanded[0:16]
-    cipher_key = expanded[16:48]
 
+    app_infos = [
+        _whatsapp_media_app_info(media_type_hint, mimetype),
+        b'WhatsApp Media Keys',
+    ]
+    hkdf_lens = [112, 80, 96, 64]
     stream = cipher_bytes
-    variants = []
-    if len(stream) >= 16 + 32 + 1:
-        variants.append(('STREAM_IV_PREPENDED', stream[0:16], stream[16:-32]))
-    if len(stream) >= 33:
-        variants.append(('HKDF_IV', hkdf_iv, stream[:-32]))
-    if len(stream) >= 32 + 1:
-        variants.append(('HKDF_IV_NO_MAC_STRIP', hkdf_iv, stream))
-        variants.append(('STREAM_IV_PREPENDED_NO_MAC_STRIP', stream[0:16], stream[16:]))
+    n = len(stream)
 
-    for vname, iv, ctext in variants:
-        plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv, ctext)
-        sn = ''
-        ok = False
-        if plain:
-            _ok, _sn = _is_valid_media_bytes(plain[:32])
-            sn = _sn
-            ok = _ok
-        out['variants'].append({
-            'v': vname,
-            'ok': ok,
-            'sniffed': sn,
-            'note': note,
-            'bytes': len(plain or b''),
-            'head_hex': (plain[:16] or b'').hex(),
-        })
-        if ok and not out['bytes']:
-            out['bytes'] = plain
+    def stream_splits(total: bytes):
+        res = []
+        L = len(total)
+        for mac_len in (32, 10, 16, 0):
+            if L <= mac_len:
+                continue
+            wm = total[:-mac_len] if mac_len > 0 else total
+            if len(wm) >= 16:
+                res.append(('HKDF', 'HKDF', wm))
+            if len(wm) >= 32:
+                res.append(('STREAM_PRE', wm[:16], wm[16:]))
+        for mac_len in (32, 16, 10, 0):
+            payload = total[:-mac_len] if mac_len > 0 else total
+            if len(payload) >= 32:
+                res.append(('STREAM_AT_END', payload[-16:], payload[:-16]))
+        if L >= 48:
+            iv = stream[16:32]
+            rest = stream[32:]
+            for mac_len in (32, 16, 0):
+                if len(rest) > mac_len:
+                    ct = rest[:-mac_len] if mac_len > 0 else rest
+                    if len(ct) >= 16:
+                        res.append((f'IV_MID{mac_len}', iv, ct))
+        return res
+
+    for app_info in app_infos:
+        for hkdf_len in hkdf_lens:
+            expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
+            if len(expanded) < hkdf_len or hkdf_len < 48:
+                continue
+            hkdf_iv = expanded[0:16]
+            cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
+            if len(cipher_key) != 32:
+                continue
+            for tag_v, iv_src, ctext in stream_splits(stream):
+                iv = hkdf_iv if iv_src == 'HKDF' else iv_src
+                plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv, ctext)
+                sn = ''
+                ok = False
+                if plain:
+                    _ok, _sn = _is_valid_media_bytes(plain[:32])
+                    sn = _sn
+                    ok = _ok
+                out['variants'].append({
+                    'v': f'a{len(app_info)}_hkdf{hkdf_len}_{tag_v}',
+                    'ok': ok,
+                    'sniffed': sn,
+                    'note': note,
+                    'bytes': len(plain or b''),
+                    'head_hex': (plain[:16] or b'').hex(),
+                })
+                if ok and not out['bytes']:
+                    out['bytes'] = plain
     return out
 
 

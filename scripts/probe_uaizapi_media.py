@@ -18,8 +18,14 @@ def _clean_text(s) -> str:
     v = str(s).strip()
     if not v:
         return ''
+    import re as _re
+    raw = v
     v = v.replace('\r', ' ').replace('\n', ' ').strip()
-    bad = ('`', '\u200b', '\u200c', '\u200d', '\ufeff', '\u00a0')
+    bad = [
+        '`', '\u200b', '\u200c', '\u200d', '\ufeff', '\u00a0',
+        '\u0060', '\u00b4', '\u02cb', '\u02ca', '\u2018', '\u2019',
+        '\u201c', '\u201d', '\u2039', '\u203a', '\xab', '\xbb',
+    ]
     changed = True
     while changed:
         changed = False
@@ -27,14 +33,20 @@ def _clean_text(s) -> str:
             if b in v:
                 v = v.replace(b, '')
                 changed = True
-    while len(v) >= 1 and v[0] in ('`', '"', "'", ' ', '\t'):
+    while len(v) >= 1 and v[0] in ('`', '"', "'", ' ', '\t', '\u2018', '\u201c'):
         v = v[1:]
         changed = True
-    while len(v) >= 1 and v[-1] in ('`', '"', "'", ' ', '\t'):
+    while len(v) >= 1 and v[-1] in ('`', '"', "'", ' ', '\t', '\u2019', '\u201d'):
         v = v[:-1]
         changed = True
     if changed:
         v = v.strip()
+    if '://' not in v:
+        m = _re.search(r'https?://[A-Za-z0-9\-\.:/_~?#&=%@\[\]\+\$,;!\*\(\)\']+', raw)
+        if not m:
+            m = _re.search(r'https?://[^\s\u2018\u2019\u201c\u201d`\'""]+', raw)
+        if m:
+            v = m.group(0).rstrip("'\",.;`\u2019\u201d")
     return v
 
 
@@ -303,31 +315,47 @@ def _pkcs7_unpad_probe(data: bytes, block_size: int = 16) -> bytes:
     return data[:-pad_len]
 
 
-def _aes_cbc_decrypt(cipher_key: bytes, iv: bytes, ciphertext: bytes):
+def _aes_cbc_decrypt(cipher_key: bytes, iv: bytes, ciphertext: bytes, *, allow_truncate=True, allow_pad=True):
+    variants = []
     if not ciphertext:
         return b'', 'ciphertext_vazio'
     errs = []
-    try:
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        from cryptography.hazmat.backends import default_backend
-        cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded = decryptor.update(ciphertext) + decryptor.finalize()
-        return _pkcs7_unpad_probe(padded, 16), 'ok_cryptography'
-    except Exception as e:
-        errs.append(f'cryptography: {type(e).__name__}: {e}')
+    cts = []
+    original = ciphertext
+    cts.append(('exact', original))
+    if len(original) % 16 != 0:
+        if allow_truncate:
+            truncs = (len(original) // 16) * 16
+            if truncs >= 16:
+                cts.append(('trunc', original[:truncs]))
+        if allow_pad:
+            pad_len = (16 - (len(original) % 16)) % 16
+            if pad_len:
+                cts.append(('pad0', original + (b'\x00' * pad_len)))
+                pkcs7_pad = bytes([pad_len]) * pad_len
+                cts.append(('padPKCS7', original + pkcs7_pad))
+    for tag, ct in cts:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.backends import default_backend
+            cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            padded = decryptor.update(ct) + decryptor.finalize()
+            unpadded = _pkcs7_unpad_probe(padded, 16)
+            variants.append((unpadded, f'ok_crypto_{tag}'))
+        except Exception as e:
+            pass
+    if variants:
+        variants.sort(key=lambda x: -len(x[0]))
+        return variants[0]
     try:
         from Crypto.Cipher import AES
-        cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
-        padded = cipher.decrypt(ciphertext)
-        return _pkcs7_unpad_probe(padded, 16), 'ok_pycrypto'
     except Exception as e:
-        errs.append(f'pycryptodome: {type(e).__name__}: {e}')
-    try:
-        from Crypto.Cipher import AES as AES2
-    except Exception as e:
-        errs.append(f'nenhuma_lib_cripto_disponivel: {type(e).__name__}: {e}')
-    return b'', ' | '.join(errs)
+        errs.append(f'sem_pycryptodome: {type(e).__name__}')
+    if not variants:
+        note = ' | '.join(errs) or f'nao_descriptografou_nenhuma_variante_cts={len(cts)}'
+        return b'', note
+    return variants[0]
 
 
 def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = ''):
@@ -345,52 +373,88 @@ def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media
         out['variants'].append({'v': 'short_media_key', 'ok': False, 'sniffed': '', 'note': f'len={len(mk)}'})
         return out
     mk = mk[:32]
-    app_info = _whatsapp_media_app_info_probe(media_type_hint, mimetype)
-    expanded = _hkdf_sha256_expand_probe(mk, app_info, 112)
-    if len(expanded) < 112:
-        out['variants'].append({'v': 'hkdf_fail', 'ok': False, 'sniffed': '', 'note': f'expanded_len={len(expanded)}'})
-        return out
-    hkdf_iv = expanded[0:16]
-    cipher_key = expanded[16:48]
-    mac_key = expanded[48:80]
+
+    app_infos = [
+        ('typed', _whatsapp_media_app_info_probe(media_type_hint, mimetype)),
+        ('generic', b'WhatsApp Media Keys'),
+    ]
+    hkdf_lens = [112, 80, 96, 64]
 
     stream = cipher_bytes
-    variants = []
+    stream_len = len(stream)
 
-    if len(stream) >= 16 + 32 + 1:
-        variants.append(('STREAM_IV_PREPENDED', stream[0:16], stream[16:-32]))
+    def build_stream_variants(total: bytes):
+        vs = []
+        n = len(total)
+        # Tenta várias maneiras de extrair (iv, ciphertext) considerando MAC de 0/10/16/32 bytes
+        for mac_len in (32, 10, 16, 0):
+            if n <= mac_len:
+                continue
+            without_mac = total[:-mac_len] if mac_len > 0 else total
+            # HKDF_IV: IV vem da HKDF
+            if len(without_mac) >= 16:
+                vs.append((f'HKDF_IV_MAC{mac_len}', 'HKDF', without_mac))
+            # STREAM_IV_PREPENDED: IV primeiros 16 bytes, ciphertext depois
+            if len(without_mac) >= 16 + 16:
+                iv = without_mac[:16]
+                ct = without_mac[16:]
+                vs.append((f'STREAM_IV_PREPENDED_MAC{mac_len}', iv, ct))
+        # IV no FINAL (antes do MAC, ciphertext first)
+        for mac_len in (32, 16, 10, 0):
+            payload = total[:-mac_len] if mac_len > 0 else total
+            if len(payload) >= 16 + 16:
+                ct = payload[:-16]
+                iv = payload[-16:]
+                vs.append((f'STREAM_IV_AT_END_MAC{mac_len}', iv, ct))
+        # IV dos bytes 16..32 (meio)
+        if n >= 48:
+            iv = stream[16:32]
+            ct_start_32 = stream[32:]
+            for mac_len in (32, 16, 0):
+                if len(ct_start_32) > mac_len:
+                    ct = ct_start_32[:-mac_len] if mac_len > 0 else ct_start_32
+                    if len(ct) >= 16:
+                        vs.append((f'IV_POS16_32_MAC{mac_len}', iv, ct))
+        return vs
 
-    if len(stream) >= 33:
-        variants.append(('HKDF_IV', hkdf_iv, stream[:-32]))
+    for app_name, app_info in app_infos:
+        for hkdf_len in hkdf_lens:
+            expanded = _hkdf_sha256_expand_probe(mk, app_info, hkdf_len)
+            if len(expanded) < hkdf_len or hkdf_len < 48:
+                continue
+            hkdf_iv = expanded[0:16] if hkdf_len >= 32 else b''
+            cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
+            if len(cipher_key) != 32:
+                continue
+            svs = build_stream_variants(stream)
+            for vname, iv_src, ctext in svs:
+                if iv_src == 'HKDF':
+                    iv = hkdf_iv
+                else:
+                    iv = iv_src
+                plain, note = _aes_cbc_decrypt(cipher_key, iv, ctext)
+                sn = sniff(plain[:32]) if plain else ''
+                ok = sn in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+                entry = {
+                    'v': f'{app_name}_hkdf{hkdf_len}_{vname}',
+                    'ok': ok,
+                    'sniffed': sn,
+                    'note': note,
+                    'bytes': len(plain or b''),
+                    'head_hex': (plain[:16] or b'').hex(),
+                }
+                out['variants'].append(entry)
+                if ok and not out['bytes']:
+                    out['bytes'] = plain
 
-    if len(stream) >= 32 + 1:
-        variants.append(('HKDF_IV_NO_MAC_STRIP', hkdf_iv, stream))
-        variants.append(('STREAM_IV_PREPENDED_NO_MAC_STRIP', stream[0:16], stream[16:]))
+    # Top 15 variants somente para economizar output (filtra por bytes>0 primeiro, depois ordena)
+    with_bytes = [v for v in out['variants'] if v.get('bytes', 0) > 0]
+    with_none = [v for v in out['variants'] if v.get('bytes', 0) == 0]
+    with_bytes.sort(key=lambda v: (-v['bytes'], 'STREAM' in v['v'], 'HKDF' in v['v'], 'MAC32' in v['v']))
+    out['variants'] = with_bytes[:10] + with_none[:5]
 
-    lib_note = ''
-    for vname, iv, ctext in variants:
-        plain, note = _aes_cbc_decrypt(cipher_key, iv, ctext)
-        if not lib_note and note.startswith('ok_'):
-            lib_note = note
-        elif not lib_note:
-            lib_note = note
-        sn = sniff(plain[:32]) if plain else ''
-        ok = sn in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
-        out['variants'].append({
-            'v': vname,
-            'ok': ok,
-            'sniffed': sn,
-            'note': note,
-            'bytes': len(plain or b''),
-            'head_hex': (plain[:16] or b'').hex(),
-        })
-        if ok and not out['bytes']:
-            out['bytes'] = plain
-    if not lib_note:
-        lib_note = 'nenhuma_variante_tentada'
-    for v in out['variants']:
-        if 'v' in v and v['v'].startswith(('STREAM','HKDF')) and 'lib' not in v:
-            v['lib_note'] = lib_note
+    if not out['bytes']:
+        out['note'] = f'total_variants={len(with_bytes) + len(with_none)}; stream_len={stream_len}; stream_head={(stream[:16] or b"").hex()}'
     return out
 
 
