@@ -18,9 +18,23 @@ def _clean_text(s) -> str:
     v = str(s).strip()
     if not v:
         return ''
-    while len(v) >= 2 and v[0] in ('`', '"', "'") and v[-1] == v[0]:
-        v = v[1:-1].strip()
     v = v.replace('\r', ' ').replace('\n', ' ').strip()
+    bad = ('`', '\u200b', '\u200c', '\u200d', '\ufeff', '\u00a0')
+    changed = True
+    while changed:
+        changed = False
+        for b in bad:
+            if b in v:
+                v = v.replace(b, '')
+                changed = True
+    while len(v) >= 1 and v[0] in ('`', '"', "'", ' ', '\t'):
+        v = v[1:]
+        changed = True
+    while len(v) >= 1 and v[-1] in ('`', '"', "'", ' ', '\t'):
+        v = v[:-1]
+        changed = True
+    if changed:
+        v = v.strip()
     return v
 
 
@@ -175,6 +189,7 @@ def _resolve_media_bytes(candidate_url_or_datauri, headers, base_url='', timeout
 
 
 def http_call_raw(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024):
+    import urllib.request
     import urllib.error
     try:
         data = None
@@ -288,49 +303,99 @@ def _pkcs7_unpad_probe(data: bytes, block_size: int = 16) -> bytes:
     return data[:-pad_len]
 
 
-def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = '') -> bytes:
-    if not cipher_bytes or not media_key_b64:
-        return b''
-    import base64 as _b64
-    try:
-        mk = _b64.b64decode(media_key_b64 + '=' * (-len(media_key_b64) % 4))
-    except Exception:
-        return b''
-    if len(mk) < 32:
-        return b''
-    mk = mk[:32]
-    app_info = _whatsapp_media_app_info_probe(media_type_hint, mimetype)
-    expanded = _hkdf_sha256_expand_probe(mk, app_info, 112)
-    if len(expanded) < 112:
-        return b''
-    cipher_key = expanded[16:48]
-    mac_key = expanded[48:80]
-    stream = cipher_bytes
-    if len(stream) < 16 + 32 + 1:
-        return b''
-    iv = stream[0:16]
-    ciphertext = stream[16:-32]
+def _aes_cbc_decrypt(cipher_key: bytes, iv: bytes, ciphertext: bytes):
     if not ciphertext:
-        return b''
+        return b'', 'ciphertext_vazio'
+    errs = []
     try:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
         from cryptography.hazmat.backends import default_backend
         cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         padded = decryptor.update(ciphertext) + decryptor.finalize()
-        return _pkcs7_unpad_probe(padded, 16)
-    except Exception:
-        pass
+        return _pkcs7_unpad_probe(padded, 16), 'ok_cryptography'
+    except Exception as e:
+        errs.append(f'cryptography: {type(e).__name__}: {e}')
     try:
         from Crypto.Cipher import AES
         cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
         padded = cipher.decrypt(ciphertext)
-        return _pkcs7_unpad_probe(padded, 16)
-    except Exception:
-        return b''
+        return _pkcs7_unpad_probe(padded, 16), 'ok_pycrypto'
+    except Exception as e:
+        errs.append(f'pycryptodome: {type(e).__name__}: {e}')
+    try:
+        from Crypto.Cipher import AES as AES2
+    except Exception as e:
+        errs.append(f'nenhuma_lib_cripto_disponivel: {type(e).__name__}: {e}')
+    return b'', ' | '.join(errs)
+
+
+def _decrypt_whatsapp_media_probe(cipher_bytes: bytes, media_key_b64: str, media_type_hint: str = '', mimetype: str = ''):
+    out = {'bytes': b'', 'variants': []}
+    if not cipher_bytes or not media_key_b64:
+        out['variants'].append({'v': 'skip', 'ok': False, 'sniffed': '', 'note': 'sem_cipherbytes_ou_mediakey'})
+        return out
+    import base64 as _b64
+    try:
+        mk = _b64.b64decode(media_key_b64 + '=' * (-len(media_key_b64) % 4))
+    except Exception as e:
+        out['variants'].append({'v': 'b64decode_fail', 'ok': False, 'sniffed': '', 'note': f'{type(e).__name__}: {e}'})
+        return out
+    if len(mk) < 32:
+        out['variants'].append({'v': 'short_media_key', 'ok': False, 'sniffed': '', 'note': f'len={len(mk)}'})
+        return out
+    mk = mk[:32]
+    app_info = _whatsapp_media_app_info_probe(media_type_hint, mimetype)
+    expanded = _hkdf_sha256_expand_probe(mk, app_info, 112)
+    if len(expanded) < 112:
+        out['variants'].append({'v': 'hkdf_fail', 'ok': False, 'sniffed': '', 'note': f'expanded_len={len(expanded)}'})
+        return out
+    hkdf_iv = expanded[0:16]
+    cipher_key = expanded[16:48]
+    mac_key = expanded[48:80]
+
+    stream = cipher_bytes
+    variants = []
+
+    if len(stream) >= 16 + 32 + 1:
+        variants.append(('STREAM_IV_PREPENDED', stream[0:16], stream[16:-32]))
+
+    if len(stream) >= 33:
+        variants.append(('HKDF_IV', hkdf_iv, stream[:-32]))
+
+    if len(stream) >= 32 + 1:
+        variants.append(('HKDF_IV_NO_MAC_STRIP', hkdf_iv, stream))
+        variants.append(('STREAM_IV_PREPENDED_NO_MAC_STRIP', stream[0:16], stream[16:]))
+
+    lib_note = ''
+    for vname, iv, ctext in variants:
+        plain, note = _aes_cbc_decrypt(cipher_key, iv, ctext)
+        if not lib_note and note.startswith('ok_'):
+            lib_note = note
+        elif not lib_note:
+            lib_note = note
+        sn = sniff(plain[:32]) if plain else ''
+        ok = sn in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+        out['variants'].append({
+            'v': vname,
+            'ok': ok,
+            'sniffed': sn,
+            'note': note,
+            'bytes': len(plain or b''),
+            'head_hex': (plain[:16] or b'').hex(),
+        })
+        if ok and not out['bytes']:
+            out['bytes'] = plain
+    if not lib_note:
+        lib_note = 'nenhuma_variante_tentada'
+    for v in out['variants']:
+        if 'v' in v and v['v'].startswith(('STREAM','HKDF')) and 'lib' not in v:
+            v['lib_note'] = lib_note
+    return out
 
 
 def http_call_with_json_follow(method, url, headers, body=None, timeout=20, max_bytes=10 * 1024 * 1024, base_url=''):
+    import urllib.request
     import urllib.error
     import traceback
     data = None
@@ -546,7 +611,8 @@ def main():
                     entry['error'] = f'directRaw {type(dle).__name__}: {dle}'
 
     if media_key and (not ok_ids) and last_direct_raw:
-        dec_bytes = _decrypt_whatsapp_media_probe(last_direct_raw, media_key, media_type, mimetype_orig)
+        dec_result = _decrypt_whatsapp_media_probe(last_direct_raw, media_key, media_type, mimetype_orig)
+        dec_bytes = dec_result.get('bytes') or b''
         dec_sniff = sniff(dec_bytes[:32]) if dec_bytes else ''
         dec_ok = dec_sniff in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp')
         dec_id = len(results) + 1
@@ -566,6 +632,7 @@ def main():
             'json_datauri': [],
             'decrypt_media_key_set': True,
             'decrypt_raw_len': len(last_direct_raw),
+            'decrypt_variants': dec_result.get('variants', []),
         }
         results.append(dec_entry)
         if dec_ok:
