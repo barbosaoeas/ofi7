@@ -135,13 +135,15 @@ def _whatsapp_media_app_info(media_type_hint: str, mimetype: str = '') -> bytes:
     return b'WhatsApp Document Keys'
 
 
-def _hkdf_sha256_expand(ikm: bytes, info: bytes, length: int, salt: bytes = b'') -> bytes:
+def _hkdf_sha256_expand(ikm: bytes, info: bytes, length: int, salt: bytes = b'', *, skip_extract: bool = False) -> bytes:
     try:
         from hashlib import sha256
         import hmac
-        if not salt:
-            salt = b'\x00' * 32
-        prk = hmac.new(salt, ikm, sha256).digest()
+        if skip_extract or (salt is None or len(salt) == 0):
+            # WhatsApp protocol: HKDF extract uses empty salt (not zeros) — which yields PRF(ikm || zeros) as PRK when salt is None; skip_extract=True uses ikm as PRK directly.
+            prk = hmac.new(b'\x00' * 32, ikm, sha256).digest()
+        else:
+            prk = hmac.new(salt, ikm, sha256).digest()
         t = b''
         output = b''
         counter = 1
@@ -261,15 +263,16 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
 
     combos_tried = set()
 
-    def try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag):
+    def try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag, *, hkdf_kw=None):
         nonlocal out
-        key = (app_name, hkdf_len, mac_len, pos_tag)
+        hkdf_kw = hkdf_kw or {}
+        key = (app_name, hkdf_len, mac_len, pos_tag, tuple(sorted(hkdf_kw.items())))
         if key in combos_tried:
             return
         combos_tried.add(key)
         if hkdf_len < 48:
             return
-        expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
+        expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len, **hkdf_kw)
         if len(expanded) < hkdf_len:
             return
         hkdf_iv = expanded[0:16]
@@ -289,7 +292,7 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
             sn = _sn
             ok = _ok
         out['variants'].append({
-            'v': f'{app_name}_hkdf{hkdf_len}_{pos_tag}_MAC{mac_len}',
+            'v': f'{app_name}_hkdf{hkdf_len}_{pos_tag}_MAC{mac_len}' + ('_sk' if hkdf_kw.get('skip_extract') else ''),
             'ok': ok,
             'sniffed': sn,
             'note': note,
@@ -301,9 +304,10 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
 
     for app_name, app_info in app_infos_ordered:
         for hkdf_len, mac_len, pos_tag in fast_combos:
-            try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag)
-            if out['bytes']:
-                return out
+            for kw in ({}, {'skip_extract': True}):
+                try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag, hkdf_kw=kw)
+                if out['bytes']:
+                    return out
 
     all_hkdf = [112, 80, 96, 64]
     all_macs = [32, 10, 16, 0]
@@ -312,9 +316,10 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
         for hkdf_len in all_hkdf:
             for mac_len in all_macs:
                 for pos_tag in all_pos:
-                    try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag)
-                    if out['bytes']:
-                        return out
+                    for kw in ({}, {'skip_extract': True}):
+                        try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag, hkdf_kw=kw)
+                        if out['bytes']:
+                            return out
 
     if L >= 48:
         iv_mid = stream[16:32]
@@ -323,36 +328,37 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
             for hkdf_len in all_hkdf:
                 if hkdf_len < 48:
                     continue
-                expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
-                if len(expanded) < hkdf_len:
-                    continue
-                cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
-                if len(cipher_key) != 32:
-                    continue
-                for mac_len in (32, 16, 0):
-                    if len(rest) <= mac_len:
+                for kw in ({}, {'skip_extract': True}):
+                    expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len, **kw)
+                    if len(expanded) < hkdf_len:
                         continue
-                    ct = rest[:-mac_len] if mac_len > 0 else rest
-                    if len(ct) < 16:
+                    cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
+                    if len(cipher_key) != 32:
                         continue
-                    plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv_mid, ct)
-                    sn = ''
-                    ok = False
-                    if plain:
-                        _ok, _sn = _is_valid_media_bytes(plain[:32])
-                        sn = _sn
-                        ok = _ok
-                    out['variants'].append({
-                        'v': f'{app_name}_hkdf{hkdf_len}_IVMID_MAC{mac_len}',
-                        'ok': ok,
-                        'sniffed': sn,
-                        'note': note,
-                        'bytes': len(plain or b''),
-                        'head_hex': (plain[:16] or b'').hex(),
-                    })
-                    if ok and not out['bytes']:
-                        out['bytes'] = plain
-                        return out
+                    for mac_len in (32, 16, 0):
+                        if len(rest) <= mac_len:
+                            continue
+                        ct = rest[:-mac_len] if mac_len > 0 else rest
+                        if len(ct) < 16:
+                            continue
+                        plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv_mid, ct)
+                        sn = ''
+                        ok = False
+                        if plain:
+                            _ok, _sn = _is_valid_media_bytes(plain[:32])
+                            sn = _sn
+                            ok = _ok
+                        out['variants'].append({
+                            'v': f'{app_name}_hkdf{hkdf_len}_IVMID_MAC{mac_len}' + ('_sk' if kw.get('skip_extract') else ''),
+                            'ok': ok,
+                            'sniffed': sn,
+                            'note': note,
+                            'bytes': len(plain or b''),
+                            'head_hex': (plain[:16] or b'').hex(),
+                        })
+                        if ok and not out['bytes']:
+                            out['bytes'] = plain
+                            return out
     return out
 
 
