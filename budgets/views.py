@@ -836,6 +836,67 @@ def _safe_dict(value):
     return value if isinstance(value, dict) else {}
 
 
+def _clean_text(v):
+    if not isinstance(v, str):
+        return v
+    import re
+    v = v.strip()
+    v = re.sub(r'^[`"\']+|[`"\']+$', '', v)
+    v = v.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    v = re.sub(r'\s+', ' ', v).strip()
+    v = re.sub(r'^[`"\']+|[`"\']+$', '', v)
+    return v
+
+
+def _find_whatsapp_media_url(obj, max_depth=6):
+    import re
+    WA_MARKERS = ('mmg.whatsapp.net', 'whatsapp.net', 'web.whatsapp.com', 'cdn.whatsapp.net')
+    URL_RE = re.compile(r'https?://[^\s`"\'<>)]+')
+    stack = [(obj, 0)]
+    seen = set()
+    candidates = []
+    while stack:
+        cur, depth = stack.pop()
+        if depth > max_depth:
+            continue
+        if isinstance(cur, dict):
+            if id(cur) in seen:
+                continue
+            seen.add(id(cur))
+            for k, v in cur.items():
+                if isinstance(v, (dict, list)):
+                    stack.append((v, depth + 1))
+                elif isinstance(v, str):
+                    cleaned = _clean_text(v)
+                    if cleaned.startswith('http'):
+                        score = 0
+                        if any(m in cleaned for m in WA_MARKERS):
+                            score += 1000
+                        if str(k).lower() in ('url', 'directurl', 'mediaurl', 'downloadurl', 'link'):
+                            score += 300
+                        if str(k).lower() == 'url':
+                            score += 50
+                        candidates.append((score, cleaned))
+                    for m in URL_RE.finditer(v):
+                        url = m.group(0)
+                        if url.endswith(('.', ',', ';', '"', "'", '`')):
+                            url = url[:-1]
+                        if url.startswith('http'):
+                            score = 0
+                            if any(marker in url for marker in WA_MARKERS):
+                                score += 1000
+                            if 'content' in str(k).lower():
+                                score += 80
+                            candidates.append((score, url))
+        elif isinstance(cur, list):
+            for x in cur:
+                stack.append((x, depth + 1))
+    if not candidates:
+        return ''
+    candidates.sort(key=lambda t: t[0], reverse=True)
+    return candidates[0][1]
+
+
 def _extract_message_payload(payload, *, provider='ZAP_API'):
     root = _safe_dict(payload)
 
@@ -855,17 +916,21 @@ def _extract_message_payload(payload, *, provider='ZAP_API'):
         if isinstance(text, dict):
             text = text.get('body') or text.get('text') or text.get('content') or ''
 
-        mimetype = str(content.get('mimetype') or '').strip()
-        file_url = str(content.get('URL') or '').strip()
-        file_name = str(content.get('fileName') or content.get('title') or '').strip()
-        caption = str(content.get('caption') or '').strip()
+        mimetype = _clean_text(str(content.get('mimetype') or '').strip())
+        file_url = _clean_text(str(content.get('URL') or '').strip())
+        if not file_url:
+            file_url = _find_whatsapp_media_url(root)
+        file_name = _clean_text(str(content.get('fileName') or content.get('title') or '').strip())
+        caption = _clean_text(str(content.get('caption') or '').strip())
 
-        media_key = str(content.get('mediaKey') or '').strip()
-        direct_path = str(content.get('directPath') or '').strip()
+        media_key = _clean_text(str(content.get('mediaKey') or '').strip())
+        if not media_key:
+            media_key = _clean_text(str(content.get('media_key') or '').strip())
+        direct_path = _clean_text(str(content.get('directPath') or '').strip())
 
-        base_url = str(root.get('BaseUrl') or '').strip()
-        instance_name = str(root.get('instanceName') or '').strip()
-        provider_token = str(root.get('token') or '').strip()
+        base_url = _clean_text(str(root.get('BaseUrl') or '').strip())
+        instance_name = _clean_text(str(root.get('instanceName') or '').strip())
+        provider_token = _clean_text(str(root.get('token') or '').strip())
         owner_phone = normalize_phone(str(root.get('owner') or uaizapi_chat.get('owner') or uaizapi_message.get('owner') or ''))
 
         sender_phone = (
@@ -2178,8 +2243,10 @@ class UaizapiWebhookView(View):
             log.save(update_fields=['error_message'])
             return JsonResponse({'ok': False, 'error': 'invalid_signature'}, status=403)
 
-        mimetype = str(message_data.get('mimetype') or '').strip().lower()
-        file_url = str(message_data.get('file_url') or '').strip()
+        mimetype = _clean_text(str(message_data.get('mimetype') or '')).strip().lower()
+        file_url = _clean_text(str(message_data.get('file_url') or '')).strip()
+        if not file_url:
+            file_url = _find_whatsapp_media_url(payload_for_log) or ''
 
         is_pdf = mimetype == 'application/pdf' and bool(file_url)
         is_image = mimetype.startswith('image/') and bool(file_url)
@@ -2213,8 +2280,8 @@ class UaizapiWebhookView(View):
             return JsonResponse({'ok': True, 'duplicate': True, 'queue_item_id': existing.id})
 
         if is_media:
-            file_name = str(message_data.get('file_name') or '').strip() or ('documento.pdf' if is_pdf else 'imagem.jpg')
-            caption = str(message_data.get('caption') or message_data.get('message_text') or '').strip()
+            file_name = _clean_text(str(message_data.get('file_name') or '').strip()) or ('documento.pdf' if is_pdf else 'imagem.jpg')
+            caption = _clean_text(str(message_data.get('caption') or message_data.get('message_text') or '').strip())
 
             pdf_text = ''
             if is_pdf:
@@ -2309,7 +2376,7 @@ class UaizapiWebhookView(View):
                 from budgets.models import WhatsAppFinanceQueueAttachment
 
                 max_bytes = 10 * 1024 * 1024
-                url = (file_url or '').strip().strip('`')
+                url = _clean_text((file_url or '').strip())
                 parsed = urlparse(url)
                 host = (parsed.hostname or '').lower()
 
@@ -2353,9 +2420,15 @@ class UaizapiWebhookView(View):
                         base_url=message_data.get('uaizapi_base_url') or '',
                         message_data=message_data,
                     )
+                    if host.endswith('whatsapp.net'):
+                        headers = {
+                            'User-Agent': 'WhatsApp/2.24.25.82 Android/14',
+                            'Accept': '*/*',
+                            'Accept-Encoding': 'identity',
+                        }
                     try:
                         req = Request(url, headers=headers)
-                        with urlopen(req, timeout=10) as resp:
+                        with urlopen(req, timeout=20) as resp:
                             direct_status = getattr(resp, 'status', 200)
                             data = resp.read(max_bytes + 1)
                         sniffed_ct = _sniff_mimetype(data) or ''
@@ -2380,7 +2453,7 @@ class UaizapiWebhookView(View):
 
                 _decrypt_used = False
                 if data and not _is_valid_media_bytes(data[:32])[0] and (is_whatsapp_encrypted or message_data.get('media_key')):
-                    _media_key_b64 = str(message_data.get('media_key') or '').strip()
+                    _media_key_b64 = _clean_text(str(message_data.get('media_key') or '').strip())
                     if _media_key_b64:
                         try:
                             _mimetype_orig = str(message_data.get('mimetype') or '').strip()
