@@ -488,27 +488,56 @@ def recover_item(queue_item):
     if not blob:
         return {'status': 'FAIL', 'reason': f'download_falhou: {dl_note}'}
 
-    result = _decrypt_whatsapp_media(
-        blob,
-        info.get('media_key') or '',
-        media_type_hint=info.get('media_type_hint') or '',
-        mimetype=info.get('mimetype') or '',
-    )
-    final_bytes = result['bytes']
-    ok_final, sniffed_final = _is_valid_media_bytes(final_bytes[:32]) if final_bytes else (False, '')
-    variants_summary = ' | '.join(
-        f"{v['v']}:{v['sniffed'] or 'x'}:{v['note']}:{v['bytes']}"
-        for v in result['variants'][:12]
-    )
-    print(f'  [pk={queue_item.pk}] TDECRYPT: ok_final={ok_final} sniffed={sniffed_final} bytes={len(final_bytes or b"")}')
-    print(f'    Variants (first 12): {variants_summary}')
+    ok_direct, sn_direct = _is_valid_media_bytes(blob[:32])
+    direct_mode = False
+    variants_summary = ''
+    final_bytes = b''
+    sniffed_final = ''
+    ok_final = False
 
-    if not ok_final:
-        return {
-            'status': 'FAIL',
-            'reason': 'sem_variante_valida',
-            'variants': variants_summary,
-        }
+    if ok_direct:
+        final_bytes = blob
+        sniffed_final = sn_direct
+        ok_final = True
+        direct_mode = True
+        print(f'  [pk={queue_item.pk}] BLOB DIRETO JA VALIDO: sniffed={sn_direct} bytes={len(blob)} (pps/profile/nao-cripto)')
+        variants_summary = f'direct_blob:{sn_direct}:::{len(blob)}'
+    else:
+        media_key = info.get('media_key') or ''
+        if not media_key:
+            head_hex_fail = blob[:16].hex()
+            ok_mt = _sniff_mimetype(blob[:32])
+            return {
+                'status': 'SKIP_SEM_MEDIAKEY',
+                'reason': f'blob invalido ({ok_mt or "desconhecido"} head={head_hex_fail}) e sem mediaKey no payload',
+                'variants': '',
+            }
+        result = _decrypt_whatsapp_media(
+            blob,
+            media_key,
+            media_type_hint=info.get('media_type_hint') or '',
+            mimetype=info.get('mimetype') or '',
+        )
+        final_bytes = result['bytes']
+        ok_final, sniffed_final = _is_valid_media_bytes(final_bytes[:32]) if final_bytes else (False, '')
+        _vs = []
+        for v in result['variants'][:12]:
+            _vs.append(
+                f"{v.get('v','?')}:"
+                f"{v.get('sniffed') or v.get('ok') and 'ok' or 'x'}:"
+                f"{v.get('note','')}:"
+                f"{v.get('bytes',0)}"
+            )
+        variants_summary = ' | '.join(_vs)
+        print(f'  [pk={queue_item.pk}] TDECRYPT: ok_final={ok_final} sniffed={sniffed_final} bytes={len(final_bytes or b"")}')
+        print(f'    Variants (first 12): {variants_summary}')
+
+        if not ok_final:
+            return {
+                'status': 'FAIL',
+                'reason': 'sem_variante_valida',
+                'variants': variants_summary,
+            }
 
     final_mime = sniffed_final or (info.get('mimetype') if _sniff_mimetype(final_bytes[:32]) else '')
     filename = resolve_filename(info, final_mime)
@@ -529,9 +558,10 @@ def recover_item(queue_item):
     notes = queue_item.review_notes or ''
     stamp = datetime.now().strftime('%d/%m %H:%M')
     head_hex = final_bytes[:16].hex()
+    fonte = 'recover_script_direct' if direct_mode else 'recover_script'
     block = (
         f"\n=== RECOVERED {stamp} ===\n"
-        f"ANEXO_OK: sim  bytes={len(final_bytes)}  sniffed={final_mime}  fonte=recover_script\n"
+        f"ANEXO_OK: sim  bytes={len(final_bytes)}  sniffed={final_mime}  fonte={fonte}\n"
         f"OBS: attachment.pk={att.pk} filename={filename} head_hex={head_hex}\n"
         f"URL_ORIG: {url}\n"
         f"MEDIA_KEY_PRESENTE: {'sim' if info.get('media_key') else 'nao'}  src_payload={src}\n"
@@ -549,9 +579,30 @@ def recover_item(queue_item):
 
 
 def main():
-    N = 12
-    items = list(WhatsAppFinanceQueueItem.objects.all().order_by('-created_at', '-id')[:N])
-    print(f'=== Últimos {len(items)} queue items ===')
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--n-list', type=int, default=20, help='Quantos itens mostrar na listagem inicial (padrao 20)')
+    ap.add_argument('--limit', type=int, default=8, help='Quantos itens recuperar a partir do mais novo (padrao 8)')
+    ap.add_argument('--pks', type=str, default='', help='Recuperar SOMENTE esses pks, separados por virgula. Ex: --pks=594,580,576')
+    ap.add_argument('--skip-validated', action='store_true', default=False, help='Pula itens que ja tem anexo valido (padrao: pula de qualquer forma)')
+    args = ap.parse_args()
+
+    N = args.n_list
+    items_all = list(WhatsAppFinanceQueueItem.objects.all().order_by('-created_at', '-id')[:N])
+    print(f'=== Últimos {len(items_all)} queue items ===')
+    items = items_all
+    if args.pks:
+        only = {int(x.strip()) for x in args.pks.split(',') if x.strip()}
+        items = [it for it in items if it.pk in only]
+        if len(items) != len(only):
+            qs_extra = WhatsAppFinanceQueueItem.objects.filter(pk__in=only)
+            found = {it.pk for it in items}
+            for it in qs_extra:
+                if it.pk not in found:
+                    items.append(it)
+            items.sort(key=lambda it: -it.pk)
+    else:
+        items = items_all[:args.limit]
     for it in items:
         try:
             att_count = it.attachments.count()
@@ -572,8 +623,7 @@ def main():
         )
     print()
 
-    LIMIT = 8
-    to_recover = items[:LIMIT]
+    to_recover = items
     results = []
     for it in to_recover:
         print(f'--- pk={it.pk} sender={(it.sender_name or "?")} created={it.created_at} ---')
