@@ -1971,6 +1971,8 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
         qs = self._base_queryset()
         if status_filter:
             qs = qs.filter(status=status_filter)
+        else:
+            qs = qs.exclude(status=WhatsAppFinanceQueueItem.Status.IGNORED)
         items = list(qs[:50])
         review_item = self._get_review_item(request, items)
         counts = {
@@ -1978,6 +1980,7 @@ class FinanceWhatsappQueueView(FinanceDashboardView):
             'confirmed': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.CONFIRMED).count(),
             'rejected': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.REJECTED).count(),
             'duplicate': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.DUPLICATE).count(),
+            'ignored': WhatsAppFinanceQueueItem.objects.filter(status=WhatsAppFinanceQueueItem.Status.IGNORED).count(),
         }
         return {
             'queue_items': items,
