@@ -223,68 +223,136 @@ def _decrypt_whatsapp_media(cipher_bytes: bytes, media_key_b64: str, media_type_
         out['variants'].append({'v': 'short_media_key', 'ok': False, 'note': f'len={len(mk)}'})
         return out
     mk = mk[:32]
-
-    app_infos = [
-        _whatsapp_media_app_info(media_type_hint, mimetype),
-        b'WhatsApp Media Keys',
-    ]
-    hkdf_lens = [112, 80, 96, 64]
     stream = cipher_bytes
-    n = len(stream)
+    L = len(stream)
+    typed_app = _whatsapp_media_app_info(media_type_hint, mimetype)
+    app_infos_ordered = [
+        ('typed', typed_app),
+    ]
+    if typed_app != b'WhatsApp Media Keys':
+        app_infos_ordered.append(('generic', b'WhatsApp Media Keys'))
 
-    def stream_splits(total: bytes):
-        res = []
+    fast_combos = [
+        (112, 0, 'HKDF'),
+        (112, 32, 'HKDF'),
+        (80, 0, 'HKDF'),
+        (112, 0, 'STREAM_PRE'),
+        (112, 32, 'STREAM_PRE'),
+    ]
+
+    def stream_split(mac_len, pos_tag, total):
         L = len(total)
-        for mac_len in (32, 10, 16, 0):
-            if L <= mac_len:
-                continue
-            wm = total[:-mac_len] if mac_len > 0 else total
+        if L <= mac_len:
+            return None
+        wm = total[:-mac_len] if mac_len > 0 else total
+        if pos_tag == 'HKDF':
             if len(wm) >= 16:
-                res.append(('HKDF', 'HKDF', wm))
+                return ('HKDF', wm)
+            return None
+        if pos_tag == 'STREAM_PRE':
             if len(wm) >= 32:
-                res.append(('STREAM_PRE', wm[:16], wm[16:]))
-        for mac_len in (32, 16, 10, 0):
-            payload = total[:-mac_len] if mac_len > 0 else total
-            if len(payload) >= 32:
-                res.append(('STREAM_AT_END', payload[-16:], payload[:-16]))
-        if L >= 48:
-            iv = stream[16:32]
-            rest = stream[32:]
-            for mac_len in (32, 16, 0):
-                if len(rest) > mac_len:
-                    ct = rest[:-mac_len] if mac_len > 0 else rest
-                    if len(ct) >= 16:
-                        res.append((f'IV_MID{mac_len}', iv, ct))
-        return res
+                return (wm[:16], wm[16:])
+            return None
+        if pos_tag == 'STREAM_AT_END':
+            if len(wm) >= 32:
+                return (wm[-16:], wm[:-16])
+            return None
+        return None
 
-    for app_info in app_infos:
-        for hkdf_len in hkdf_lens:
-            expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
-            if len(expanded) < hkdf_len or hkdf_len < 48:
-                continue
-            hkdf_iv = expanded[0:16]
-            cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
-            if len(cipher_key) != 32:
-                continue
-            for tag_v, iv_src, ctext in stream_splits(stream):
-                iv = hkdf_iv if iv_src == 'HKDF' else iv_src
-                plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv, ctext)
-                sn = ''
-                ok = False
-                if plain:
-                    _ok, _sn = _is_valid_media_bytes(plain[:32])
-                    sn = _sn
-                    ok = _ok
-                out['variants'].append({
-                    'v': f'a{len(app_info)}_hkdf{hkdf_len}_{tag_v}',
-                    'ok': ok,
-                    'sniffed': sn,
-                    'note': note,
-                    'bytes': len(plain or b''),
-                    'head_hex': (plain[:16] or b'').hex(),
-                })
-                if ok and not out['bytes']:
-                    out['bytes'] = plain
+    combos_tried = set()
+
+    def try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag):
+        nonlocal out
+        key = (app_name, hkdf_len, mac_len, pos_tag)
+        if key in combos_tried:
+            return
+        combos_tried.add(key)
+        if hkdf_len < 48:
+            return
+        expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
+        if len(expanded) < hkdf_len:
+            return
+        hkdf_iv = expanded[0:16]
+        cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
+        if len(cipher_key) != 32:
+            return
+        sp = stream_split(mac_len, pos_tag, stream)
+        if sp is None:
+            return
+        iv_src, ctext = sp
+        iv = hkdf_iv if iv_src == 'HKDF' else iv_src
+        plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv, ctext)
+        sn = ''
+        ok = False
+        if plain:
+            _ok, _sn = _is_valid_media_bytes(plain[:32])
+            sn = _sn
+            ok = _ok
+        out['variants'].append({
+            'v': f'{app_name}_hkdf{hkdf_len}_{pos_tag}_MAC{mac_len}',
+            'ok': ok,
+            'sniffed': sn,
+            'note': note,
+            'bytes': len(plain or b''),
+            'head_hex': (plain[:16] or b'').hex(),
+        })
+        if ok and not out['bytes']:
+            out['bytes'] = plain
+
+    for app_name, app_info in app_infos_ordered:
+        for hkdf_len, mac_len, pos_tag in fast_combos:
+            try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag)
+            if out['bytes']:
+                return out
+
+    all_hkdf = [112, 80, 96, 64]
+    all_macs = [32, 10, 16, 0]
+    all_pos = ['HKDF', 'STREAM_PRE', 'STREAM_AT_END']
+    for app_name, app_info in app_infos_ordered:
+        for hkdf_len in all_hkdf:
+            for mac_len in all_macs:
+                for pos_tag in all_pos:
+                    try_combo(app_name, app_info, hkdf_len, mac_len, pos_tag)
+                    if out['bytes']:
+                        return out
+
+    if L >= 48:
+        iv_mid = stream[16:32]
+        rest = stream[32:]
+        for app_name, app_info in app_infos_ordered:
+            for hkdf_len in all_hkdf:
+                if hkdf_len < 48:
+                    continue
+                expanded = _hkdf_sha256_expand(mk, app_info, hkdf_len)
+                if len(expanded) < hkdf_len:
+                    continue
+                cipher_key = expanded[16:48] if hkdf_len >= 48 else expanded[0:32]
+                if len(cipher_key) != 32:
+                    continue
+                for mac_len in (32, 16, 0):
+                    if len(rest) <= mac_len:
+                        continue
+                    ct = rest[:-mac_len] if mac_len > 0 else rest
+                    if len(ct) < 16:
+                        continue
+                    plain, note = _aes_cbc_decrypt_webhook(cipher_key, iv_mid, ct)
+                    sn = ''
+                    ok = False
+                    if plain:
+                        _ok, _sn = _is_valid_media_bytes(plain[:32])
+                        sn = _sn
+                        ok = _ok
+                    out['variants'].append({
+                        'v': f'{app_name}_hkdf{hkdf_len}_IVMID_MAC{mac_len}',
+                        'ok': ok,
+                        'sniffed': sn,
+                        'note': note,
+                        'bytes': len(plain or b''),
+                        'head_hex': (plain[:16] or b'').hex(),
+                    })
+                    if ok and not out['bytes']:
+                        out['bytes'] = plain
+                        return out
     return out
 
 
